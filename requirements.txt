@@ -1,0 +1,26 @@
+# ============================================================
+#  SAARTHI — Requirements
+#  Sab kuch FREE hai. Koi paid dependency nahi.
+# ============================================================
+
+# --- Core (zaroori) ---
+httpx>=0.27.0              # HTTP client — LLM APIs ko call karne ke liye
+python-dotenv>=1.0.0       # .env file se API keys padhne ke liye
+pydantic>=2.6.0            # Data validation — tool schemas ke liye
+rich>=13.7.0               # Terminal ko sundar banane ke liye
+
+# --- Web / Internet access ---
+beautifulsoup4>=4.12.0     # HTML parse karna
+ddgs>=9.0.0                # Web search — FREE, koi API key nahi chahiye
+                           # (pehle iska naam "duckduckgo-search" tha)
+
+# --- Optional: Voice (Phase 2 mein chahiye hoga) ---
+# faster-whisper>=1.0.0    # Speech-to-text, offline, free
+# sounddevice>=0.4.6       # Microphone input
+# piper-tts>=1.2.0         # Text-to-speech, offline, free
+
+# --- Optional: Browser control (Phase 3) ---
+# playwright>=1.44.0       # Saari websites ka access
+
+# --- Optional: Vector memory (baad mein) ---
+# chromadb>=0.5.0          # Semantic memory

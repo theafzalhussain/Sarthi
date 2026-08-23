@@ -1,0 +1,23 @@
+# Secrets — ye kabhi git mein nahi jaana chahiye
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# SAARTHI ka data
+data/
+*.db
+*.sqlite3
+screenshots/
+recordings/
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
