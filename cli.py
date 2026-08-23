@@ -7,6 +7,8 @@ Chalane ke liye:
 
 Commands:
     /status      -> sab kuch ka status
+    /models      -> kaunse LLM models available hain (LIVE check)
+                    "model_not_found" error aaye to YE chala
     /tools       -> kaunse tools hain
     /skills      -> kaunsi skills seekhi hain
     /devices     -> connected devices
@@ -155,6 +157,8 @@ DIKHA DO MODE (naya kaam sikhana):
 
 Commands:
     /status    sab kuch ka status
+    /models    kaunse LLM models available hain (live check)
+               -> "model_not_found" error aaye to ye chala
     /tools     saare tools ki list
     /skills    seekhi hui skills
     /devices   connected devices
@@ -186,6 +190,81 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
         show("")
         show(await agent.status(), "dim")
         show("")
+        return True
+
+    if cmd in ("/models", "/model"):
+        show(
+            "\n  Har provider se live pata kar raha hun "
+            "(thoda time lagega)...\n",
+            "dim",
+        )
+        results = await agent.brain.discover_models()
+
+        # Priority: pehle bilkul FREE models (":free" suffix), phir
+        # chhote/fast models. OpenRouter pe 300+ models hote hain,
+        # unme se kaam ke wahi hain.
+        def rank(model: str) -> int:
+            lowered = model.lower()
+            if lowered.endswith(":free"):
+                return 0  # bilkul free — sabse pehle
+            if "gpt-oss" in lowered or "/free" in lowered:
+                return 1  # Groq ke free models / free router
+            if any(k in lowered for k in ("flash-lite", "instant", "mini", "gemma")):
+                return 2  # chhote aur sasta
+            if "flash" in lowered:
+                return 3
+            return 9
+
+        for provider_name, models in results.items():
+            current = next(
+                (
+                    p.model
+                    for p in agent.brain.providers
+                    if p.name == provider_name
+                ),
+                "?",
+            )
+            show(f"  {provider_name}  (abhi use ho raha: {current})", "bold")
+
+            if isinstance(models, str):
+                show(f"      {models}", "error")
+                show("")
+                continue
+
+            if not models:
+                show("      koi model nahi mila", "error")
+                show("")
+                continue
+
+            ranked = sorted(models, key=lambda m: (rank(m), m))
+            recommended = [m for m in ranked if rank(m) <= 2]
+            others = [m for m in ranked if rank(m) > 2]
+
+            if recommended:
+                show("      -- YE TRY KAR (free / sasta) --", "dim")
+                for model in recommended[:15]:
+                    mark = "  <-- abhi yahi use ho raha" if model == current else ""
+                    show(f"      {model}{mark}", "agent" if mark else "dim")
+                if len(recommended) > 15:
+                    show(f"      ... aur {len(recommended) - 15} free models", "dim")
+
+            # Current model recommended list mein na ho to bhi dikhao
+            if current in others:
+                show(f"      {current}  <-- abhi yahi use ho raha", "agent")
+
+            if others:
+                show(f"      -- baaki {len(others)} models (zyadatar paid) --", "dim")
+
+            show("")
+
+        show(
+            "  Model badalna hai? .env mein ye set kar:\n"
+            "      GROQ_MODEL=...\n"
+            "      GEMINI_MODEL=...\n"
+            "      OPENROUTER_MODEL=...\n"
+            "  Phir SAARTHI restart kar.\n",
+            "tool",
+        )
         return True
 
     if cmd == "/tools":

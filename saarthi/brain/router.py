@@ -174,6 +174,27 @@ class Brain:
     #  Convenience
     # ------------------------------------------------------------------
 
+    async def discover_models(self) -> dict[str, list[str] | str]:
+        """
+        Har provider se LIVE pata karo ki kaunse models available hain.
+
+        Ye tab kaam aata hai jab "model_not_found" error aaye —
+        matlab model deprecate ho gaya. Isse pata chalega ki ab
+        kaunsa naam use karna hai.
+
+        Returns:
+            {provider_name: [model, ...]} ya {provider_name: "error message"}
+        """
+        results: dict[str, list[str] | str] = {}
+
+        for provider in self.providers:
+            try:
+                results[provider.name] = await provider.list_models()
+            except Exception as exc:  # noqa: BLE001
+                results[provider.name] = f"error: {exc}"
+
+        return results
+
     async def ask(self, prompt: str, system: str | None = None) -> str:
         """
         Ek simple sawaal, ek simple jawab. Tools nahi.

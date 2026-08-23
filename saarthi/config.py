@@ -19,6 +19,36 @@ except ImportError:  # dotenv install nahi hua to bhi chalega
     pass
 
 
+# ======================================================================
+#  DEFAULT MODELS
+#
+#  DHYAN: Model naam BADALTE REHTE HAIN. Providers purane models band
+#  kar dete hain. Jab "model_not_found" ya HTTP 404 aaye, matlab model
+#  deprecate ho gaya hai — teri galti nahi hai.
+#
+#  Aisa ho to CLI mein chala:
+#       /models
+#  Wo teri API key se LIVE pata karega ki kaunse models available hain.
+#  Phir .env mein naam update kar de.
+#
+#  Last updated: August 2026
+# ======================================================================
+
+DEFAULT_MODELS: dict[str, str] = {
+    # Groq ne June 2026 mein llama-3.1-8b-instant aur
+    # llama-3.3-70b-versatile deprecate kar diye. Ab gpt-oss family hai.
+    "groq": "openai/gpt-oss-20b",
+
+    # Gemini 2.0-flash band ho gaya (API khud 3.6-flash suggest karta hai)
+    "gemini": "gemini-3.6-flash",
+
+    # "openrouter/free" ek ROUTER hai — ye khud available free model
+    # chun leta hai. Isliye jab koi ek free model delist hota hai to
+    # ye TOOTTA NAHI. Specific model naam se behtar hai.
+    "openrouter": "openrouter/free",
+}
+
+
 # Project ka root folder (jahan ye repo hai)
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -87,21 +117,20 @@ class Settings:
             ProviderConfig(
                 name="groq",
                 api_key=os.getenv("GROQ_API_KEY"),
-                model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                model=os.getenv("GROQ_MODEL", DEFAULT_MODELS["groq"]),
                 supports_vision=False,
             ),
             ProviderConfig(
                 name="gemini",
                 api_key=os.getenv("GEMINI_API_KEY"),
-                model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+                model=os.getenv("GEMINI_MODEL", DEFAULT_MODELS["gemini"]),
                 supports_vision=True,  # Screenshot dekh sakta hai
             ),
             ProviderConfig(
                 name="openrouter",
                 api_key=os.getenv("OPENROUTER_API_KEY"),
                 model=os.getenv(
-                    "OPENROUTER_MODEL",
-                    "meta-llama/llama-3.3-70b-instruct:free",
+                    "OPENROUTER_MODEL", DEFAULT_MODELS["openrouter"]
                 ),
                 supports_vision=False,
             ),

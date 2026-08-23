@@ -31,6 +31,18 @@ class LLMProvider(ABC):
     def supports_vision(self) -> bool:
         return self.config.supports_vision
 
+    async def list_models(self) -> list[str]:
+        """
+        Is provider pe kaunse models available hain — LIVE pata karo.
+
+        Ye bahut kaam ka hai kyunki model naam badalte rehte hain.
+        Jab 404 "model_not_found" aaye, to isse pata chalega ki ab
+        kaunsa naam use karna hai.
+
+        Subclass override kare. Default: khali list.
+        """
+        return []
+
     @abstractmethod
     async def chat(
         self,

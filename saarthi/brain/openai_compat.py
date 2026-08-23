@@ -119,6 +119,44 @@ class OpenAICompatProvider(LLMProvider):
         return calls
 
     # ------------------------------------------------------------------
+    #  Model discovery
+    # ------------------------------------------------------------------
+
+    async def list_models(self) -> list[str]:
+        """
+        `/models` endpoint se available models nikaalo.
+
+        Groq aur OpenRouter dono ye endpoint dete hain.
+        """
+        url = f"{self.base_url}/models"
+        headers = {"Authorization": f"Bearer {self.config.api_key}"}
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url, headers=headers)
+        except httpx.RequestError as exc:
+            raise BrainError(f"{self.name}: models list nahi mili — {exc}") from exc
+
+        if resp.status_code >= 400:
+            raise BrainError(
+                f"{self.name}: HTTP {resp.status_code} — {resp.text[:200]}"
+            )
+
+        data = resp.json()
+        items = data.get("data") or data.get("models") or []
+
+        names: list[str] = []
+        for item in items:
+            if isinstance(item, dict):
+                model_id = item.get("id") or item.get("name")
+                if model_id:
+                    names.append(str(model_id))
+            elif isinstance(item, str):
+                names.append(item)
+
+        return sorted(names)
+
+    # ------------------------------------------------------------------
     #  Main call
     # ------------------------------------------------------------------
 
@@ -168,6 +206,17 @@ class OpenAICompatProvider(LLMProvider):
         if resp.status_code == 401:
             raise BrainError(
                 f"{self.name}: API key galat hai. .env file check kar."
+            )
+
+        # Model deprecate ho gaya — ye BAHUT common hai, isliye
+        # clear + actionable message dete hain
+        if resp.status_code == 404:
+            raise BrainError(
+                f"{self.name}: model '{self.model}' nahi mila — shayad "
+                f"deprecate ho gaya.\n"
+                f"  Fix: CLI mein '/models' chala, available models dikhenge.\n"
+                f"  Phir .env mein {self.name.upper()}_MODEL update kar de.\n"
+                f"  (server ne kaha: {resp.text[:200]})"
             )
 
         if resp.status_code >= 400:

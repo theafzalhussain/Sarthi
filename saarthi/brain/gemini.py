@@ -151,6 +151,37 @@ class GeminiProvider(LLMProvider):
         )
 
     # ------------------------------------------------------------------
+    #  Model discovery
+    # ------------------------------------------------------------------
+
+    async def list_models(self) -> list[str]:
+        """Gemini pe available models nikaalo."""
+        url = f"{API_BASE}/models"
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url, params={"key": self.config.api_key})
+        except httpx.RequestError as exc:
+            raise BrainError(f"gemini: models list nahi mili — {exc}") from exc
+
+        if resp.status_code >= 400:
+            raise BrainError(f"gemini: HTTP {resp.status_code} — {resp.text[:200]}")
+
+        names: list[str] = []
+        for item in resp.json().get("models", []):
+            name = item.get("name", "")
+            # "models/gemini-3.6-flash" -> "gemini-3.6-flash"
+            if name.startswith("models/"):
+                name = name[len("models/") :]
+
+            # Sirf wahi models jo generateContent support karte hain
+            methods = item.get("supportedGenerationMethods", [])
+            if name and (not methods or "generateContent" in methods):
+                names.append(name)
+
+        return sorted(names)
+
+    # ------------------------------------------------------------------
     #  Main call
     # ------------------------------------------------------------------
 
@@ -199,6 +230,16 @@ class GeminiProvider(LLMProvider):
 
         if resp.status_code in (401, 403):
             raise BrainError("gemini: API key galat hai. .env check kar.")
+
+        # Model deprecate ho gaya — actionable message do
+        if resp.status_code == 404:
+            raise BrainError(
+                f"gemini: model '{self.model}' nahi mila — shayad deprecate "
+                f"ho gaya.\n"
+                f"  Fix: CLI mein '/models' chala, available models dikhenge.\n"
+                f"  Phir .env mein GEMINI_MODEL update kar de.\n"
+                f"  (server ne kaha: {resp.text[:200]})"
+            )
 
         if resp.status_code >= 400:
             raise BrainError(
