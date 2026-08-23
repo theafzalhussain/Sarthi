@@ -21,3 +21,23 @@ recordings/
 .vscode/
 .idea/
 *.swp
+
+
+# --- Voice (Phase 2) ---
+# Model files bade hote hain (150MB - 3GB) — repo mein nahi jaane chahiye.
+# Ye khud download ho jaate hain pehli baar chalane pe.
+*.onnx
+*.onnx.json
+voices/
+models/
+.cache/
+
+# Whisper ka model cache
+**/whisper-*/
+huggingface/
+
+# Recorded audio / TTS output
+*.wav
+*.mp3
+*.ogg
+recordings/

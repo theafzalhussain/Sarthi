@@ -14,10 +14,31 @@ beautifulsoup4>=4.12.0     # HTML parse karna
 ddgs>=9.0.0                # Web search — FREE, koi API key nahi chahiye
                            # (pehle iska naam "duckduckgo-search" tha)
 
-# --- Optional: Voice (Phase 2 mein chahiye hoga) ---
-# faster-whisper>=1.0.0    # Speech-to-text, offline, free
+# ============================================================
+#  VOICE (Phase 2) — bolke agent chalane ke liye
+#  Ye OPTIONAL hai. Inke bina bhi text mode chalta rahega.
+#  Install: pip install -r requirements.txt  (uncomment karke)
+# ============================================================
+
+# --- Zaroori (voice ke liye) ---
+# faster-whisper>=1.0.0    # Speech-to-text — offline, free
 # sounddevice>=0.4.6       # Microphone input
-# piper-tts>=1.2.0         # Text-to-speech, offline, free
+#                          # NOTE: PortAudio system library bhi chahiye:
+#                          #   Ubuntu/Debian : sudo apt install libportaudio2
+#                          #   Fedora        : sudo dnf install portaudio
+#                          #   macOS         : brew install portaudio
+# numpy>=1.24.0            # Audio math (faster-whisper ke saath aa jaata hai)
+
+# --- Awaaz ke liye (ek chuno) ---
+# piper-tts>=1.7.0         # Best quality, offline. Voice model download karna padta hai
+# pyttsx3>=2.90            # Cross-platform, system voices
+#                          # Ya sabse aasaan: sudo apt install espeak-ng (pip se nahi)
+
+# --- Optional: asli wake word ("jarvis" bolke jagana) ---
+# pvporcupine>=3.0.0       # Free access key: https://console.picovoice.ai/
+#                          # Iske bina push-to-talk (Enter) chalta hai — wo bhi theek hai
+
+# Setup check karne ke liye:  python voice_cli.py --check
 
 # --- Optional: Browser control (Phase 3) ---
 # playwright>=1.44.0       # Saari websites ka access

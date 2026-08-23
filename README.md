@@ -71,6 +71,18 @@ python cli.py
 
 Bas. Kuch aur nahi chahiye.
 
+### 4. Voice chahiye? (optional)
+
+```bash
+pip install faster-whisper sounddevice
+sudo apt install libportaudio2 espeak-ng    # Linux
+
+python voice_cli.py --check     # setup check
+python voice_cli.py             # bolke chala
+```
+
+Detail: [docs/VOICE.md](docs/VOICE.md)
+
 ---
 
 ## Phone control (optional, Phase 3)
@@ -140,6 +152,30 @@ saarthi> Dhyan de: 1 step khud theek karna pada — app ka UI badla lagta hai.
 
 Normal automation (Tasker, macros) yahin toot jaate hain. SAARTHI screen padh ke naya button dhoondh leta hai.
 
+### Voice mode
+
+```bash
+python voice_cli.py
+```
+
+```
+[Enter dabao aur bolo]
+  >>> sun raha hun...
+  fix  suna: "pay time cholo" -> samjha: "paytm kholo"
+  tu > paytm kholo
+  saarthi > Paytm khol diya bhai.
+```
+
+Risky kaam pe bolke confirmation maangta hai:
+
+```
+  !!! Ruk ja. 2500 rupay bhejna hai. kisko mummy. Karu? Haan ya nahi bol.
+  tu > haan bhai kar de
+  ok  kar raha hun
+```
+
+**Kuch samajh na aaye to mana kar deta hai** (fail-safe) — chup-chaap paise nahi jaate.
+
 ### CLI commands
 
 | Command | Kaam |
@@ -159,18 +195,20 @@ Normal automation (Tasker, macros) yahin toot jaate hain. SAARTHI screen padh ke
 
 ### ✅ Ab kaam karta hai
 - Hinglish samajhna (numbers, apps, intent, risky detection)
+- **Voice — bolke command dena aur jawab sunna** (offline, free)
+- **Hinglish-tuned speech recognition** — "pay time cholo" → "paytm kholo"
 - Laptop control — shell, files, apps
 - Internet — search + website padhna
 - Memory — facts aur purani baatein
 - Android control ADB ke through (phone connected ho to)
 - Dikha Do Mode — skill record, replay, self-heal
-- 30 tools, safety layer
+- 30 tools, safety layer + **voice confirmations**
 
 ### 🚧 Abhi nahi (roadmap pe hai)
-- **Voice** — bolke command dena (Phase 2)
 - **Standalone Android app** — abhi laptop ki zarurat hai (Phase 4)
 - **User ke taps sunna** — abhi agent ke apne actions record hote hain. Tere manual taps record karne ke liye Accessibility Service chahiye (Phase 4)
 - **Browser automation** — JS-heavy websites (Phase 3)
+- **Barge-in** — agent bol raha ho tab tokna (echo cancellation chahiye)
 
 ### ❌ Kabhi nahi hoga (aur kyun)
 | Cheez | Wajah |
@@ -201,16 +239,22 @@ Ye agent ke paas device ka access hai — isliye brake zaroori hai:
 saarthi/
 ├── brain/      LLM providers (Groq, Gemini, OpenRouter) + fallback
 ├── lang/       Hinglish layer — PILLAR #1
+├── voice/      Bolna/sunna — Hinglish-tuned STT, TTS, wake word
 ├── devices/    Universal device adapters — "sab devices"
 ├── tools/      30 tools + safety layer
 ├── memory/     SQLite yaaddasht
 ├── skills/     DIKHA DO MODE — store, recorder, self-healing runner
 ├── config.py   Settings
 └── agent.py    Main loop
-cli.py          Terminal interface
+cli.py          Text interface
+voice_cli.py    Voice interface
 ```
 
-Detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Aage kya: [docs/ROADMAP.md](docs/ROADMAP.md)
+**Docs:**
+[ARCHITECTURE.md](docs/ARCHITECTURE.md) — code kaise organize hai ·
+[VOICE.md](docs/VOICE.md) — voice setup + Hinglish tuning ·
+[DEPLOYMENT.md](docs/DEPLOYMENT.md) — server, bijli, hardware ·
+[ROADMAP.md](docs/ROADMAP.md) — aage kya
 
 ---
 

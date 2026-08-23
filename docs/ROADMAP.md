@@ -18,25 +18,34 @@ Kahan pahunche hain, aage kya. Sab ₹0 budget pe possible.
 
 ---
 
-## 🎯 Phase 2 — Voice (agla kaam)
+## ✅ Phase 2 — Voice (HO GAYA)
 
-Ab bolke command dena.
+- **Hinglish-tuned STT** — biasing (`initial_prompt`) + 55 correction rules + context-aware rules
+- **Speech-to-text** — faster-whisper, offline, model size configurable (tiny→large)
+- **Text-to-speech** — 5 backends (piper/say/espeak/pyttsx3/null) with auto-select
+- **Wake word** — 3 modes (push-to-talk default / energy / Porcupine)
+- **Silence detection** — auto noise calibration, works in noisy rooms
+- **Voice confirmations** — risky kaam pe bolke "haan/nahi", fail-safe
+- **Vocabulary boost** — memory + skills se Whisper ko bias karta hai (compounding fayda)
+- Quality gates — Whisper ke hallucinations (`"Thank you."`) filter hote hain
 
-| Kaam | Tool | Cost |
-|---|---|---|
-| Speech → Text | `faster-whisper` (`small` model, 4GB RAM mein chalega) | ₹0 |
-| Text → Speech | Piper TTS (Hindi voices available) | ₹0 |
-| Wake word "Hey Saarthi" | Picovoice Porcupine (free tier) | ₹0 |
+**Chalane ke liye:**
+```bash
+python voice_cli.py --check    # setup diagnostic
+python voice_cli.py            # bolke chala
+python voice_cli.py --once     # ek baar test
+```
 
-**Naya module:** `saarthi/voice/` → `stt.py`, `tts.py`, `wake.py`
+Detail: [VOICE.md](VOICE.md)
 
-**Yahan asli kaam Hinglish tuning hai** — generic Whisper code-switching pe galti karta hai. Do tareeke:
-1. `initial_prompt` mein Hinglish examples do (sasta, turant)
-2. Custom vocabulary — app naam, contact naam boost karo
+**Measured fayda:** "pay time cholo aur die hazaar ka bell bhar do" —
+bina correction amount **1000** (galat), correction ke saath **2500** (sahi).
+₹1500 ka farak.
 
-`lang/lexicon.py` ka data yahan dobara kaam aayega — app naam pehle se list hain.
-
-**Milestone:** bolke laptop se phone chalana.
+### Jo abhi bhi nahi hai
+- Barge-in (agent bol raha ho tab tokna) — echo cancellation chahiye
+- Perfect Hindi pronunciation — roman text ko English voice padhti hai
+- Real-time streaming — pura bolne ke baad transcribe hota hai
 
 ---
 
@@ -109,14 +118,18 @@ Achhi khabar: `skills/store.py` ka data format **same rahega**. Store aur runner
 ## Priority (mera suggestion)
 
 ```
-1. Phase 2 (Voice)         <- yahan se kar. Motivation milegi, "asli agent" lagega
-2. ADB pe test kar          <- asli phone pe Dikha Do Mode chala
-3. Phase 4 (Android app)    <- sabse bada kaam, sabse bada inaam
-4. Phase 3 (Browser)        <- scope badhega
-5. Phase 5                  <- polish
+1. ✅ Phase 2 (Voice)        <- HO GAYA
+2. ASLI HARDWARE PE TEST     <- ABHI YAHI KAR
+   - Mic pe voice test kar (python voice_cli.py --check)
+   - ADB laga ke asli phone pe Dikha Do Mode chala
+3. Phase 4 (Android app)     <- sabse bada kaam, sabse bada inaam
+4. Phase 3 (Browser)         <- scope badhega
+5. Phase 5                   <- polish
 ```
 
-**Phase 2 pehle kyun:** voice add karne se agent turant "real" feel hone lagta hai. 2-3 hafte ka kaam hai, aur mehnat karne ka mood banata hai. Android app 2-3 mahine ka hai — usme motivation chahiye hoga.
+**Ab #2 kyun (code likhne se pehle):** Phase 1 aur 2 dono ka code **asli hardware pe test nahi hua** — sandbox mein mic aur phone nahi tha. Aage badhne se pehle apne laptop pe voice aur apne phone pe ADB chala ke dekh. Jo bugs milenge wo asli honge, aur unko theek karna naya feature banane se zyada valuable hai.
+
+Server/hosting ka sawaal? → [DEPLOYMENT.md](DEPLOYMENT.md) (short answer: abhi zarurat nahi)
 
 ---
 

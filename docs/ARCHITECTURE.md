@@ -98,6 +98,31 @@ INDIAN_APPS = {
 
 ---
 
+### `voice/` — Bolna aur sunna (Phase 2)
+
+| File | Kaam |
+|---|---|
+| `hinglish_asr.py` | **PILLAR #1 voice pe** — biasing + 55 correction rules |
+| `audio.py` | Mic recording, silence detection, playback |
+| `stt.py` | Whisper wrapper (offline) |
+| `tts.py` | 5 TTS backends with auto-select |
+| `wake.py` | 3 wake modes |
+| `session.py` | Pura voice loop |
+
+**Testing design (important):** `SilenceDetector` aur `prepare_text_for_speech` **pure logic** hain — mic ke bina test ho jaate hain. Hardware I/O jaan-boojh ke alag rakha hai. Isliye Phase 2 ka pura core sandbox mein verify ho gaya, bina mic ke.
+
+**Do subtle cheezein jo miss karna aasaan hai:**
+
+1. **int16 → float32 conversion** (`stt.py`)
+   Whisper `[-1, 1]` range maangta hai, mic `int16` (0-32767) deta hai. Divide by 32768 zaroori hai — warna Whisper ko **sirf shor** sunai deta hai.
+
+2. **Porcupine ka frame size** (`wake.py`)
+   Porcupine **exactly 512 samples** maangta hai, hamara chunk 480 hai. Frame buffer banaya hai. Ye miss karne pe Porcupine **chup-chaap** kaam nahi karta.
+
+**Compounding fayda:** `session.refresh_vocabulary()` memory aur skills se Whisper ki vocabulary banata hai. Matlab jitna agent ko sikhaayega, utna accha wo sunega. Detail: [VOICE.md](VOICE.md)
+
+---
+
 ### `devices/` — "Sab devices ka access"
 
 Yahi wo architectural faisla hai jo tera "har device" sapna possible banata hai.
@@ -257,3 +282,7 @@ Normal automation tools (Tasker, macros) yahi galat karte hain.
 | Naya device | `devices/` mein `Device` subclass, phir `manager.register()` |
 | Naya LLM provider | `brain/` — ya OpenAI-compatible ho to bas `BASE_URLS` |
 | Naya risky pattern | `tools/safety.py` |
+| **ASR correction** | `voice/hinglish_asr.py` → `SAFE_CORRECTIONS` (word boundary zaroori!) |
+| **Context-dependent ASR fix** | `voice/hinglish_asr.py` → `CONTEXT_CORRECTIONS` (enablers + blockers) |
+| **Naya TTS backend** | `voice/tts.py` → `TTSBackend` subclass, phir `BACKEND_ORDER` |
+| **Naya wake mode** | `voice/wake.py` → `WakeDetector` subclass, phir `WAKE_MODES` |
