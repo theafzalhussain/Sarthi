@@ -39,6 +39,12 @@ DEFAULT_MODELS: dict[str, str] = {
     # llama-3.3-70b-versatile deprecate kar diye. Ab gpt-oss family hai.
     "groq": "openai/gpt-oss-20b",
 
+    # NVIDIA NIM — Nemotron 3 Ultra (550B total / 55B active).
+    # Ye model LONG-RUNNING AGENTS ke liye banaya gaya hai, aur tool
+    # calling support karta hai. SAARTHI ke liye bahut accha fit.
+    # Free key: https://build.nvidia.com
+    "nvidia": "nvidia/nemotron-3-ultra-550b-a55b",
+
     # Gemini 2.0-flash band ho gaya (API khud 3.6-flash suggest karta hai)
     "gemini": "gemini-3.6-flash",
 
@@ -47,6 +53,24 @@ DEFAULT_MODELS: dict[str, str] = {
     # ye TOOTTA NAHI. Specific model naam se behtar hai.
     "openrouter": "openrouter/free",
 }
+
+
+# ======================================================================
+#  PROVIDER ORDER
+#
+#  Kis order mein try karna hai. Pehla = pehli choice, fail ho to agla.
+#
+#  Default sochke rakha hai:
+#    groq       -> sabse TEZ (chhote kaam ke liye best)
+#    nvidia     -> sabse SMART (Nemotron Ultra, agentic kaam ke liye)
+#    openrouter -> backup
+#    gemini     -> aankh (screenshot dekhne ke liye) — vision wala kaam
+#                  isko automatically milta hai, order se farak nahi
+#
+#  Badalna hai? .env mein: SAARTHI_PROVIDER_ORDER=nvidia,groq,gemini
+# ======================================================================
+
+DEFAULT_PROVIDER_ORDER: list[str] = ["groq", "nvidia", "openrouter", "gemini"]
 
 
 # Project ka root folder (jahan ye repo hai)
@@ -97,6 +121,11 @@ class Settings:
     # --- Providers ---
     providers: list[ProviderConfig] = field(default_factory=list)
 
+    # Kis order mein providers try karne hain
+    provider_order: list[str] = field(
+        default_factory=lambda: list(DEFAULT_PROVIDER_ORDER)
+    )
+
     # --- Behaviour ---
     language: str = "hinglish"
     confirm_risky: bool = True
@@ -134,10 +163,31 @@ class Settings:
                 ),
                 supports_vision=False,
             ),
+            ProviderConfig(
+                name="nvidia",
+                # NVIDIA_API_KEY standard hai, par NVIDIA_NIM_API_KEY
+                # bhi kai jagah use hoti hai — dono support kar lete hain
+                api_key=os.getenv("NVIDIA_API_KEY")
+                or os.getenv("NVIDIA_NIM_API_KEY"),
+                model=os.getenv("NVIDIA_MODEL", DEFAULT_MODELS["nvidia"]),
+                supports_vision=False,
+            ),
         ]
+
+        # Provider order — .env se override ho sakta hai
+        raw_order = os.getenv("SAARTHI_PROVIDER_ORDER", "").strip()
+        if raw_order:
+            order = [p.strip().lower() for p in raw_order.split(",") if p.strip()]
+            # Jo provider order mein nahi likha, wo end mein daal do
+            known = {p.name for p in providers}
+            order = [p for p in order if p in known]
+            order += [p for p in DEFAULT_PROVIDER_ORDER if p not in order]
+        else:
+            order = list(DEFAULT_PROVIDER_ORDER)
 
         settings = cls(
             providers=providers,
+            provider_order=order,
             language=os.getenv("SAARTHI_LANGUAGE", "hinglish").strip().lower(),
             confirm_risky=_env_bool("SAARTHI_CONFIRM_RISKY", True),
             max_steps=_env_int("SAARTHI_MAX_STEPS", 12),
@@ -174,12 +224,13 @@ class Settings:
         """Key nahi hai to user ko kya karna chahiye."""
         return (
             "Koi API key nahi mili bhai!\n\n"
-            "  1. cp .env.example .env\n"
-            "  2. Free key le:\n"
-            "       GROQ    -> https://console.groq.com\n"
-            "       GEMINI  -> https://aistudio.google.com/apikey\n"
+            "  1. cp .env.example .env       (Windows: Copy-Item .env.example .env)\n"
+            "  2. Kam se kam EK free key le:\n"
+            "       GROQ    -> https://console.groq.com          (sabse tez)\n"
+            "       NVIDIA  -> https://build.nvidia.com          (Nemotron Ultra)\n"
+            "       GEMINI  -> https://aistudio.google.com/apikey (screenshot ke liye)\n"
             "  3. .env file mein paste kar de\n\n"
-            "Dono free hain, credit card ki zarurat nahi."
+            "Sab free hain, credit card ki zarurat nahi."
         )
 
 

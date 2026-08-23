@@ -1,11 +1,13 @@
 """
 OpenAI-compatible provider.
 
-GROQ aur OPENROUTER dono OpenAI ka API format use karte hain.
-Isliye ek hi class dono ke liye kaafi hai — sirf base URL alag.
+GROQ, OPENROUTER aur NVIDIA — teeno OpenAI ka API format use karte hain.
+Isliye ek hi class teeno ke liye kaafi hai — sirf base URL alag.
 
-Fayda: kal koi naya provider aaya jo OpenAI-compatible hai,
-to sirf ek line likhni padegi.
+Fayda: kal koi naya provider aaya jo OpenAI-compatible hai, to sirf
+BASE_URLS mein ek line daalni hai. Bas. Baaki kuch nahi badalta.
+
+(NVIDIA add karne mein exactly yahi hua — ek line.)
 """
 
 from __future__ import annotations
@@ -21,9 +23,14 @@ from .base import LLMProvider
 from .types import BrainError, LLMResponse, Message, Role, ToolCall, ToolSchema
 
 # Provider ka naam -> API base URL
+#
+# Naya OpenAI-compatible provider add karna hai? Bas yahan ek line.
+# Koi naya class likhne ki zarurat nahi.
 BASE_URLS: dict[str, str] = {
     "groq": "https://api.groq.com/openai/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    # NVIDIA NIM — free tier, key build.nvidia.com se (nvapi- se shuru hoti hai)
+    "nvidia": "https://integrate.api.nvidia.com/v1",
 }
 
 

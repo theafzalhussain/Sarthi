@@ -17,7 +17,7 @@ import logging
 from ..config import Settings, settings as default_settings
 from .base import LLMProvider
 from .gemini import GeminiProvider
-from .openai_compat import OpenAICompatProvider
+from .openai_compat import BASE_URLS, OpenAICompatProvider
 from .types import (
     AllProvidersFailedError,
     BrainError,
@@ -29,17 +29,26 @@ from .types import (
 
 log = logging.getLogger("saarthi.brain")
 
-# Kis order mein try karna hai (pehla = pehli choice)
-PREFERRED_ORDER = ["groq", "openrouter", "gemini"]
-
 
 def _build_provider(config) -> LLMProvider | None:
-    """Config se sahi provider class banao."""
+    """
+    Config se sahi provider class banao.
+
+    Gemini ka API alag hai (usko apni class chahiye). Baaki sab
+    OpenAI-compatible hain — ek hi class se chal jaate hain.
+    """
     if config.name == "gemini":
         return GeminiProvider(config)
-    if config.name in ("groq", "openrouter"):
+
+    # OpenAI-compatible: groq, openrouter, nvidia
+    if config.name in BASE_URLS:
         return OpenAICompatProvider(config)
-    log.warning("Unknown provider: %s", config.name)
+
+    log.warning(
+        "Unknown provider '%s'. OpenAI-compatible hai? To openai_compat.py "
+        "ke BASE_URLS mein URL daal de.",
+        config.name,
+    )
     return None
 
 
@@ -55,11 +64,10 @@ class Brain:
             if provider:
                 self.providers.append(provider)
 
-        # Preferred order mein sort karo
+        # Config wale order mein sort karo (.env se badal sakta hai)
+        order = self.settings.provider_order
         self.providers.sort(
-            key=lambda p: PREFERRED_ORDER.index(p.name)
-            if p.name in PREFERRED_ORDER
-            else 99
+            key=lambda p: order.index(p.name) if p.name in order else 99
         )
 
     # ------------------------------------------------------------------
