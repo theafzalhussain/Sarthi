@@ -52,6 +52,11 @@ DEFAULT_MODELS: dict[str, str] = {
     # chun leta hai. Isliye jab koi ek free model delist hota hai to
     # ye TOOTTA NAHI. Specific model naam se behtar hai.
     "openrouter": "openrouter/free",
+
+    # Bluesminds — multi-model gateway. Ek key se GPT-5.6, GPT-4o,
+    # GLM-5.2 sab chal jaate hain. Model select karna chahiye to
+    # .env mein BLUESMINDS_MODEL set kar.
+    "bluesminds": "gpt-4o",
 }
 
 
@@ -70,7 +75,9 @@ DEFAULT_MODELS: dict[str, str] = {
 #  Badalna hai? .env mein: SAARTHI_PROVIDER_ORDER=nvidia,groq,gemini
 # ======================================================================
 
-DEFAULT_PROVIDER_ORDER: list[str] = ["groq", "nvidia", "openrouter", "gemini"]
+DEFAULT_PROVIDER_ORDER: list[str] = [
+    "groq", "nvidia", "bluesminds", "openrouter", "gemini",
+]
 
 
 # Project ka root folder (jahan ye repo hai)
@@ -171,6 +178,14 @@ class Settings:
                 or os.getenv("NVIDIA_NIM_API_KEY"),
                 model=os.getenv("NVIDIA_MODEL", DEFAULT_MODELS["nvidia"]),
                 supports_vision=False,
+            ),
+            ProviderConfig(
+                name="bluesminds",
+                api_key=os.getenv("BLUESMINDS_API_KEY"),
+                model=os.getenv("BLUESMINDS_MODEL", DEFAULT_MODELS["bluesminds"]),
+                # GPT-4o vision support karta hai — ye Gemini ka backup
+                # ban sakta hai screenshot dekhne mein
+                supports_vision="4o" in os.getenv("BLUESMINDS_MODEL", DEFAULT_MODELS["bluesminds"]),
             ),
         ]
 

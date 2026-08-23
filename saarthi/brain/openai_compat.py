@@ -31,6 +31,8 @@ BASE_URLS: dict[str, str] = {
     "openrouter": "https://openrouter.ai/api/v1",
     # NVIDIA NIM — free tier, key build.nvidia.com se (nvapi- se shuru hoti hai)
     "nvidia": "https://integrate.api.nvidia.com/v1",
+    # Bluesminds — multi-model gateway, 200+ models, OpenAI-compatible
+    "bluesminds": "https://api.bluesminds.com/v1",
 }
 
 
