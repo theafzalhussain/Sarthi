@@ -9,7 +9,7 @@ Kahan pahunche hain, aage kya. Sab ₹0 budget pe possible.
 - Multi-provider LLM brain (Groq + Gemini + OpenRouter, auto-fallback)
 - Hinglish layer — 120+ apps, 18 intents, Hindi numbers, risky detection
 - Universal device adapters (Android via ADB + Desktop)
-- 30 tools + safety layer
+- 34 tools + safety layer
 - SQLite memory (facts + conversation history)
 - Dikha Do Mode — record, replay, 3-level self-healing
 - CLI

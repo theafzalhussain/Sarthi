@@ -262,6 +262,62 @@ def detect_language(text: str) -> str:
     return "hinglish"
 
 
+# ======================================================================
+#  MONEY CONTEXT
+#
+#  "dhai hazaar" apne aap mein amount nahi hai — "dhai hazaar log aaye"
+#  mein koi paisa nahi hai. Isliye amount sirf tab nikaalte hain jab
+#  aaspaas paison ki baat ho.
+#
+#  ⚠️ BUG JO YAHAN THA (BUG#1 ka same class):
+#     Pehle ye SUBSTRING se check hota tha:  "rs" in lowered
+#     Nateeja:
+#         "do hazaar YEArs purani baat"  -> amount = 2000   GALAT
+#         "teen sau FIrst time"          -> amount = 300    GALAT
+#         "paanch lakh houRS"            -> amount = 500000 GALAT
+#     "yea-RS", "fi-RS-t", "hou-RS" — teeno mein "rs" chhupa hua hai.
+#
+#  Fix: word boundaries (\b), bilkul waise hi jaise BUG#1 mein app
+#  naamon ke liye lagaye the.
+# ======================================================================
+
+# Paison wale shabd. Ye WORD BOUNDARY ke saath match hote hain.
+_MONEY_WORDS: tuple = (
+    # Currency
+    "rupay", "rupaye", "rupee", "rupees", "rs", "inr",
+    "paise", "paisa", "pese",
+    # Transaction
+    "bill", "recharge", "pay", "payment", "transfer", "bhej", "bhejo",
+    "bhejna", "de", "dena", "kharch", "khareed", "order", "booking",
+    "topup", "top-up", "wallet", "balance", "refund", "emi", "fees",
+    # Payment apps — inka naam aaye to paison ki baat hi hai.
+    # Ye pehle "pay" substring se galti se match hote the (paytm mein
+    # "pay" hai); ab explicit hain, isliye \b lagne ke baad bhi chalte hain.
+    "paytm", "phonepe", "gpay", "googlepay", "upi", "bhim",
+    "amazonpay", "mobikwik", "freecharge", "cred",
+)
+
+# Ek hi baar compile — parse() har command pe chalta hai
+_MONEY_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(w) for w in _MONEY_WORDS) + r")\b"
+)
+
+
+def _has_money_context(lowered: str) -> bool:
+    """
+    Is text mein paison ki baat ho rahi hai?
+
+    >>> _has_money_context("dhai hazaar ka recharge")
+    True
+    >>> _has_money_context("do hazaar years purani baat")
+    False
+    """
+    # ₹ symbol ka word boundary nahi hota — alag se check
+    if "₹" in lowered:
+        return True
+    return bool(_MONEY_RE.search(lowered))
+
+
 def extract_amount(text: str) -> float | None:
     """
     Text se paison ka amount nikaalo.
@@ -285,12 +341,7 @@ def extract_amount(text: str) -> float | None:
             return float(match.group(1).replace(",", ""))
 
     # Phir: Hindi words wale numbers, agar paison ka context hai
-    money_context = any(
-        word in lowered
-        for word in ("rupay", "rupee", "paise", "paisa", "₹", "rs",
-                     "bill", "recharge", "pay", "transfer", "bhej")
-    )
-    if money_context:
+    if _has_money_context(lowered):
         # Number-related tokens ka group dhoondo
         number_tokens = (
             set(NUMBER_WORDS)

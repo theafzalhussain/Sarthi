@@ -131,7 +131,7 @@ Yahi wo architectural faisla hai jo tera "har device" sapna possible banata hai.
 Device (abstract)
   ├── AndroidDevice   ADB
   ├── DesktopDevice   shell + files + (optional) mouse/keyboard
-  └── BrowserDevice   <- tu banayega (Phase 3)
+  └── BrowserDevice   <- ✅ ban gaya (Phase 3 part 1)
 ```
 
 **Capability system:** har device declare karta hai wo kya kar sakta hai. Laptop pe `tap` nahi hota, phone pe `shell` limited hai. Agent sirf available tools dekhta hai.

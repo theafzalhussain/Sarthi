@@ -42,11 +42,16 @@ SAARTHI ke 4 pillars isi gap pe bane hain:
 
 | Provider | Link | Kis liye |
 |---|---|---|
-| **Groq** ⭐ | https://console.groq.com | Main brain — fast, badi free limit |
+| **NVIDIA** 🏆 | https://build.nvidia.com | **Ek key se 4 models** — deepseek v4 pro, nemotron, muse glimmer, diffusiongemma |
+| **Groq** ⭐ | https://console.groq.com | Sabse fast. **Alag limit** — NVIDIA khatam ho to ye bacha lega |
 | **Gemini** ⭐ | https://aistudio.google.com/apikey | Screenshot dekhne ke liye (vision) |
-| OpenRouter | https://openrouter.ai/keys | Backup (optional) |
+| OpenRouter | https://openrouter.ai/keys | 98 free models ka router (optional) |
+| Bluesminds | https://api.bluesminds.com | GPT-4o/GPT-5.6 gateway (optional) |
 
-Dono free hain. **Credit card nahi maangte.**
+Sab free hain. **Credit card nahi maangte.**
+
+**Salah: NVIDIA + Groq dono le le.** Dono ki limit alag hai — ek khatam ho
+to doosra chalta rahega. Total **8 providers** ka fallback ban jaata hai.
 
 > ⚠️ Dhyan: ChatGPT Plus / Claude Pro subscription se API **nahi** chalti — wo alag cheez hai. Isliye upar wale free tiers use kar.
 
@@ -60,10 +65,19 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# .env kholke GROQ_API_KEY aur GEMINI_API_KEY daal
+# .env kholke NVIDIA_API_KEY aur GROQ_API_KEY daal
 ```
 
-### 3. Chala
+### 3. Test kar (10 second)
+
+```bash
+python run_tests.py
+```
+
+195 tests, koi extra install nahi chahiye. Sab pass hone chahiye.
+Kuch fail ho to **pehle wahi theek kar**.
+
+### 4. Chala
 
 ```bash
 python cli.py
@@ -184,7 +198,10 @@ Risky kaam pe bolke confirmation maangta hai:
 | `/devices` | Connected devices |
 | `/skills` | Seekhi hui skills |
 | `/memory` | Yaad rakhi baatein |
-| `/tools` | 30 tools ki list |
+| `/tools` | 34 tools ki list |
+| `/browser` | Browser kaise khulega — tab switch setting |
+| `/auto` | Full access — risky kaam bina puche |
+| `/retry` | Hate hue providers dobara try karo |
 | `/verbose` | Tool results dikhao/chhupao |
 | `/reset` | Baat bhool jao (memory safe) |
 | `/quit` | Band karo |
@@ -202,13 +219,20 @@ Risky kaam pe bolke confirmation maangta hai:
 - Memory — facts aur purani baatein
 - Android control ADB ke through (phone connected ho to)
 - Dikha Do Mode — skill record, replay, self-heal
-- 30 tools, safety layer + **voice confirmations**
+- 34 tools, safety layer + **voice confirmations**
+- **Browser automation** (Playwright) — koi bhi website, aur tera tab
+  kabhi hijack nahi hota
+- **8 LLM providers** with smart fallback — dead provider session bhar
+  hat jaata hai, rate-limit wala cooldown pe
+- **Professional English interface, par baat teri bhasha mein** — English
+  mein pucho English mein jawab, Hinglish mein pucho Hinglish mein
+- **195 tests** — `python run_tests.py`
 
 ### 🚧 Abhi nahi (roadmap pe hai)
 - **Standalone Android app** — abhi laptop ki zarurat hai (Phase 4)
 - **User ke taps sunna** — abhi agent ke apne actions record hote hain. Tere manual taps record karne ke liye Accessibility Service chahiye (Phase 4)
-- **Browser automation** — JS-heavy websites (Phase 3)
 - **Barge-in** — agent bol raha ho tab tokna (echo cancellation chahiye)
+- **Vector memory** — semantic recall (ChromaDB, Phase 5)
 
 ### ❌ Kabhi nahi hoga (aur kyun)
 | Cheez | Wajah |
@@ -237,22 +261,55 @@ Ye agent ke paas device ka access hai — isliye brake zaroori hai:
 
 ```
 saarthi/
-├── brain/      LLM providers (Groq, Gemini, OpenRouter) + fallback
+├── brain/      8 LLM providers + fallback + provider health
 ├── lang/       Hinglish layer — PILLAR #1
 ├── voice/      Bolna/sunna — Hinglish-tuned STT, TTS, wake word
-├── devices/    Universal device adapters — "sab devices"
-├── tools/      30 tools + safety layer
+├── devices/    Universal device adapters — android, desktop, browser
+├── tools/      34 tools + safety layer
 ├── memory/     SQLite yaaddasht
 ├── skills/     DIKHA DO MODE — store, recorder, self-healing runner
+├── ui.py       Terminal UI — pura look ek jagah
 ├── config.py   Settings
 └── agent.py    Main loop
-cli.py          Text interface
-voice_cli.py    Voice interface
+cli.py              Text interface
+voice_cli.py        Voice interface
+run_tests.py        195 tests — koi install nahi chahiye
+hardware_check.py   Mic/speaker/phone diagnostic
+tests/              Test suite (8 bugs ka regression guard)
+```
+
+---
+
+## Testing
+
+```bash
+python run_tests.py              # sab — 195 tests, 0.1 second
+python run_tests.py known_bugs   # sirf bug regression tests
+```
+
+**Koi extra install nahi chahiye** — stdlib `unittest` use hota hai
+(₹0 budget, purana laptop). pytest ho to `pytest tests/` bhi chalega.
+
+Tests **hardware ke bina** chalte hain — mic, phone, browser, internet
+kuch nahi chahiye.
+
+**Har fix hue bug ka apna named test hai:**
+```
+test_bug1_paytm_youtube_match_nahi_karta
+test_bug3_semantic_healing_coordinates_se_pehle_hai
+test_bug7_user_ka_navigate_kiya_tab_detect_hota_hai
+```
+Fail hone pe seedha samajh aata hai ki kya toota.
+
+**Hardware test** (ye sirf tu kar sakta hai):
+```bash
+python hardware_check.py
 ```
 
 **Docs:**
 **[HANDOFF.md](docs/HANDOFF.md) — 👈 naya developer/AI ho to YE pehle padho (pura context)** ·
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) — code kaise organize hai ·
+[HARDWARE_TEST.md](docs/HARDWARE_TEST.md) — mic/speaker/phone test ·
 [VOICE.md](docs/VOICE.md) — voice setup + Hinglish tuning ·
 [DEPLOYMENT.md](docs/DEPLOYMENT.md) — server, bijli, hardware ·
 [ROADMAP.md](docs/ROADMAP.md) — aage kya

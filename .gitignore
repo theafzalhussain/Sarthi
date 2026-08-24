@@ -11,6 +11,10 @@ env/
 
 # SAARTHI ka data
 data/
+
+# hardware_check.py --save se banti hai. Machine-specific hai,
+# repo mein nahi jaani chahiye.
+hardware_report.txt
 *.db
 *.sqlite3
 screenshots/

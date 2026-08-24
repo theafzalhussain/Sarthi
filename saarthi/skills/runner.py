@@ -13,16 +13,36 @@ SAARTHI ka solution — 3 level ka healing:
     LEVEL 1: target_text se element dhoondo
              (button ka text same rehta hai chahe position badle)
 
-    LEVEL 2: text na mile to coordinates try karo
-             (fallback — UI same hai, sirf text badla)
+    LEVEL 2: text na mile to SEMANTIC healing — screen padho, LLM ko
+             options dikhao aur pucho "ye kaam ab kaunsa button karega?"
+             LLM naya target dhoondh deta hai, aur hum skill ko
+             PERMANENTLY update kar dete hain.
 
-    LEVEL 3: dono fail? LLM ko screen dikhao aur pucho
-             "ye kaam karna hai, kahan tap karun?"
-             LLM naya raasta dhoondh dega, aur hum skill UPDATE kar denge
+    LEVEL 3: LLM bhi na dhoondh paaye (ya screen padh hi na sakein) to
+             LAST RESORT — purane coordinates. Aur wo bhi USER SE
+             PUCHKE, blind tap nahi.
 
-Level 3 hi wo cheez hai jo research papers mein hai par kisi phone
-agent product mein shipped nahi hai. Isko theek se bana to tera
-project genuinely naya hoga.
+⚠️ YE ORDER JAAN-BOOJH KE AISA HAI — MAT BADALNA.
+
+Pehle coordinates aur baad mein semantic — aisa likhna KHATARNAK hai:
+
+    Agar button ka text nahi mila, matlab UI BADAL GAYA hai. Aisi
+    soorat mein purane coordinates pe tap karna galat hai — wahan ab
+    koi DOOSRA button ho sakta hai. ADB/Playwright ko farak nahi
+    padta, tap "safal" dikhega, par GALAT kaam ho jaayega. Payment
+    screen pe ye bahut bura hai.
+
+Ye bug pehle code mein THA (coordinates pehle try hote the), fix kiya
+gaya, aur ye docstring bhi tab tak PURANA (galat) order document karti
+rahi thi. Docs aur code dono ab match karte hain — regress mat karna.
+
+Level 2 (semantic healing) hi wo cheez hai jo research papers mein hai
+par kisi phone agent product mein shipped nahi hai. Yahi is project ka
+asli differentiator hai.
+
+Naming note: is file mein "LEVEL 2 = semantic" aur "LEVEL 3 =
+coordinates" hi likhna. Pehle teen jagah teen alag naam the, usse
+confusion hoti thi.
 """
 
 from __future__ import annotations
@@ -304,7 +324,10 @@ class SkillRunner:
 
     async def _heal_with_llm(self, step: SkillStep, ctx) -> StepOutcome | None:
         """
-        LEVEL 3 HEALING — asli innovation.
+        LEVEL 2 HEALING (semantic) — asli innovation.
+
+        Ye COORDINATES SE PEHLE chalta hai. Kyun, wo file ke top pe
+        "YE ORDER JAAN-BOOJH KE AISA HAI" section mein likha hai.
 
         Screen padho, LLM ko batao kya karna tha, wo naya target dhoondhe.
         Mil jaaye to step ko PERMANENTLY update kar do.
