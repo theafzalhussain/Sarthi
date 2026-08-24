@@ -83,7 +83,7 @@ exact bug pakad mein aa jaata hai.
 python run_tests.py
 ```
 
-**195 tests pass hone chahiye.** Ye hardware ke bina chalte hain.
+**218 tests pass hone chahiye.** Ye hardware ke bina chalte hain.
 Yahan kuch fail ho to **pehle wahi theek kar** — hardware ki galti nahi hai.
 
 ```bash
@@ -271,7 +271,7 @@ Aur saath mein `python hardware_check.py --save` ki report bhej de.
 ## Quick reference
 
 ```bash
-python run_tests.py                  # 195 tests, hardware ke bina
+python run_tests.py                  # 218 tests, hardware ke bina
 python hardware_check.py             # sab hardware check + report
 python hardware_check.py --save      # report file mein
 python cli.py                        # text mode

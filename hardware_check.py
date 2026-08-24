@@ -88,6 +88,52 @@ def section(title: str) -> None:
         print(f"\n=== {title} ===")
 
 
+# ----------------------------------------------------------------------
+#  Voice API wrappers
+#
+#  Ye thin wrappers isliye hain ki TEST inhe call kar sake.
+#
+#  Pehle ye code seedha check_mic()/check_speaker() ke andar tha, aur
+#  imports function ke andar the. Nateeja: maine galat API naam guess
+#  kar liye (`Microphone` instead of `Recorder`, `engine.speak()`
+#  instead of `engine.say()`) aur SANDBOX MEIN PAKDA NAHI GAYA, kyunki
+#  wahan mic nahi tha to wo code path chala hi nahi.
+#
+#  User ki asli machine pe crash hua. Ab ye wrappers alag hain, aur
+#  tests/test_hardware_check.py inhe hardware ke BINA call karke verify
+#  karta hai ki API naam sahi hain.
+# ----------------------------------------------------------------------
+
+
+def open_recorder():
+    """Mic recorder banao. (API: saarthi.voice.Recorder)"""
+    from saarthi.voice import AudioConfig, Recorder
+
+    return Recorder(AudioConfig())
+
+
+def record_seconds(recorder, seconds: float):
+    """Fixed time ke liye record karo. (API: Recorder.record_fixed)"""
+    return recorder.record_fixed(seconds)
+
+
+def open_stt():
+    """Whisper STT banao — model load NAHI karta. (API: WhisperSTT)"""
+    from saarthi.voice import WhisperConfig, WhisperSTT
+
+    return WhisperSTT(WhisperConfig.from_env())
+
+
+def speak_text(engine, text: str) -> bool:
+    """
+    Awaaz mein bolo. (API: TTSEngine.say — NOT .speak)
+
+    Dhyan: BACKEND pe `speak()` hota hai, ENGINE pe `say()`. Yahi
+    confusion thi.
+    """
+    return engine.say(text)
+
+
 def result(label: str, ok: bool | None, detail: str = "") -> None:
     """
     Ek check ka nateeja.
@@ -256,11 +302,9 @@ def check_mic(interactive: bool = True) -> None:
         return
 
     try:
-        from saarthi.voice.audio import AudioConfig, Microphone
-
-        mic = Microphone(AudioConfig())
+        recorder = open_recorder()
         say("   Bol: \"paytm kholo\" ... (3 second)", "muted")
-        samples = mic.record_seconds(3.0)
+        samples = record_seconds(recorder, 3.0)
 
         if samples is None or len(samples) == 0:
             result("Recording", False, "koi audio nahi mila")
@@ -309,21 +353,30 @@ def check_mic(interactive: bool = True) -> None:
     say("")
     say("   Whisper model load kar raha hun (pehli baar download hoga)...", "muted")
     try:
-        from saarthi.voice.stt import SpeechToText, STTConfig
-
-        stt = SpeechToText(STTConfig.from_env())
+        stt = open_stt()
         stt.load()
-        text = stt.transcribe(samples)
-        result("Transcribe", bool(text and text.strip()), f"suna: {text!r}")
 
-        if text and text.strip():
-            from saarthi.voice.hinglish_asr import correct_transcript
+        # transcribe() khud Hinglish correction laga deta hai (PILLAR #1)
+        transcript = stt.transcribe(samples)
 
-            fixed = correct_transcript(text)
-            if fixed.was_changed:
-                say(f"   Hinglish correction: {fixed.explain()}", "muted")
-            else:
-                say("   (koi correction ki zarurat nahi padi)", "muted")
+        result(
+            "Transcribe",
+            bool(transcript.text and transcript.text.strip()),
+            f"suna: {transcript.text!r}",
+        )
+
+        # Whisper ka RAW output vs correction ke baad — yahi ASR layer
+        # ki asli value dikhata hai
+        if transcript.raw_text and transcript.raw_text != transcript.text:
+            say(f"   Whisper ne suna : {transcript.raw_text!r}", "muted")
+            say(f"   Correction baad : {transcript.text!r}", "muted")
+        else:
+            say("   (correction ki zarurat nahi padi)", "muted")
+
+        if not transcript.is_usable:
+            result("Audio quality", False, transcript.reject_reason)
+        say(f"   speed: {transcript.speed_ratio:.1f}x realtime", "muted")
+
     except Exception as exc:  # noqa: BLE001
         result("Transcribe", False, f"{type(exc).__name__}: {exc}")
 
@@ -371,7 +424,7 @@ def check_speaker(interactive: bool = True) -> None:
         return
 
     try:
-        engine.speak("Namaste bhai, main SAARTHI hun. Awaaz sunai de rahi hai?")
+        speak_text(engine, "Namaste bhai, main SAARTHI hun. Awaaz sunai de rahi hai?")
         say("")
         answer = input("   Awaaz SUNAI DI? (haan/nahi): ").strip().lower()
         heard = answer.startswith(("h", "y"))

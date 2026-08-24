@@ -11,7 +11,7 @@
 >
 > **Ek line mein abhi ka haal:** 8 LLM providers, 34 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, aur **195 tests jo `python run_tests.py` se chalte hain.**
+> automation, aur **218 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -367,7 +367,7 @@ Ab rule #9 (`KAAM PURA KARO`) ulta hai — jab tak kaam ho na jaaye, rukna nahi.
 
 ## 11. TESTING STATUS — ye IMAANDAARI se padh
 
-### ✅ AB ASLI TEST SUITE HAI — 195 tests
+### ✅ AB ASLI TEST SUITE HAI — 218 tests
 
 ```bash
 python run_tests.py              # sab (0.1 second mein)
@@ -393,6 +393,7 @@ kuch nahi chahiye. Sab fake ho jaata hai (`tests/helpers.py`).
 | `test_tools.py` | 16 | Registry, confirmation, full access mode |
 | `test_ui.py` | 26 | Renderers, ASCII/plain fallback, interface English hai |
 | `test_skills_healing.py` | 12 | **Teen level healing** — fake device se UI change simulate |
+| `test_hardware_check.py` | 23 | Voice API contract + hardware script (neeche padh) |
 
 **Bug ka number test ke naam mein hai.** Fail hone pe seedha samajh aata hai:
 ```
@@ -401,6 +402,30 @@ FAIL: test_bug3_semantic_healing_coordinates_se_pehle_hai
 ```
 
 **Naya bug mile to yahan test add karna — fix ke SAATH, baad mein nahi.**
+
+### ⚠️ BUG#9 se seekha ek zaroori sabak
+
+`hardware_check.py` mein maine (AI ne) voice API ke naam GUESS kar liye
+the — `Microphone` (asli: `Recorder`), `engine.speak()` (asli:
+`engine.say()`). Sandbox mein pakda NAHI gaya kyunki wahan mic nahi tha,
+to wo code path chala hi nahi. User ki asli machine pe crash hua.
+
+Pehli koshish mein maine test bhi GALAT likha — voice API ko alag se
+test kiya, wo pass hota raha aur bug phir bhi nikal gaya. Kyunki galat
+naam script ke ANDAR the, function-level import mein.
+
+**Do cheezein ab hain:**
+1. Script ke API calls **thin wrappers** mein hain (`open_recorder()`,
+   `speak_text()` etc.) jinhe test SEEDHA call karta hai — hardware ke
+   bina bhi.
+2. Ek **AST test** har entrypoint ke saare `from saarthi... import X`
+   verify karta hai, **chahe wo function ke andar likhe hon.**
+   Function-level imports sabse khatarnak hain — wo sirf tab fail hote
+   hain jab wo function chalta hai.
+
+**Aur sabse zaroori:** maine bug WAPAS daal ke verify kiya ki test
+sach mein fail hota hai. Warna "test pass ho raha hai" ka jhoota
+bharosa ban jaata hai. **Naya test likho to ye zaroor karo.**
 
 Aur verified:
 - 56 Python files, ~15,300 lines (+2,700 test lines)
@@ -638,7 +663,7 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 | **Indian apps** | 110 |
 | **LLM providers** | **8** (chaar ek hi NVIDIA key pe) |
 | **ASR corrections** | 65 rules |
-| **Tests** | **195 pass** — `python run_tests.py` |
+| **Tests** | **218 pass** — `python run_tests.py` |
 | **Interface** | English (professional) |
 | **Agent ki baat** | User ki bhasha — `SAARTHI_LANGUAGE=auto` |
 | **Max steps** | 25 |
