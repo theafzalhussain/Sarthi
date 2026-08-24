@@ -427,3 +427,203 @@ class ScriptsCompile(SaarthiTestCase):
                 py_compile.compile(str(ROOT / name), doraise=True)
             except Exception as exc:  # noqa: BLE001
                 self.fail(f"{name} compile nahi hua: {exc}")
+
+
+
+class MicDeviceSelection(SaarthiTestCase):
+    """
+    BUG#10 — galat mic device select hota tha.
+
+    Asli problem (user ki Windows machine pe mili):
+        21 input devices the. System default "Microsoft Sound Mapper -
+        Input" tha — ek legacy MME wrapper. Usse recording AATI thi par
+        peak sirf 303 (out of 32767) = practically silence. Whisper ne
+        khali string return ki. Lagta tha voice tuta hua hai, jabki
+        sirf galat device select tha.
+
+    Aur asli wajah: `AudioConfig` mein device field HI NAHI THA, aur
+    `Recorder` config ka device dekhta hi nahi tha. Matlab mic chunne
+    ka koi tareeka hi nahi tha.
+    """
+
+    def test_audio_config_mein_device_field_hai(self):
+        from saarthi.voice import AudioConfig
+
+        config = AudioConfig()
+        self.assertTrue(
+            hasattr(config, "device"),
+            "AudioConfig.device gayab — mic chunne ka koi tareeka nahi hoga",
+        )
+        self.assertIsNone(config.device, "default system default hona chahiye")
+
+    def test_audio_config_from_env_exist_karta_hai(self):
+        from saarthi.voice import AudioConfig
+
+        self.assertTrue(hasattr(AudioConfig, "from_env"))
+        with clean_env():
+            self.assertIsNone(AudioConfig.from_env().device)
+
+    def test_env_se_device_index_set_hota_hai(self):
+        from saarthi.voice import AudioConfig
+
+        with clean_env(SAARTHI_MIC_DEVICE="5"):
+            self.assertEqual(AudioConfig.from_env().device, 5)
+
+    def test_env_se_min_threshold_set_hota_hai(self):
+        from saarthi.voice import AudioConfig
+
+        with clean_env(SAARTHI_MIC_MIN_THRESHOLD="150"):
+            self.assertEqual(AudioConfig.from_env().min_threshold, 150.0)
+
+        # Galat value pe crash nahi — default rehna chahiye
+        with clean_env(SAARTHI_MIC_MIN_THRESHOLD="bakwaas"):
+            self.assertEqual(AudioConfig.from_env().min_threshold, 300.0)
+
+    def test_recorder_config_ka_device_use_karta_hai(self):
+        """
+        Ye asli bug tha: Recorder config.device ko IGNORE karta tha,
+        isliye SAARTHI_MIC_DEVICE set karne ka koi asar nahi hota tha.
+        """
+        from saarthi.voice import AudioConfig, Recorder
+
+        config = AudioConfig()
+        config.device = 7
+        recorder = Recorder(config)
+        self.assertEqual(
+            recorder.device, 7,
+            "Recorder ne config.device ignore kar diya — mic setting bekaar hai",
+        )
+
+    def test_explicit_device_param_config_se_jeetta_hai(self):
+        from saarthi.voice import AudioConfig, Recorder
+
+        config = AudioConfig()
+        config.device = 7
+        self.assertEqual(Recorder(config, device=3).device, 3)
+
+    def test_recorder_pe_peak_level_hai(self):
+        """Live level meter ke liye — user ko dikhna chahiye awaaz aa rahi hai."""
+        from saarthi.voice import Recorder
+
+        self.assertTrue(
+            hasattr(Recorder, "peak_level"),
+            "Recorder.peak_level gayab — live level meter nahi chalega",
+        )
+
+    def test_input_devices_structured_data_deta_hai(self):
+        from saarthi.voice import input_devices
+
+        devices = input_devices()
+        self.assertIsInstance(devices, list)
+        for device in devices:
+            for key in ("index", "name", "channels", "api", "is_default"):
+                self.assertIn(key, device, f"'{key}' gayab")
+            self.assertIsInstance(device["index"], int)
+            self.assertIsInstance(device["is_default"], bool)
+
+    def test_purana_list_input_devices_api_bacha_hua_hai(self):
+        """voice_cli.py aur hardware_check isko use karte hain."""
+        from saarthi.voice import list_input_devices
+
+        for item in list_input_devices():
+            self.assertTrue(item.startswith("["), f"format badal gaya: {item!r}")
+
+    def test_resolve_device_index_handle_karta_hai(self):
+        from saarthi.voice import resolve_device
+
+        self.assertEqual(resolve_device("5"), 5)
+        self.assertEqual(resolve_device(5), 5)
+        self.assertEqual(resolve_device("  12  "), 12)
+
+    def test_resolve_device_khali_pe_none_deta_hai(self):
+        from saarthi.voice import resolve_device
+
+        for value in (None, "", "   "):
+            self.assertIsNone(resolve_device(value))
+
+    def test_resolve_device_anjaan_naam_pe_crash_nahi_karta(self):
+        """Fail-safe: galat naam pe system default pe gir jao, crash nahi."""
+        from saarthi.voice import resolve_device
+
+        self.assertIsNone(resolve_device("aisa koi mic nahi hai 12345"))
+
+    def test_describe_device_padhne_layak_hai(self):
+        from saarthi.voice import describe_device
+
+        self.assertTrue(describe_device(None).strip())
+        self.assertIn("999", describe_device(999))
+
+
+class LevelMeter(SaarthiTestCase):
+    """
+    Level bar — user ko DIKHNA chahiye ki awaaz register ho rahi hai.
+
+    Recording ke BAAD ek number dikhana kaafi nahi tha; user ko pata
+    hi nahi chalta ki bolte waqt kuch aa raha hai ya nahi.
+    """
+
+    def load_module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "hardware_check", ROOT / "hardware_check.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        with captured_stdout():
+            spec.loader.exec_module(module)
+        return module
+
+    def test_level_bar_har_range_ka_verdict_deta_hai(self):
+        module = self.load_module()
+
+        cases = [
+            (0, "kuch nahi"),
+            (299, "kuch nahi"),
+            (303, "bahut dheema"),   # user ka asli peak
+            (1499, "bahut dheema"),
+            (2000, "theek"),
+            (6000, "accha"),
+        ]
+        for peak, expected in cases:
+            bar = module.level_bar(peak)
+            self.assertIn(expected, bar, f"peak {peak} ka verdict galat: {bar}")
+            self.assertIn(str(peak), bar)
+
+    def test_level_bar_width_respect_karta_hai(self):
+        module = self.load_module()
+        bar = module.level_bar(1000, width=10)
+        inside = bar[bar.index("[") + 1 : bar.index("]")]
+        self.assertEqual(len(inside), 10)
+
+    def test_bahut_bada_peak_bar_todta_nahi(self):
+        module = self.load_module()
+        bar = module.level_bar(999999, width=20)
+        inside = bar[bar.index("[") + 1 : bar.index("]")]
+        self.assertEqual(len(inside), 20)
+
+    def test_peak_level_wrapper_sahi_method_call_karta_hai(self):
+        module = self.load_module()
+        calls = []
+
+        class FakeRecorder:
+            def peak_level(self, seconds):
+                calls.append(seconds)
+                return 1234
+
+        self.assertEqual(module.peak_level(FakeRecorder(), 0.5), 1234)
+        self.assertEqual(calls, [0.5])
+
+    def test_open_recorder_device_param_leta_hai(self):
+        """--mic-scan har device ke liye recorder banata hai."""
+        module = self.load_module()
+        recorder = module.open_recorder(device=3)
+        self.assertEqual(recorder.device, 3)
+
+    def test_scan_mics_function_maujood_hai(self):
+        module = self.load_module()
+        self.assertTrue(hasattr(module, "scan_mics"))
+
+    def test_mic_scan_flag_wire_hua_hai(self):
+        source = (ROOT / "hardware_check.py").read_text(encoding="utf-8")
+        self.assertIn('"--mic-scan"', source)
+        self.assertIn("scan_mics()", source)

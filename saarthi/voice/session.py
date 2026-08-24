@@ -93,7 +93,7 @@ class VoiceConfig:
             return raw.strip().lower() in {"1", "true", "yes", "haan", "y"}
 
         return cls(
-            audio=AudioConfig(),
+            audio=AudioConfig.from_env(),
             whisper=WhisperConfig.from_env(),
             tts=TTSConfig.from_env(),
             wake=WakeConfig.from_env(),

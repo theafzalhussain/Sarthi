@@ -16,6 +16,7 @@ CHALANE KA TAREEKA:
 
     python hardware_check.py            # sab check karo
     python hardware_check.py --mic      # sirf mic
+    python hardware_check.py --mic-scan # HAR mic try karo, best batao
     python hardware_check.py --phone    # sirf phone (ADB)
     python hardware_check.py --speaker  # sirf awaaz
     python hardware_check.py --save     # report file mein bhi save karo
@@ -105,11 +106,39 @@ def section(title: str) -> None:
 # ----------------------------------------------------------------------
 
 
-def open_recorder():
+def open_recorder(device=None):
     """Mic recorder banao. (API: saarthi.voice.Recorder)"""
     from saarthi.voice import AudioConfig, Recorder
 
-    return Recorder(AudioConfig())
+    return Recorder(AudioConfig.from_env(), device=device)
+
+
+def peak_level(recorder, seconds: float = 0.25) -> int:
+    """Abhi ka peak level (0-32767). (API: Recorder.peak_level)"""
+    return recorder.peak_level(seconds)
+
+
+def level_bar(peak: int, width: int = 30) -> str:
+    """
+    Peak ko bar mein badlo — user ko DIKHE ki awaaz aa rahi hai.
+
+        peak     0-300     -> practically silence
+        peak   300-1500    -> bahut dheema (Whisper ko sunai nahi dega)
+        peak  1500+        -> theek
+    """
+    filled = min(width, int(width * min(peak, 8000) / 8000))
+    bar = ("#" * filled) + ("." * (width - filled))
+
+    if peak < 300:
+        verdict = "kuch nahi"
+    elif peak < 1500:
+        verdict = "bahut dheema"
+    elif peak < 4000:
+        verdict = "theek"
+    else:
+        verdict = "accha"
+
+    return f"[{bar}] {peak:>5}  {verdict}"
 
 
 def record_seconds(recorder, seconds: float):
@@ -287,6 +316,34 @@ def check_mic(interactive: bool = True) -> None:
     for device in devices[:5]:
         say(f"   - {device}", "muted")
 
+    # KAUNSA mic use ho raha hai — ye batana zaroori hai.
+    #
+    # Windows pe default aksar "Microsoft Sound Mapper - Input" hota
+    # hai (legacy MME wrapper). Usse recording aati hai par bahut
+    # dheemi, aur Whisper ko kuch sunai nahi deta. User ko lagta hai
+    # voice tuta hua hai, jabki sirf galat device select hai.
+    try:
+        from saarthi.voice import AudioConfig, describe_device
+
+        config = AudioConfig.from_env()
+        say(f"[INFO] Use ho raha hai: {describe_device(config.device)}")
+
+        if config.device is None:
+            chosen = describe_device(None).lower()
+            if "sound mapper" in chosen or "primary sound" in chosen:
+                say(
+                    "   Dhyan: ye ek legacy MME device hai — recording "
+                    "bahut dheemi aa sakti hai.",
+                    "warn",
+                )
+                say(
+                    "   Sahi mic dhoondhne ke liye chala: "
+                    "python hardware_check.py --mic-scan",
+                    "warn",
+                )
+    except Exception:  # noqa: BLE001
+        pass
+
     if not interactive:
         result("Asli recording test", None, "--mic ke bina skip")
         return
@@ -303,7 +360,39 @@ def check_mic(interactive: bool = True) -> None:
 
     try:
         recorder = open_recorder()
-        say("   Bol: \"paytm kholo\" ... (3 second)", "muted")
+
+        # --- LIVE LEVEL METER ---
+        # Recording ke BAAD number dikhana kaafi nahi — user ko usi
+        # waqt dikhna chahiye ki awaaz register ho rahi hai ya nahi.
+        say("")
+        say("   Bolte raho — 3 second tak level dikhaunga:", "muted")
+        levels = []
+        for _ in range(12):
+            level = peak_level(recorder, 0.25)
+            levels.append(level)
+            print(f"      {level_bar(level)}")
+
+        best_live = max(levels) if levels else 0
+        if best_live < 300:
+            result(
+                "Live level",
+                False,
+                f"peak sirf {best_live} — mic tak awaaz pahunch hi nahi rahi",
+            )
+            say("   Ye teen cheezein check kar:", "warn")
+            say("   1. Windows: Settings > System > Sound > Input — volume badha", "warn")
+            say("   2. Mic mute na ho (laptop pe hardware mute key bhi hoti hai)", "warn")
+            say("   3. Galat device select hai? chala: "
+                "python hardware_check.py --mic-scan", "warn")
+        elif best_live < 1500:
+            result("Live level", False, f"peak {best_live} — bahut dheema hai")
+            say("   Whisper ko itni dheemi awaaz sunai nahi degi.", "warn")
+            say("   Mic volume badha, ya --mic-scan se behtar device dhoondh.", "warn")
+        else:
+            result("Live level", True, f"peak {best_live} — theek hai")
+
+        say("")
+        say("   Ab 3 second ke liye bol: \"paytm kholo\"", "muted")
         samples = record_seconds(recorder, 3.0)
 
         if samples is None or len(samples) == 0:
@@ -379,6 +468,96 @@ def check_mic(interactive: bool = True) -> None:
 
     except Exception as exc:  # noqa: BLE001
         result("Transcribe", False, f"{type(exc).__name__}: {exc}")
+
+
+def scan_mics() -> None:
+    """
+    HAR input device se record karke batao kaunsa sach mein sunta hai.
+
+    Ye us asli problem ka ilaaj hai jo user ki machine pe mila: 21
+    input devices the, aur system default "Microsoft Sound Mapper"
+    tha — jisse peak sirf 303 aata tha (practically silence). Asli
+    Realtek mic alag index pe tha.
+
+    Guess karne se behtar hai sabko chala ke dekh lena.
+    """
+    section("Mic scan — kaunsa mic sach mein sunta hai")
+
+    try:
+        from saarthi.voice import input_devices, is_audio_available
+    except Exception as exc:  # noqa: BLE001
+        result("Voice module import", False, str(exc))
+        return
+
+    if not is_audio_available():
+        result("Mic available", False, "sounddevice / PortAudio nahi hai")
+        return
+
+    devices = input_devices()
+    if not devices:
+        result("Input devices", False, "koi input device nahi mila")
+        return
+
+    say(f"{len(devices)} input device milе. Har ek se 1 second record karunga.")
+    say("BOLTE RAHO poore scan ke dauraan — warna sab 0 aayega.", "warn")
+    say("")
+    try:
+        input("   Ready ho to Enter dabao (skip: Ctrl+C): ")
+    except (EOFError, KeyboardInterrupt):
+        say("")
+        result("Mic scan", None, "user ne skip kiya")
+        return
+
+    results = []
+    for device in devices:
+        label = f"[{device['index']}] {device['name'][:38]}"
+        try:
+            recorder = open_recorder(device=device["index"])
+            peak = peak_level(recorder, 1.0)
+            results.append((peak, device))
+            print(f"   {label:<45} {level_bar(peak, width=20)}")
+        except Exception as exc:  # noqa: BLE001
+            short = str(exc).splitlines()[0][:50]
+            print(f"   {label:<45} chal nahi paya — {short}")
+
+    if not results:
+        result("Mic scan", False, "koi device se record nahi hua")
+        return
+
+    results.sort(key=lambda item: item[0], reverse=True)
+    best_peak, best = results[0]
+
+    say("")
+    if best_peak < 300:
+        result("Koi mic sunta hai", False, f"sabse accha bhi sirf {best_peak} tha")
+        say("   Matlab problem device ka nahi hai — mic hi mute hai ya", "warn")
+        say("   Windows ne permission nahi di hai. Ye check kar:", "warn")
+        say("   - Settings > System > Sound > Input > volume", "warn")
+        say("   - Settings > Privacy & security > Microphone > allow apps", "warn")
+        say("   - Laptop ka hardware mute key / F-key", "warn")
+        return
+
+    result("Sabse accha mic mila", True, f"peak {best_peak}")
+    say("")
+    if HAS_UI:
+        ui.hint(
+            f"Ye mic use kar:\n"
+            f"    [{best['index']}] {best['name']}\n\n"
+            f".env mein ye line daal (NAAM se, index se nahi):\n"
+            f"    SAARTHI_MIC_DEVICE={best['name']}\n\n"
+            f"Naam se kyun? Index reboot pe ya USB nikaalne pe BADAL\n"
+            f"jaata hai, naam usually same rehta hai.\n\n"
+            f"Phir dobara chala: python hardware_check.py --mic",
+            title="ab ye kar",
+        )
+    else:
+        say(f"Ye .env mein daal: SAARTHI_MIC_DEVICE={best['name']}")
+
+    # Top 3 dikhao — kabhi kabhi doosra option behtar hota hai
+    if len(results) > 1:
+        say("Top options:", "muted")
+        for peak, device in results[:3]:
+            say(f"   peak {peak:>5}  [{device['index']}] {device['name']}", "muted")
 
 
 # ----------------------------------------------------------------------
@@ -619,7 +798,7 @@ def main() -> int:
         print(__doc__)
         return 0
 
-    only = args & {"--mic", "--speaker", "--phone", "--browser", "--keys"}
+    only = args & {"--mic", "--speaker", "--phone", "--browser", "--keys", "--mic-scan"}
     run_all = not only
 
     if HAS_UI:
@@ -638,6 +817,9 @@ def main() -> int:
         check_system()
         check_install()
         check_keys()
+
+    if "--mic-scan" in only:
+        scan_mics()
 
     if run_all or "--mic" in only:
         check_mic(interactive=("--mic" in only) or run_all)

@@ -75,6 +75,19 @@ class AudioConfig:
     channels: int = CHANNELS
     chunk_ms: int = CHUNK_MS
 
+    # Kaunsa microphone use karna hai.
+    #
+    # None = system ka default. PAR YE ASLI PROBLEM HAI:
+    # Windows pe default aksar "Microsoft Sound Mapper - Input" hota hai,
+    # jo ek legacy MME wrapper hai. Usse recording aati hai par BAHUT
+    # DHEEMI (peak ~300 out of 32767 = practically silence). Whisper ko
+    # phir kuch sunai nahi deta aur user ko lagta hai voice tuta hua hai.
+    #
+    # Ye asli bug hai jo user ki machine pe mila. Fix: .env mein
+    # SAARTHI_MIC_DEVICE se asli mic chun lo.
+    # Kaunsa chunna hai wo pata karne ke liye: python hardware_check.py --mic-scan
+    device: int | None = None
+
     # --- Silence detection tuning ---
 
     # Background noise se kitna zyada loud ho tab "bolna" maana jaaye
@@ -124,6 +137,32 @@ class AudioConfig:
     @property
     def calibration_chunks(self) -> int:
         return max(1, int(self.calibration_duration * self.chunks_per_second))
+
+    @classmethod
+    def from_env(cls) -> "AudioConfig":
+        """
+        .env se settings padho.
+
+        Baaki configs (WhisperConfig, TTSConfig) ki tarah ye bhi ab
+        env-aware hai. Pehle nahi thi, isliye SAARTHI_MIC_DEVICE jaisi
+        setting ka koi tareeka hi nahi tha.
+        """
+        import os
+
+        config = cls()
+
+        raw_device = os.getenv("SAARTHI_MIC_DEVICE", "").strip()
+        if raw_device:
+            config.device = resolve_device(raw_device)
+
+        raw_min = os.getenv("SAARTHI_MIC_MIN_THRESHOLD", "").strip()
+        if raw_min:
+            try:
+                config.min_threshold = float(raw_min)
+            except ValueError:
+                pass
+
+        return config
 
 
 # ----------------------------------------------------------------------
@@ -426,20 +465,124 @@ def audio_setup_help() -> str:
     return "\n".join(lines)
 
 
-def list_input_devices() -> list[str]:
-    """Kaunse mic available hain."""
+def input_devices() -> list[dict]:
+    """
+    Saare input devices — structured.
+
+    Returns list of:
+        {"index": 5, "name": "Microphone Array (Realtek...)",
+         "channels": 2, "api": "Windows WASAPI", "is_default": False}
+
+    `list_input_devices()` isi ka string version hai (purana API,
+    backward compatibility ke liye rakha hai).
+    """
     if not HAS_SOUNDDEVICE:
         return []
+
     try:
         devices = sd.query_devices()
     except Exception:  # noqa: BLE001
         return []
 
-    out: list[str] = []
+    try:
+        default_index = sd.default.device[0]
+    except Exception:  # noqa: BLE001
+        default_index = None
+
+    try:
+        apis = sd.query_hostapis()
+    except Exception:  # noqa: BLE001
+        apis = []
+
+    out: list[dict] = []
     for index, device in enumerate(devices):
-        if device.get("max_input_channels", 0) > 0:
-            out.append(f"[{index}] {device.get('name', '?')}")
+        if device.get("max_input_channels", 0) <= 0:
+            continue
+
+        api_index = device.get("hostapi")
+        api_name = ""
+        if isinstance(api_index, int) and 0 <= api_index < len(apis):
+            api_name = apis[api_index].get("name", "")
+
+        out.append(
+            {
+                "index": index,
+                "name": device.get("name", "?"),
+                "channels": device.get("max_input_channels", 0),
+                "api": api_name,
+                "is_default": index == default_index,
+            }
+        )
     return out
+
+
+def list_input_devices() -> list[str]:
+    """Kaunse mic available hain (string form — purana API)."""
+    return [f"[{d['index']}] {d['name']}" for d in input_devices()]
+
+
+def resolve_device(value: object) -> int | None:
+    """
+    User ki di hui device setting ko index mein badlo.
+
+    Do tareeke chalte hain:
+        SAARTHI_MIC_DEVICE=5          -> seedha index
+        SAARTHI_MIC_DEVICE=Realtek    -> naam ka hissa (case-insensitive)
+
+    NAAM SE MATCH KARNA ZYADA BEHTAR HAI, kyunki device index reboot
+    pe ya USB mic nikaalne-lagane pe BADAL JAATA HAI. Naam usually
+    same rehta hai.
+
+    Kuch match na ho to None (system default) — crash nahi.
+    """
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    # Seedha index diya hai?
+    try:
+        return int(text)
+    except ValueError:
+        pass
+
+    # Naam se dhoondo
+    needle = text.lower()
+    devices = input_devices()
+
+    for device in devices:
+        if needle == device["name"].lower():
+            return device["index"]
+    for device in devices:
+        if needle in device["name"].lower():
+            return device["index"]
+
+    log.warning(
+        "SAARTHI_MIC_DEVICE='%s' se koi mic match nahi hua. "
+        "System default use kar raha hun. "
+        "Available: %s",
+        text,
+        ", ".join(f"[{d['index']}] {d['name']}" for d in devices) or "koi nahi",
+    )
+    return None
+
+
+def describe_device(index: int | None) -> str:
+    """Device ka padhne layak naam — hardware_check ke liye."""
+    devices = input_devices()
+
+    if index is None:
+        default = next((d for d in devices if d["is_default"]), None)
+        if default:
+            return f"[{default['index']}] {default['name']} (system default)"
+        return "system default"
+
+    match = next((d for d in devices if d["index"] == index), None)
+    if match:
+        return f"[{match['index']}] {match['name']}"
+    return f"[{index}] (is index pe koi input device nahi mila)"
 
 
 # ----------------------------------------------------------------------
@@ -462,7 +605,38 @@ class Recorder:
 
     def __init__(self, config: AudioConfig | None = None, device: int | None = None):
         self.config = config or AudioConfig()
-        self.device = device
+        # `device` param jeetta hai, warna config se lo (jo .env se aata
+        # hai). Pehle config ka device dekha hi nahi jaata tha — isliye
+        # SAARTHI_MIC_DEVICE set karne ka koi asar nahi hota tha.
+        self.device = device if device is not None else self.config.device
+
+    def peak_level(self, seconds: float = 0.25) -> int:
+        """
+        Abhi ka peak level (0-32767) — LIVE level meter ke liye.
+
+        Ye diagnostic ke liye bahut zaroori hai: user ko DIKHNA chahiye
+        ki uski awaaz register ho rahi hai ya nahi. Recording ke BAAD
+        ek number dikhana kaafi nahi — tab tak der ho chuki hoti hai.
+        """
+        self._require_audio()
+
+        frames = max(1, int(seconds * self.config.sample_rate))
+        audio = sd.rec(
+            frames,
+            samplerate=self.config.sample_rate,
+            channels=self.config.channels,
+            dtype="int16",
+            device=self.device,
+        )
+        sd.wait()
+
+        flat = audio.ravel() if hasattr(audio, "ravel") else audio
+        if len(flat) == 0:
+            return 0
+        try:
+            return int(abs(flat).max())
+        except Exception:  # noqa: BLE001
+            return max(abs(int(sample)) for sample in flat)
 
     def _require_audio(self) -> None:
         if not is_audio_available():

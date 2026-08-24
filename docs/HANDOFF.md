@@ -11,7 +11,7 @@
 >
 > **Ek line mein abhi ka haal:** 8 LLM providers, 34 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, aur **218 tests jo `python run_tests.py` se chalte hain.**
+> automation, aur **238 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -337,6 +337,8 @@ wapas nahi aata.
 | 5 | **Porcupine error khali** — short-circuit se `_error` populate nahi hua, user ko wajah nahi pata chalti | `_build()` pehle call + `unavailable_reason()` jo SAARE blockers batata hai |
 | 6 | **Deprecated model names** — teeno providers 404 de rahe the | `/models` discovery + actionable 404 + `.env.example` mein model lines commented |
 | 7 | **Browser tab hijack** — agent user ka chalu tab chheen leta tha. Do jagah se: `webbrowser.open()` ka default `new=0` current tab REPLACE kar sakta tha, aur `launch_app()` hamesha `self._page` reuse karta tha | `new=2` + `autoraise=False`; naya tab per task; `_agent_url` se **user-takeover detection**; `MAX_TABS=10` cap; `bring_to_front()` kabhi nahi |
+| 9 | **Galat voice API naam** `hardware_check.py` mein — `Microphone` (asli `Recorder`), `engine.speak()` (asli `engine.say()`). Sandbox mein pakda nahi gaya kyunki mic nahi tha, wo code path chala hi nahi | Asli code padh ke sahi naam. Plus thin wrappers + AST test jo function-level imports bhi verify karta hai |
+| 10 | **Galat mic device** — Windows pe default "Microsoft Sound Mapper" (legacy MME) select hota tha, `peak` sirf 303 = silence. Whisper ko kuch sunai nahi deta tha. Asli wajah: `AudioConfig` mein device field HI NAHI THA, mic chunne ka koi tareeka nahi tha | `AudioConfig.device` + `from_env()` + `SAARTHI_MIC_DEVICE` (naam ya index se). Plus `--mic-scan` jo har mic try karke best batata hai, aur live level meter |
 | 8 | **`extract_amount()` substring** (BUG#1 ka same class) — money context `"rs"` SUBSTRING se check hota tha, to "yea**rs**", "fi**rs**t", "hou**rs**" amount de dete the | `\b` word boundaries + payment app naam explicit (`paytm`/`phonepe`/`upi`), kyunki `"pay"` substring hatane se wo miss ho rahe the |
 
 ### ⚠️ Jo galti MAINE (AI ne) ki thi — isse seekh
@@ -367,7 +369,7 @@ Ab rule #9 (`KAAM PURA KARO`) ulta hai — jab tak kaam ho na jaaye, rukna nahi.
 
 ## 11. TESTING STATUS — ye IMAANDAARI se padh
 
-### ✅ AB ASLI TEST SUITE HAI — 218 tests
+### ✅ AB ASLI TEST SUITE HAI — 238 tests
 
 ```bash
 python run_tests.py              # sab (0.1 second mein)
@@ -393,7 +395,7 @@ kuch nahi chahiye. Sab fake ho jaata hai (`tests/helpers.py`).
 | `test_tools.py` | 16 | Registry, confirmation, full access mode |
 | `test_ui.py` | 26 | Renderers, ASCII/plain fallback, interface English hai |
 | `test_skills_healing.py` | 12 | **Teen level healing** — fake device se UI change simulate |
-| `test_hardware_check.py` | 23 | Voice API contract + hardware script (neeche padh) |
+| `test_hardware_check.py` | 43 | Voice API contract, mic device selection, level meter |
 
 **Bug ka number test ke naam mein hai.** Fail hone pe seedha samajh aata hai:
 ```
@@ -663,7 +665,7 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 | **Indian apps** | 110 |
 | **LLM providers** | **8** (chaar ek hi NVIDIA key pe) |
 | **ASR corrections** | 65 rules |
-| **Tests** | **218 pass** — `python run_tests.py` |
+| **Tests** | **238 pass** — `python run_tests.py` |
 | **Interface** | English (professional) |
 | **Agent ki baat** | User ki bhasha — `SAARTHI_LANGUAGE=auto` |
 | **Max steps** | 25 |

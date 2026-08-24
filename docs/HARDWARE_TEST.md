@@ -50,6 +50,7 @@ Bas. Ye script:
 
 ```bash
 python hardware_check.py --mic       # sirf microphone
+python hardware_check.py --mic-scan  # HAR mic try karo, best batao
 python hardware_check.py --speaker   # sirf awaaz
 python hardware_check.py --phone     # sirf phone (ADB)
 python hardware_check.py --browser   # sirf browser
@@ -131,6 +132,42 @@ python hardware_check.py --mic
 | `PortAudio library not found` | System library nahi hai | `sudo apt install libportaudio2` |
 | Windows pe permission error | Mic permission nahi hai | Settings > Privacy > Microphone > allow |
 | **Sirf shor sunai deta hai** | int16→float32 conversion ka bug | ⚠️ **Ye report karo** — `voice/stt.py` mein `/32768` hona chahiye |
+| **`peak` 300-1500 (bahut dheema)** | Galat mic device select hai | `python hardware_check.py --mic-scan` chala — neeche padh |
+
+#### 🎤 Galat mic select ho gaya? — `--mic-scan`
+
+Ye ASLI problem hai jo mili: Windows pe 21 input devices the, aur system
+default **"Microsoft Sound Mapper - Input"** tha — ek legacy MME wrapper.
+Usse recording *aati* thi par `peak` sirf **303** (32767 mein se) =
+practically silence. Whisper ne khali string di.
+
+```bash
+python hardware_check.py --mic-scan
+```
+
+Ye **har mic se 1 second record** karke batata hai kaunsa sach mein
+sunta hai:
+
+```
+   [0] Microsoft Sound Mapper - Input      [#...................]   303  bahut dheema
+   [5] Microphone Array (Realtek(R) Audio) [########............]  4200  accha
+   [9] Microphone Array (Realtek(R) Audio) [######..............]  2800  theek
+```
+
+Phir `.env` mein best wala daal — **naam se, index se nahi:**
+
+```env
+SAARTHI_MIC_DEVICE=Microphone Array (Realtek(R) Audio)
+```
+
+**Naam se kyun?** Device **index reboot pe ya USB mic nikaalne-lagane pe
+badal jaata hai.** Naam usually same rehta hai. `Realtek` jaisa hissa
+bhi chalega.
+
+Mic bahut dheema hi rahe to threshold bhi kam kar sakta hai:
+```env
+SAARTHI_MIC_MIN_THRESHOLD=150
+```
 
 > **Wo aakhri wala khaas hai.** Whisper `[-1, 1]` range maangta hai, mic
 > `int16` (0-32767) deta hai. Divide by 32768 zaroori hai. Code mein hai,

@@ -141,7 +141,7 @@ class WakeDetector(ABC):
         audio_config: AudioConfig | None = None,
     ):
         self.config = config or WakeConfig()
-        self.audio_config = audio_config or AudioConfig()
+        self.audio_config = audio_config or AudioConfig.from_env()
 
     @abstractmethod
     def is_available(self) -> bool:
@@ -495,7 +495,7 @@ def create_wake_detector(
     kyunki wo hamesha chalta hai. Agent kabhi nahi rukta.
     """
     config = config or WakeConfig()
-    audio_config = audio_config or AudioConfig()
+    audio_config = audio_config or AudioConfig.from_env()
 
     mode = (config.mode or "push_to_talk").lower()
     detector_class = WAKE_MODES.get(mode)
