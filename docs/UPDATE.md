@@ -24,6 +24,37 @@ kabhi kaam nahi karega — us folder ka GitHub se koi rishta hi nahi hai.
 
 ---
 
+## ⚠️ SABSE PEHLE: PROMPT PADHNA SEEKH LE
+
+PowerShell ka prompt batata hai tu KAHAN khada hai:
+
+```
+PS C:\>              <- tu C: drive pe hai. Yahan project ki files NAHI hain.
+PS C:\Sarthi>        <- tu project ke ANDAR hai. Sahi jagah. ✅
+```
+
+**99% "file not found" error isi wajah se aati hai** — command sahi
+hoti hai, par tu galat folder mein khada hota hai.
+
+```
+PS C:\> python run_tests.py
+C:\Python314\python.exe: can't open file 'C:\run_tests.py'
+                                             ^^^^^^^^^^^^^^^
+                              dekh — ye C:\ mein dhoondh raha hai,
+                              C:\Sarthi mein nahi
+```
+
+**Fix hamesha yahi hai:**
+
+```powershell
+cd C:\Sarthi
+```
+
+Koi bhi command chalane se PEHLE dekh le ki prompt `PS C:\Sarthi>`
+dikha raha hai ya nahi.
+
+---
+
 ## Normal update (repo sahi hai)
 
 ```powershell
@@ -67,12 +98,28 @@ hain aur bahut tools confuse ho jaate hain.
 
 ### Commands (poora block copy karke paste kar de)
 
+Ek-ek line chala, har line ke baad Enter:
+
 ```powershell
 cd C:\
+```
+```powershell
 git clone https://github.com/theafzalhussain/Sarthi.git
+```
+```powershell
 cd C:\Sarthi
+```
+> ⬆️ **YE LINE SABSE ZARURI HAI.** Iske bina agli saari commands fail
+> hongi, kyunki tu C:\ pe khada rahega jahan project ki files nahi hain.
+> Prompt `PS C:\Sarthi>` dikhna chahiye.
+
+```powershell
 pip install -r requirements.txt
 ```
+
+**"destination path 'Sarthi' already exists" aaya?** Matlab clone pehle
+hi ho chuka hai — dobara clone karne ki zarurat nahi. Seedha
+`cd C:\Sarthi` kar aur aage badh.
 
 ### Apni purani `.env` copy kar (keys usme hain)
 
@@ -111,19 +158,31 @@ python --version
 
 SAARTHI **Python 3.9+** pe chalta hai. Par ek baat:
 
-**Bahut naya Python (3.13 / 3.14) ho to VOICE ke packages install nahi
-honge.** Wajah: `faster-whisper`, `sounddevice`, `pvporcupine` — ye
-C-extension packages hain, aur naye Python version ke liye unke
-pre-built wheels aane mein kuch mahine lagte hain.
+**Python 3.14 pe VOICE bhi chalta hai — verify ho chuka hai.**
 
-**Check kar:**
+Pehle mujhe (AI ko) shak tha ki `faster-whisper` aur `sounddevice`
+jaise C-extension packages ke 3.14 wheels nahi honge. Par user ne asli
+machine pe chala ke dikhaya — sab native cp314 wheels ke saath install
+ho gaye:
+
+```
+ctranslate2-4.8.1-cp314-cp314-win_amd64.whl
+numpy-2.5.2-cp314-cp314-win_amd64.whl
+onnxruntime-1.29.0-cp314-cp314-win_amd64.whl
+sounddevice-0.5.6-py3-none-win_amd64.whl
+faster_whisper-1.2.1-py3-none-any.whl
+```
+
+**Sabak: guess mat karo, chala ke dekho.**
 
 ```powershell
 pip install faster-whisper sounddevice numpy
+pip install pyttsx3          # Windows pe awaaz ke liye
 ```
 
-Error aaye jisme `Building wheel ... failed` ya `Microsoft Visual C++
-14.0 or greater is required` likha ho, to wheels available nahi hain.
+Agar KABHI `Building wheel ... failed` ya `Microsoft Visual C++ 14.0 or
+greater is required` aaye, to us package ke wheels tere Python version
+ke liye nahi hain.
 
 **Fix — Python 3.12 alag se install kar (purana hataye bina):**
 
