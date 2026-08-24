@@ -84,6 +84,7 @@ class Brain:
         # wala thodi der ke liye. User ko sirf ek baar batate hain.
         self._dead: dict[str, str] = {}        # naam -> wajah (permanent)
         self._cooldown: dict[str, float] = {}  # naam -> kab tak skip karna hai
+        self._failures: dict[str, int] = {}     # naam -> lagatar fail count
 
         # CLI/voice isko set karta hai taaki fallback ki khabar UI mein
         # theek se dikhe. Warna logging ka raw warning stderr pe chhap
@@ -114,6 +115,41 @@ class Brain:
         # Cooldown khatam — saaf kar do
         self._cooldown.pop(provider.name, None)
         return True
+
+    # Itni baar lagatar fail hua to cooldown pe daal do.
+    #
+    # ⚠️ YE EK ASLI PROBLEM SE AAYA HAI.
+    #
+    # User ka deepseek HAR STEP pe fail ho raha tha:
+    #     · deepseek ne kaam nahi kiya, nvidia se kar diya
+    #     · deepseek ne kaam nahi kiya, nvidia se kar diya
+    #     ... (8 step tak, har baar)
+    #
+    # Error permanent nahi tha (timeout/network type), isliye
+    # mark_dead() nahi lagta tha — aur provider HAR STEP pe dobara try
+    # hota tha. Ek YouTube task mein 58 SECOND lag gaye.
+    #
+    # Ab: koi provider lagatar itni baar fail ho to thodi der ke liye
+    # chhod dete hain, chahe error "temporary" ho.
+    MAX_CONSECUTIVE_FAILURES = 3
+
+    def _note_failure(self, name: str) -> None:
+        """Lagatar fail ka count badhao, aur limit paar ho to cooldown."""
+        count = self._failures.get(name, 0) + 1
+        self._failures[name] = count
+
+        if count >= self.MAX_CONSECUTIVE_FAILURES:
+            self.mark_cooldown(name)
+            self._failures[name] = 0
+            self._say(
+                "debug",
+                f"{name} lagatar {count} baar fail hua — "
+                f"{self.COOLDOWN_SECONDS}s ke liye chhod raha hun",
+            )
+
+    def _note_success(self, name: str) -> None:
+        """Chal gaya — counter reset."""
+        self._failures.pop(name, None)
 
     def mark_dead(self, name: str, reason: str) -> None:
         """Ye provider session bhar ke liye band."""
@@ -148,6 +184,7 @@ class Brain:
         """Sab dobara try karo (CLI ka /retry)."""
         self._dead.clear()
         self._cooldown.clear()
+        self._failures.clear()
 
     # ------------------------------------------------------------------
     #  Status
@@ -294,6 +331,8 @@ class Brain:
                         f"{provider.name} se kar diya",
                     )
 
+                self._note_success(provider.name)
+
                 if self.settings.debug:
                     log.info(
                         "%s ne jawab diya (%d prompt + %d completion tokens)",
@@ -323,13 +362,17 @@ class Brain:
                 continue
 
             except BrainError as exc:
-                # Ye provider fail hua — agle pe jao
+                # Ye provider fail hua — agle pe jao.
+                # Lagatar fail ho raha hai to cooldown pe daal do,
+                # warna HAR STEP pe dobara try hoga aur waqt barbaad.
                 log.warning("%s fail hua: %s", provider.name, exc)
+                self._note_failure(provider.name)
                 errors.append(f"{provider.name}: {exc}")
                 continue
 
             except Exception as exc:  # noqa: BLE001 — unexpected bhi handle karo
                 log.warning("%s unexpected error: %s", provider.name, exc)
+                self._note_failure(provider.name)
                 errors.append(f"{provider.name}: unexpected — {exc}")
                 continue
 

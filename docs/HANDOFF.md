@@ -9,9 +9,9 @@
 > **Last updated:** August 2026 · 16 commits
 > **Status:** Phase 1 ✅ · Phase 2 ✅ · Phase 3 🟡 (part 1 done) · Phase 4-5 ⬜
 >
-> **Ek line mein abhi ka haal:** 8 LLM providers, 34 tools, 110 Indian apps,
+> **Ek line mein abhi ka haal:** 8 LLM providers, 37 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, aur **270 tests jo `python run_tests.py` se chalte hain.**
+> automation, aur **294 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -70,7 +70,7 @@ saarthi/
 ├── brain/          LLM providers + auto-fallback
 ├── lang/           PILLAR #1 — Hinglish parsing
 ├── devices/        Universal device adapters
-├── tools/          34 tools + safety layer
+├── tools/          37 tools + safety layer
 ├── memory/         SQLite (facts + conversations)
 └── skills/         PILLAR #2 — Dikha Do Mode
 cli.py              Text REPL
@@ -97,7 +97,7 @@ cli.py              Text REPL
 - `desktop.py` — shell/files/apps + optional pyautogui
 - `manager.py` — `DeviceManager`, Hinglish→device routing
 
-### `tools/` — 34 tools
+### `tools/` — 37 tools
 - `registry.py` — **`execute()` = single safety chokepoint**
   (validate → type-coerce → confirm → run → never raise)
 - `safety.py` — hard blocks + confirm rules + `is_affirmative()`
@@ -342,6 +342,11 @@ wapas nahi aata.
 | 11 | **`.env` ki generation settings KUCH NAHI KARTI THI** — user ne `NVIDIA_ENABLE_THINKING`, `NVIDIA_MAX_TOKENS`, `NVIDIA_TOP_P` likha tha, teeno code mein hi nahi the. Aur `max_tokens` har jagah 2048 hardcoded tha — reasoning model ke saath jawab beech mein kat jaata tha | `_provider_tuning()` — per-provider `{NAME}_MAX_TOKENS` / `_TOP_P` / `_ENABLE_THINKING`, plus global `SAARTHI_MAX_TOKENS` (default 2048 → 4096). Tests payload check karte hain, sirf config nahi |
 | 12 | **`SAARTHI_DEFAULT_DEVICE` pe validation nahi thi** — user ne `Realtek` likh diya (mic ki setting samajh ke). Chup-chaap accept ho gaya; ittefaq se desktop pe girta tha, par wo luck thi | `_env_choice` validation (`desktop`/`android`/`browser`) |
 | 13 | **RAM detection Windows pe kaam hi nahi karti thi** — sirf `/proc/meminfo` aur `os.sysconf()` (dono Unix-only). Windows pe hamesha 0 → `recommend_model_size()` "base" pe atak jaata tha, chahe 31GB RAM ho. Aur `base` Hinglish pe kamzor hai: "paytm kholo" → "Kya kya ouri website, proper da yaar uca" | `total_ram_gb()` mein Windows (`GlobalMemoryStatusEx`), macOS (`sysctl`), Linux, Unix fallback aur psutil — chaar branch. `.env.example` ka default `base` → `small` |
+| 14 | **Whisper `initial_prompt` HALLUCINATION karata tha** — prompt mein poore sentences the ("Laptop pe chrome khol ke YouTube chala do"). Whisper ka initial_prompt "pichla context" hai, prose daalo to model usko AAGE BADHATA hai. User: "paytm kholo" → "Open YouTube and play Theravins on." Audio PERFECT thi. **Pillar #1 pe seedha chot** | Prompt mein sirf VOCABULARY (comma-separated), sentences NAHI. 569→329 chars. Plus `looks_like_prompt_echo()` guard jo echo pakad ke bina-prompt retry karta hai |
+| 15 | **File likhne ka tool hi nahi tha** — "excel marks sheet bana de" pe agent ne poora Python script shell mein ghusane ki koshish ki (`@'...'@ >`, `echo >>`). 20+ koshish fail, max steps khatam. Agent ki galti nahi thi, TOOL nahi tha | Naye `file_banao` / `file_padho` / `files_dikhao` (34→37 tools). Multi-line content seedha, koi escaping nahi. Prompt rule #6b bhi |
+| 16 | **Lagatar fail hone wala provider HAR STEP pe retry hota tha** — deepseek 8 step mein 8 baar fail, ek task mein 58 second. Error permanent nahi tha to `mark_dead()` nahi lagta tha | `MAX_CONSECUTIVE_FAILURES=3` — 3 baar lagatar fail = cooldown, chahe error temporary ho. Success pe counter reset |
+| 17 | **`WHISPER_MODEL` pe validation nahi thi** — user ne `big` likha (aisa model nahi hai), load pe crash | `_valid_model_size()` + aliases (`big`→`medium`). Default `base`→`small` |
+| 18 | **Voice mode HANG hua lagta tha** — `_report_listening` sirf SPEAKING/CALIBRATING report karta tha. WAITING pe kuch nahi → user ko pata hi nahi chalta ki AB BOLNA HAI | WAITING pe "AB BOL — sun raha hun", loudness vs threshold feedback, aur state dedupe (15 baar spam band) |
 | 8 | **`extract_amount()` substring** (BUG#1 ka same class) — money context `"rs"` SUBSTRING se check hota tha, to "yea**rs**", "fi**rs**t", "hou**rs**" amount de dete the | `\b` word boundaries + payment app naam explicit (`paytm`/`phonepe`/`upi`), kyunki `"pay"` substring hatane se wo miss ho rahe the |
 
 ### ⚠️ Jo galti MAINE (AI ne) ki thi — isse seekh
@@ -372,7 +377,7 @@ Ab rule #9 (`KAAM PURA KARO`) ulta hai — jab tak kaam ho na jaaye, rukna nahi.
 
 ## 11. TESTING STATUS — ye IMAANDAARI se padh
 
-### ✅ AB ASLI TEST SUITE HAI — 270 tests
+### ✅ AB ASLI TEST SUITE HAI — 294 tests
 
 ```bash
 python run_tests.py              # sab (0.1 second mein)
@@ -664,11 +669,11 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 | **Files** | 53 tracked, 56 Python |
 | **Lines** | ~15,300 Python (+2,700 tests) |
 | **Python** | 3.9+ |
-| **Tools** | 34 |
+| **Tools** | 37 |
 | **Indian apps** | 110 |
 | **LLM providers** | **8** (chaar ek hi NVIDIA key pe) |
 | **ASR corrections** | 65 rules |
-| **Tests** | **270 pass** — `python run_tests.py` |
+| **Tests** | **294 pass** — `python run_tests.py` |
 | **Interface** | English (professional) |
 | **Agent ki baat** | User ki bhasha — `SAARTHI_LANGUAGE=auto` |
 | **Max steps** | 25 |

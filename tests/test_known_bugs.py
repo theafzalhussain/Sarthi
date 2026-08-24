@@ -479,3 +479,379 @@ class HardBlocksNeverBypass(SaarthiTestCase):
                 result.ok,
                 "auto_approve ON hone pe rm -rf / CHAL GAYA — hard block toot gaya!",
             )
+
+
+
+class Bug14PromptHallucination(SaarthiTestCase):
+    """
+    BUG #14 — Whisper ka `initial_prompt` HALLUCINATION karata tha.
+
+    Asli case (user ki machine):
+        Bola  : "paytm kholo"
+        Suna  : "Open YouTube and play Theravins on."
+        Audio : PERFECT thi (peak 17790)
+
+    Wajah: `initial_prompt` mein POORE SENTENCES the, jaise
+    "Laptop pe chrome khol ke YouTube chala do." Whisper ka
+    initial_prompt "pichla context" ki tarah kaam karta hai — usme
+    prose daalo to model usko AAGE BADHATA hai, sunta nahi.
+
+    Ye Pillar #1 (Hinglish ASR) pe seedha chot thi — jo feature
+    accuracy badhane ke liye tha wahi tod raha tha.
+
+    Fix: prompt mein sirf VOCABULARY (comma-separated), sentences nahi.
+    Plus hallucination guard jo echo pakad ke bina-prompt retry karta hai.
+    """
+
+    def test_bug14_prompt_mein_sentences_nahi_hain(self):
+        from saarthi.voice.hinglish_asr import build_initial_prompt
+
+        prompt = build_initial_prompt()
+
+        # Sentence ke nishaan: full stop ke baad capital, ya "pe/se/ka"
+        # jaise joining words
+        self.assertNotIn(
+            ". ", prompt,
+            f"Prompt mein sentence lag raha hai — hallucination hoga:\n{prompt}",
+        )
+        for phrase in ("chala do", "bhej do", "bhar do", "kar do", "order kar"):
+            self.assertNotIn(
+                phrase, prompt,
+                f"'{phrase}' ek sentence ka hissa hai — prompt se hatao",
+            )
+
+    def test_bug14_purane_trap_examples_prompt_mein_nahi_jaate(self):
+        from saarthi.voice.hinglish_asr import (
+            _HALLUCINATION_TRAP_EXAMPLES,
+            build_initial_prompt,
+        )
+
+        prompt = build_initial_prompt()
+        for example in _HALLUCINATION_TRAP_EXAMPLES:
+            self.assertNotIn(
+                example, prompt,
+                "Trap example wapas prompt mein aa gaya — BUG#14 wapas!",
+            )
+
+    def test_bug14_vocabulary_biasing_phir_bhi_kaam_karti_hai(self):
+        """Fix ne biasing todi nahi — app naam abhi bhi jaate hain."""
+        from saarthi.voice.hinglish_asr import build_initial_prompt
+
+        prompt = build_initial_prompt().lower()
+        for app in ("paytm", "phonepe", "irctc", "zomato"):
+            self.assertIn(app, prompt, f"'{app}' biasing se gayab ho gaya")
+
+    def test_bug14_extra_words_prompt_mein_jaate_hain(self):
+        """Compounding fayda — memory/skills se vocabulary badhti hai."""
+        from saarthi.voice.hinglish_asr import build_initial_prompt
+
+        prompt = build_initial_prompt(extra_words=["Afzal", "bijli ka bill"])
+        self.assertIn("Afzal", prompt)
+
+    def test_bug14_prompt_chhota_hai(self):
+        """Lamba prompt = zyada hallucination. Chhota rakhna hai."""
+        from saarthi.voice.hinglish_asr import build_initial_prompt
+
+        self.assertLess(len(build_initial_prompt()), 450)
+
+    def test_bug14_hallucination_guard_echo_pakadta_hai(self):
+        from saarthi.voice.hinglish_asr import build_initial_prompt, looks_like_prompt_echo
+
+        prompt = build_initial_prompt()
+
+        # Model ne prompt ke shabd ugal diye
+        self.assertTrue(
+            looks_like_prompt_echo("Paytm PhonePe GPay Zomato Swiggy IRCTC", prompt)
+        )
+
+        # Asli baat — guard nahi lagna chahiye
+        for real in (
+            "mera naam afzal hai aur main student hun",
+            "kal subah panch baje uthana hai mujhe",
+        ):
+            self.assertFalse(
+                looks_like_prompt_echo(real, prompt),
+                f"Asli baat ko echo samajh liya: {real!r}",
+            )
+
+    def test_bug14_guard_chhote_text_pe_nahi_lagta(self):
+        """"paytm kholo" jaisa chhota output reject nahi hona chahiye."""
+        from saarthi.voice.hinglish_asr import build_initial_prompt, looks_like_prompt_echo
+
+        prompt = build_initial_prompt()
+        self.assertFalse(looks_like_prompt_echo("paytm kholo", prompt))
+
+    def test_bug14_stt_mein_retry_wired_hai(self):
+        import inspect
+
+        from saarthi.voice.stt import WhisperSTT
+
+        source = inspect.getsource(WhisperSTT.transcribe)
+        self.assertIn("looks_like_prompt_echo", source, "guard wired nahi hai")
+        self.assertIn("initial_prompt=None", source, "bina-prompt retry nahi hai")
+
+
+class Bug15FileToolMissing(SaarthiTestCase):
+    """
+    BUG #15 — file likhne ka tool hi nahi tha.
+
+    User: "excel par ek student marks sheet bna de"
+
+    Agent ke paas sirf `command_chalao` tha, isliye usne poora Python
+    script shell command mein ghusane ki koshish ki:
+        powershell -Command "@'...import openpyxl...'@ > file.py"
+        cmd /c "echo import openpyxl > f.py && echo ... >> f.py"
+
+    20+ koshish, saari fail (nested quotes), phir "max steps limit".
+    Ye agent ki galti nahi thi — TOOL HI NAHI THA.
+    """
+
+    def test_bug15_file_tools_maujood_hain(self):
+        registry = default_registry()
+        for name in ("file_banao", "file_padho", "files_dikhao"):
+            self.assertIn(name, registry, f"'{name}' tool gayab hai")
+
+    def test_bug15_multiline_content_seedha_likhta_hai(self):
+        """Yahi asli fix hai — koi escaping nahi."""
+        import tempfile
+
+        from saarthi.brain.types import ToolCall
+        from saarthi.config import Settings
+        from saarthi.devices import DeviceManager
+        from saarthi.tools.base import ToolContext
+        from tests.helpers import clean_env
+
+        script = (
+            "import openpyxl\n"
+            "wb = openpyxl.Workbook()\n"
+            'ws = wb.active\n'
+            'ws.title = "Marks Sheet"\n'
+            'ws.append(["Roll No", "Name", "Total"])\n'
+            'print("done")\n'
+        )
+
+        with clean_env(GROQ_API_KEY="fake"):
+            settings = Settings.load()
+        settings.auto_approve = True   # test mein confirmation skip
+
+        manager = DeviceManager(settings)
+        manager.setup_defaults()
+        ctx = ToolContext(devices=manager, settings=settings)
+
+        with tempfile.TemporaryDirectory() as folder:
+            target = f"{folder}/make_excel.py"
+
+            loop = asyncio.new_event_loop()
+            try:
+                write = loop.run_until_complete(
+                    default_registry().execute(
+                        ToolCall(id="w", name="file_banao",
+                                 arguments={"path": target, "content": script}),
+                        ctx,
+                    )
+                )
+                self.assertTrue(write.ok, write.error)
+
+                read = loop.run_until_complete(
+                    default_registry().execute(
+                        ToolCall(id="r", name="file_padho",
+                                 arguments={"path": target}),
+                        ctx,
+                    )
+                )
+            finally:
+                loop.close()
+
+            self.assertTrue(read.ok, read.error)
+            # Content byte-for-byte wapas mile — escaping se kuch na toote
+            self.assertIn("import openpyxl", read.output)
+            self.assertIn('ws.title = "Marks Sheet"', read.output)
+            self.assertIn('print("done")', read.output)
+
+    def test_bug15_exe_banane_se_mana_karta_hai(self):
+        from saarthi.tools.file_tools import _path_problem
+        from pathlib import Path
+
+        for name in ("virus.exe", "run.bat", "hack.ps1", "x.dll"):
+            self.assertTrue(
+                _path_problem(Path(name)),
+                f"'{name}' banane se mana nahi kiya — security hole",
+            )
+
+    def test_bug15_system_folder_mein_nahi_likhta(self):
+        from saarthi.tools.file_tools import _path_problem
+        from pathlib import Path
+
+        for path in (
+            r"C:\Windows\System32\evil.txt",
+            "/etc/passwd",
+            "/boot/config",
+        ):
+            self.assertTrue(
+                _path_problem(Path(path)),
+                f"'{path}' pe likhne se mana nahi kiya",
+            )
+
+    def test_bug15_aam_file_allowed_hai(self):
+        from saarthi.tools.file_tools import _path_problem
+        from pathlib import Path
+
+        for path in ("~/Desktop/marks.csv", "notes.txt", "script.py", "data.json"):
+            self.assertEqual(
+                _path_problem(Path(path).expanduser()), "",
+                f"'{path}' galti se roka gaya",
+            )
+
+    def test_bug15_prompt_mein_rule_hai(self):
+        from saarthi.lang import build_system_prompt
+
+        prompt = build_system_prompt()
+        self.assertIn("file_banao", prompt)
+        self.assertIn("shell se MAT likh", prompt)
+
+
+class Bug16ProviderRetriedEveryStep(SaarthiTestCase):
+    """
+    BUG #16 — lagatar fail hone wala provider HAR STEP pe retry hota tha.
+
+    User ke output mein 8 step ke andar 8 baar:
+        · deepseek ne kaam nahi kiya, nvidia se kar diya
+
+    Error permanent nahi tha (timeout type), isliye mark_dead() nahi
+    lagta tha. Ek YouTube task mein 58 SECOND lag gaye.
+    """
+
+    def test_bug16_lagatar_fail_pe_cooldown_lagta_hai(self):
+        from saarthi.brain import Brain
+        from saarthi.config import Settings
+        from tests.helpers import clean_env
+
+        with clean_env(NVIDIA_API_KEY="nvapi-fake"):
+            brain = Brain(Settings.load())
+
+        for _ in range(brain.MAX_CONSECUTIVE_FAILURES):
+            brain._note_failure("deepseek")
+
+        self.assertTrue(
+            brain.health()["deepseek"].startswith("cooldown"),
+            "Lagatar fail hone pe cooldown nahi laga — har step pe retry hoga",
+        )
+
+    def test_bug16_beech_mein_chal_jaaye_to_counter_reset(self):
+        from saarthi.brain import Brain
+        from saarthi.config import Settings
+        from tests.helpers import clean_env
+
+        with clean_env(NVIDIA_API_KEY="nvapi-fake"):
+            brain = Brain(Settings.load())
+
+        brain._note_failure("deepseek")
+        brain._note_failure("deepseek")
+        brain._note_success("deepseek")      # chal gaya
+        brain._note_failure("deepseek")      # phir ek fail
+
+        self.assertEqual(
+            brain.health()["deepseek"], "ok",
+            "Success ke baad counter reset nahi hua",
+        )
+
+    def test_bug16_reset_health_counter_bhi_saaf_karta_hai(self):
+        from saarthi.brain import Brain
+        from saarthi.config import Settings
+        from tests.helpers import clean_env
+
+        with clean_env(NVIDIA_API_KEY="nvapi-fake"):
+            brain = Brain(Settings.load())
+
+        brain._note_failure("deepseek")
+        brain.reset_health()
+        self.assertEqual(brain._failures, {})
+
+
+class Bug17WhisperModelNotValidated(SaarthiTestCase):
+    """
+    BUG #17 — WHISPER_MODEL pe validation nahi thi.
+
+    User ne `WHISPER_MODEL=big` likh diya (aisa koi model nahi hai) aur
+    load ke waqt crash mila:
+        Invalid model size 'big', expected one of: tiny.en, tiny, ...
+    """
+
+    def test_bug17_galat_naam_pe_safe_default(self):
+        from saarthi.voice import WhisperConfig
+        from tests.helpers import clean_env
+
+        for value in ("bakwaas", "xyz", ""):
+            with clean_env(WHISPER_MODEL=value):
+                self.assertEqual(WhisperConfig.from_env().model_size, "small")
+
+    def test_bug17_aam_galtiyan_theek_ho_jaati_hain(self):
+        from saarthi.voice import WhisperConfig
+        from tests.helpers import clean_env
+
+        with clean_env(WHISPER_MODEL="big"):
+            self.assertEqual(WhisperConfig.from_env().model_size, "medium")
+
+    def test_bug17_valid_naam_chalte_hain(self):
+        from saarthi.voice import WhisperConfig
+        from tests.helpers import clean_env
+
+        for value in ("tiny", "base", "small", "medium", "large-v3", "turbo"):
+            with clean_env(WHISPER_MODEL=value):
+                self.assertEqual(WhisperConfig.from_env().model_size, value)
+
+    def test_bug17_default_small_hai_base_nahi(self):
+        """base Hinglish pe kamzor hai — default small hona chahiye."""
+        from saarthi.voice import WhisperConfig
+        from tests.helpers import clean_env
+
+        with clean_env():
+            self.assertEqual(WhisperConfig.from_env().model_size, "small")
+
+
+class Bug18VoiceLookedStuck(SaarthiTestCase):
+    """
+    BUG #18 — voice mode HANG hua lagta tha.
+
+    User ko ye dikhta tha:
+        ⋯ shor naap raha hun...   (x15)
+        [10 second tak KUCH NAHI]
+        · kuch sunai nahi diya
+
+    Wajah: `_report_listening` sirf SPEAKING aur CALIBRATING report
+    karta tha. WAITING (bolne ka intezaar) pe KUCH NAHI dikhta tha —
+    user ko pata hi nahi chalta ki AB BOLNA HAI.
+    """
+
+    def test_bug18_waiting_state_report_hota_hai(self):
+        import inspect
+
+        from saarthi.voice.session import VoiceSession
+
+        source = inspect.getsource(VoiceSession._report_listening)
+        self.assertIn(
+            "ListenState.WAITING", source,
+            "WAITING state report nahi hota — user ko lagega hang ho gaya",
+        )
+        self.assertIn("AB BOL", source, "Saaf 'AB BOL' message nahi hai")
+
+    def test_bug18_calibration_spam_nahi_hota(self):
+        import inspect
+
+        from saarthi.voice.session import VoiceSession
+
+        source = inspect.getsource(VoiceSession._report_listening)
+        self.assertIn(
+            "_last_listen_state", source,
+            "State dedupe nahi hai — 15 baar wahi message aayega",
+        )
+
+    def test_bug18_loudness_feedback_hai(self):
+        """User ko dikhna chahiye ki awaaz kam pad rahi hai."""
+        import inspect
+
+        from saarthi.voice.session import VoiceSession
+
+        source = inspect.getsource(VoiceSession._report_listening)
+        self.assertIn("loudness", source)
+        self.assertIn("threshold", source)

@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .hinglish_asr import (
+    looks_like_prompt_echo,
     CorrectionResult,
     build_initial_prompt,
     correct_transcript,
@@ -103,7 +104,7 @@ class WhisperConfig:
     """Whisper ki settings."""
 
     # Model size — chhota = tez + kam RAM
-    model_size: str = "base"
+    model_size: str = "small"
 
     # cpu | cuda | auto
     device: str = "cpu"
@@ -146,7 +147,7 @@ class WhisperConfig:
         language = os.getenv("WHISPER_LANGUAGE", "en").strip()
 
         return cls(
-            model_size=os.getenv("WHISPER_MODEL", "base").strip(),
+            model_size=_valid_model_size(os.getenv("WHISPER_MODEL", "small")),
             device=os.getenv("WHISPER_DEVICE", "cpu").strip(),
             compute_type=os.getenv("WHISPER_COMPUTE", "int8").strip(),
             language=None if language.lower() in ("auto", "", "none") else language,
@@ -267,6 +268,55 @@ def stt_setup_help() -> str:
     lines.append("  Pehli baar model download hoga (~150MB base ke liye).")
     lines.append("  Uske baad offline chalega — internet ki zarurat nahi.")
     return "\n".join(lines)
+
+
+# faster-whisper ke valid model naam. Galat naam pe wo poori list ke
+# saath crash karta hai — usse pehle hum khud pakad lete hain.
+#
+# User ne `WHISPER_MODEL=big` likh diya tha (aisa koi model nahi hai)
+# aur crash mila. Bina validation ye sirf load ke waqt pata chalta hai.
+VALID_MODEL_SIZES: tuple = (
+    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+    "medium", "medium.en", "large", "large-v1", "large-v2", "large-v3",
+    "large-v3-turbo", "turbo",
+    "distil-small.en", "distil-medium.en", "distil-large-v2",
+    "distil-large-v3", "distil-large-v3.5",
+)
+
+
+def _valid_model_size(raw: str) -> str:
+    """
+    Model naam check karo. Galat ho to sahi guess ya safe default.
+
+    Crash karna bekaar hai — user ko clear message deke chalte rehna
+    behtar hai.
+    """
+    value = (raw or "").strip()
+    if not value:
+        return "small"
+    if value in VALID_MODEL_SIZES:
+        return value
+
+    # Aam galtiyan
+    aliases = {
+        "big": "medium", "large-v4": "large-v3", "huge": "large-v3",
+        "tiny.en.": "tiny.en", "default": "small", "auto": "small",
+    }
+    fixed = aliases.get(value.lower())
+    if fixed:
+        log.warning(
+            "WHISPER_MODEL='%s' valid nahi hai — '%s' use kar raha hun. "
+            "Valid: %s",
+            value, fixed, ", ".join(VALID_MODEL_SIZES[:8]),
+        )
+        return fixed
+
+    log.warning(
+        "WHISPER_MODEL='%s' valid nahi hai — 'small' use kar raha hun.\n"
+        "  Valid naam: %s",
+        value, ", ".join(VALID_MODEL_SIZES),
+    )
+    return "small"
 
 
 def total_ram_gb() -> float:
@@ -552,6 +602,40 @@ class WhisperSTT:
                 no_speech_probs.append(segment.no_speech_prob)
 
         raw_text = " ".join(segment_texts).strip()
+
+        # --- HALLUCINATION GUARD ---
+        #
+        # Whisper ne prompt ko hi wapas ugal diya? To BINA PROMPT dobara
+        # try karo. Biasing kho jaayegi par galat text se behtar hai.
+        #
+        # Asli case: user ne "paytm kholo" bola, Whisper ne
+        # "Open YouTube and play Theravins on." diya — prompt ke
+        # sentences copy kar diye the.
+        if raw_text and initial_prompt and looks_like_prompt_echo(raw_text, initial_prompt):
+            log.warning(
+                "Whisper ne prompt echo kiya (%r) — bina prompt dobara try kar raha hun",
+                raw_text[:60],
+            )
+            try:
+                retry_iter, retry_info = self._model.transcribe(
+                    prepared,
+                    language=use_language,
+                    initial_prompt=None,
+                    beam_size=self.config.beam_size,
+                    vad_filter=self.config.vad_filter,
+                    condition_on_previous_text=False,
+                )
+                retry_texts = [
+                    (seg.text or "").strip() for seg in retry_iter if (seg.text or "").strip()
+                ]
+                retry_text = " ".join(retry_texts).strip()
+                if retry_text:
+                    raw_text = retry_text
+                    info = retry_info
+                    segment_texts = retry_texts
+            except Exception as exc:  # noqa: BLE001 — retry fail ho to pehla hi rakho
+                log.debug("Prompt-free retry fail: %s", exc)
+
         processing_time = time.time() - started
 
         avg_logprob = sum(logprobs) / len(logprobs) if logprobs else 0.0

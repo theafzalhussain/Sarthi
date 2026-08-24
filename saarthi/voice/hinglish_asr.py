@@ -50,19 +50,38 @@ from ..lang.normalize import has_devanagari, transliterate
 #  1. BIASING — Whisper ko pehle se batao
 # ======================================================================
 
-# Ye example sentences Whisper ko batate hain:
-#   (a) output roman script mein chahiye, Devanagari nahi
-#   (b) Hinglish mixing normal hai
-#   (c) ye app naam exist karte hain
-HINGLISH_PROMPT_EXAMPLES = [
+# ⚠️⚠️ YE SENTENCES AB PROMPT MEIN NAHI JAATE — HALLUCINATION KARATE THE.
+#
+# ASLI BUG (user ki machine pe mila):
+#     User ne bola : "paytm kholo"
+#     Whisper suna : "Open YouTube and play Theravins on."
+#
+#     Audio quality PERFECT thi (peak 17790). Problem ye thi ki
+#     `initial_prompt` mein "Laptop pe chrome khol ke YouTube chala do"
+#     jaisa POORA SENTENCE tha — aur Whisper ne usko COPY kar diya.
+#
+# WAJAH: Whisper ka `initial_prompt` "pichla context" ki tarah kaam
+# karta hai, keyword hint ki tarah nahi. Usme prose daalo to model
+# usi prose ko AAGE BADHATA hai — khaas kar jab audio chhota ya
+# halka ho. Ye Whisper ki jaani-maani kamzori hai.
+#
+# SAHI TAREEKA: sirf VOCABULARY (comma-separated shabd), sentences NAHI.
+#
+# Ye list yahan REFERENCE ke liye rakhi hai — taaki koi dobara
+# "biasing badhane" ke chakkar mein inhe wapas prompt mein na daal de.
+_HALLUCINATION_TRAP_EXAMPLES = [
     "Bhai paytm kholo aur bijli ka bill bhar do.",
     "WhatsApp pe mummy ko message bhej do ki late aaunga.",
     "Swiggy se khana order kar do, do hazaar tak ka.",
-    "Mere phone me screenshot lo aur batao screen pe kya hai.",
-    "IRCTC pe kal ki train dekho, tatkal ka time bhi bata.",
-    "PhonePe se dhai hazaar rupay transfer kar do.",
     "Laptop pe chrome khol ke YouTube chala do.",
-    "Yaad rakh ki mummy ka number ye hai.",
+]
+
+# Hinglish ke aam SHABD (sentences nahi!). Ye Whisper ko batate hain ki
+# roman-script Hinglish expected hai, bina koi sentence pattern diye.
+HINGLISH_VOCAB_HINTS = [
+    "kholo", "chalao", "bhejo", "dikhao", "batao", "padho",
+    "bijli", "bill", "recharge", "paise", "rupay", "hazaar", "lakh",
+    "mummy", "papa", "bhai", "message", "screenshot", "notification",
 ]
 
 # In apps ko prompt mein daalna sabse zyada faayda deta hai —
@@ -94,28 +113,70 @@ def build_initial_prompt(
     Returns:
         Prompt string jo Whisper ko diya jaata hai
     """
-    parts: list[str] = []
+    # SIRF VOCABULARY — koi sentence nahi.
+    #
+    # Sentences hallucination karate hain (upar
+    # _HALLUCINATION_TRAP_EXAMPLES ka comment padh). Comma-separated
+    # word list se biasing milti hai par model ko "aage likho" ka
+    # pattern nahi milta.
+    words: list[str] = list(PRIORITY_APPS)
 
-    # App naam pehle — inka faayda sabse zyada hai
-    app_list = ", ".join(PRIORITY_APPS)
-    parts.append(f"Apps: {app_list}.")
-
-    # User ka apna vocabulary (contacts, skill naam)
+    # User ka apna vocabulary (contacts, skill naam) — sabse zyada
+    # faayda isi ka hai, isliye app naam ke baad turant
     if extra_words:
-        cleaned = [w.strip() for w in extra_words if w and w.strip()]
-        if cleaned:
-            parts.append("Naam: " + ", ".join(cleaned[:30]) + ".")
+        for word in extra_words[:30]:
+            if word and word.strip():
+                words.append(word.strip())
 
-    # Hinglish examples — style batate hain
-    parts.extend(HINGLISH_PROMPT_EXAMPLES)
+    words.extend(HINGLISH_VOCAB_HINTS)
 
-    prompt = " ".join(parts)
+    # Duplicate hatao, order bacha ke
+    seen = set()
+    unique: list[str] = []
+    for word in words:
+        key = word.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(word)
 
-    # Limit ke andar rakho, par beech mein word na toote
+    prompt = ", ".join(unique)
+
+    # Whisper ka prompt ~224 tokens tak hi maanta hai. Aur CHHOTA
+    # prompt = kam hallucination, isliye default bhi kam rakha hai.
     if len(prompt) > max_chars:
-        prompt = prompt[:max_chars].rsplit(" ", 1)[0] + "."
+        prompt = prompt[:max_chars].rsplit(",", 1)[0]
 
     return prompt
+
+
+def looks_like_prompt_echo(text: str, prompt: str, threshold: float = 0.55) -> bool:
+    """
+    Whisper ne prompt ko hi wapas ugal diya?
+
+    Ye HALLUCINATION GUARD hai. Chahe prompt se sentences hata diye
+    hon, phir bhi kabhi-kabhi model prompt ke shabd copy kar deta hai
+    (khaas kar jab audio bahut chhota ya halka ho).
+
+    Tareeka: output ke kitne shabd prompt mein maujood hain. Zyadatar
+    shabd prompt se aaye = model ne suna nahi, copy kiya.
+
+    >>> looks_like_prompt_echo("Paytm PhonePe GPay Zomato", "Paytm, PhonePe, GPay, Zomato")
+    True
+    >>> looks_like_prompt_echo("mera naam afzal hai", "Paytm, PhonePe, GPay")
+    False
+    """
+    import re
+
+    words = re.findall(r"[a-z]+", (text or "").lower())
+    if len(words) < 3:
+        return False
+
+    prompt_words = set(re.findall(r"[a-z]+", (prompt or "").lower()))
+    if not prompt_words:
+        return False
+
+    overlap = sum(1 for word in words if word in prompt_words)
+    return (overlap / len(words)) >= threshold
 
 
 # ======================================================================

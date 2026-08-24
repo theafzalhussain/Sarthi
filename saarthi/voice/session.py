@@ -210,11 +210,52 @@ class VoiceSession:
     # ------------------------------------------------------------------
 
     def _report_listening(self, status: DetectorStatus) -> None:
-        """Recording ke dauraan UI update."""
-        if status.state == ListenState.SPEAKING:
-            self.on_event("listening", "sun raha hun...")
-        elif status.state == ListenState.CALIBRATING:
-            self.on_event("calibrating", "shor naap raha hun...")
+        """
+        Recording ke dauraan UI update.
+
+        ⚠️ YAHAN EK ASLI UX BUG THA.
+
+        Pehle sirf SPEAKING aur CALIBRATING report hote the. WAITING
+        (calibration ke baad, bolne ka intezaar) pe KUCH NAHI dikhta tha.
+
+        User ko ye dikhta tha:
+            ⋯ shor naap raha hun...   (x15)
+            [10 second tak kuch nahi]
+            · kuch sunai nahi diya
+
+        User ko lagta tha HANG ho gaya — usko pata hi nahi chalta ki
+        AB BOLNA HAI. Voice mode pura toota hua lagta tha.
+
+        Ab: WAITING pe saaf "AB BOL" dikhta hai, aur loudness vs
+        threshold bhi — taaki user dekh sake ki awaaz kam pad rahi hai.
+        Aur calibration ka spam ek hi baar dikhta hai.
+        """
+        state = status.state
+
+        # Ek hi state ko baar-baar report na karo (spam hata do)
+        last = getattr(self, "_last_listen_state", None)
+        first_time = state != last
+        self._last_listen_state = state
+
+        if state == ListenState.CALIBRATING:
+            if first_time:
+                self.on_event("calibrating", "shor naap raha hun (aadha second)...")
+
+        elif state == ListenState.WAITING:
+            if first_time:
+                self.on_event("listening", "AB BOL — sun raha hun")
+            elif status.loudness > status.threshold * 0.4:
+                # Awaaz aa rahi hai par threshold se kam — user ko batao
+                self.on_event(
+                    "quiet",
+                    f"awaaz aa rahi hai par kam hai "
+                    f"({status.loudness:.0f} / chahiye {status.threshold:.0f}) "
+                    f"— zor se bol",
+                )
+
+        elif state == ListenState.SPEAKING:
+            if first_time:
+                self.on_event("listening", "sun raha hun...")
 
     async def listen_once(self) -> str | None:
         """
