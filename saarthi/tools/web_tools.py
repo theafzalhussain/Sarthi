@@ -214,9 +214,75 @@ class FetchPageTool(Tool):
         )
 
 
+class OpenWebsiteTool(Tool):
+    name = "website_kholo"
+    description = (
+        "Browser mein koi website/URL kholo (laptop pe). YE BAHUT KAAM KA "
+        "HAI: phone connected na ho to bahut kaam laptop pe browser se ho "
+        "jaate hain — YouTube pe gaana, WhatsApp Web pe message, IRCTC pe "
+        "train, Instagram, Gmail, Maps, shopping. "
+        "Phone na ho to app_kholo ki jagah YE use kar. "
+        "Search bhi kar sakta hai: youtube pe gaana chalane ke liye "
+        "url='https://www.youtube.com/results?search_query=tum+hi+ho'"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "Poora URL, jaise 'https://www.youtube.com'",
+            }
+        },
+        "required": ["url"],
+    }
+
+    async def run(self, ctx: ToolContext, url: str) -> ActionResult:
+        import webbrowser
+
+        clean = url.strip()
+        if not clean:
+            return ActionResult.failure("URL khali hai")
+
+        # http:// ko https:// bana do
+        if clean.startswith("http://"):
+            clean = "https://" + clean[len("http://") :]
+        elif not clean.startswith("https://"):
+            clean = "https://" + clean
+
+        try:
+            # webbrowser stdlib mein hai — Windows/Mac/Linux sab pe chalta
+            # hai, koi shell command nahi, koi extra dependency nahi.
+            opened = await asyncio.to_thread(webbrowser.open, clean)
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Browser khul nahi paya: {exc}")
+
+        if not opened:
+            return ActionResult.failure(
+                f"Browser khul nahi paya. Khud khol le: {clean}"
+            )
+
+        return ActionResult.success(f"Browser mein khol diya: {clean}", url=clean)
+
+
+# Aam kaam -> ready URL. LLM ko ye help karta hai sahi URL banane mein.
+COMMON_URLS: dict[str, str] = {
+    "youtube search": "https://www.youtube.com/results?search_query={q}",
+    "youtube": "https://www.youtube.com",
+    "google search": "https://www.google.com/search?q={q}",
+    "whatsapp web": "https://web.whatsapp.com",
+    "gmail": "https://mail.google.com",
+    "maps": "https://maps.google.com/?q={q}",
+    "irctc": "https://www.irctc.co.in",
+    "flipkart search": "https://www.flipkart.com/search?q={q}",
+    "amazon search": "https://www.amazon.in/s?k={q}",
+    "instagram": "https://www.instagram.com",
+}
+
+
 def web_tools() -> list[Tool]:
     """Saare web tools."""
     return [
         WebSearchTool(),
         FetchPageTool(),
+        OpenWebsiteTool(),
     ]
