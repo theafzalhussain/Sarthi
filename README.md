@@ -74,7 +74,7 @@ cp .env.example .env
 python run_tests.py
 ```
 
-258 tests, koi extra install nahi chahiye. Sab pass hone chahiye.
+270 tests, koi extra install nahi chahiye. Sab pass hone chahiye.
 Kuch fail ho to **pehle wahi theek kar**.
 
 ### 4. Chala
@@ -226,7 +226,7 @@ Risky kaam pe bolke confirmation maangta hai:
   hat jaata hai, rate-limit wala cooldown pe
 - **Professional English interface, par baat teri bhasha mein** — English
   mein pucho English mein jawab, Hinglish mein pucho Hinglish mein
-- **258 tests** — `python run_tests.py`
+- **270 tests** — `python run_tests.py`
 
 ### 🚧 Abhi nahi (roadmap pe hai)
 - **Standalone Android app** — abhi laptop ki zarurat hai (Phase 4)
@@ -273,7 +273,7 @@ saarthi/
 └── agent.py    Main loop
 cli.py              Text interface
 voice_cli.py        Voice interface
-run_tests.py        258 tests — koi install nahi chahiye
+run_tests.py        270 tests — koi install nahi chahiye
 hardware_check.py   Mic/speaker/phone diagnostic
 tests/              Test suite (8 bugs ka regression guard)
 ```
@@ -283,7 +283,7 @@ tests/              Test suite (8 bugs ka regression guard)
 ## Testing
 
 ```bash
-python run_tests.py              # sab — 258 tests, 0.1 second
+python run_tests.py              # sab — 270 tests, 0.1 second
 python run_tests.py known_bugs   # sirf bug regression tests
 ```
 

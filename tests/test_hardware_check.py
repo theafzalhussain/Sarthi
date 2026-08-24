@@ -627,3 +627,179 @@ class LevelMeter(SaarthiTestCase):
         source = (ROOT / "hardware_check.py").read_text(encoding="utf-8")
         self.assertIn('"--mic-scan"', source)
         self.assertIn("scan_mics()", source)
+
+
+
+class RamDetection(SaarthiTestCase):
+    """
+    BUG#13 — RAM detection Windows pe kaam hi nahi karta tha.
+
+    Purana code sirf do tareeke use karta tha:
+        /proc/meminfo          -> Linux only
+        os.sysconf(...)        -> Unix only (Windows pe AttributeError)
+
+    Nateeja: Windows pe HAMESHA 0 return hota tha, aur
+    recommend_model_size() "base" pe atak jaata tha — chahe machine
+    mein 32GB RAM ho.
+
+    User ki machine: 31GB RAM, par tool "base" suggest kar raha tha.
+    Aur "base" Hinglish pe kamzor hai — usne "paytm kholo" ko
+    "Kya kya ouri website, proper da yaar uca" suna.
+    """
+
+    def test_ram_detect_hota_hai(self):
+        from saarthi.voice import total_ram_gb
+
+        ram = total_ram_gb()
+        self.assertGreater(
+            ram, 0.0,
+            "RAM detect nahi hui — is platform ke liye branch missing hai",
+        )
+        self.assertLess(ram, 10000, f"RAM ka number galat lag raha hai: {ram}")
+
+    def test_windows_branch_code_mein_hai(self):
+        """
+        Windows pe test nahi chala sakte, par code path maujood hona
+        chahiye. Yahi BUG#13 tha — branch hi nahi tha.
+        """
+        import inspect
+
+        from saarthi.voice.stt import total_ram_gb
+
+        source = inspect.getsource(total_ram_gb)
+        self.assertIn("GlobalMemoryStatusEx", source, "Windows branch gayab")
+        self.assertIn("darwin", source, "macOS branch gayab")
+        self.assertIn("/proc/meminfo", source, "Linux branch gayab")
+
+    def test_ram_ke_hisaab_se_model_chunta_hai(self):
+        import saarthi.voice.stt as stt
+
+        original = stt.total_ram_gb
+        try:
+            cases = [
+                (2.0, "tiny"),
+                (4.0, "base"),
+                (8.0, "small"),
+                (16.0, "medium"),
+                (31.0, "medium"),
+                (0.0, "base"),   # pata nahi chala -> safe default
+            ]
+            for ram, expected in cases:
+                stt.total_ram_gb = lambda r=ram: r
+                self.assertEqual(
+                    stt.recommend_model_size(), expected,
+                    f"{ram}GB pe '{expected}' chahiye tha",
+                )
+        finally:
+            stt.total_ram_gb = original
+
+    def test_bade_ram_pe_base_nahi_suggest_karta(self):
+        """
+        Ye BUG#13 ka core hai: 31GB RAM pe 'base' suggest karna galat
+        hai, kyunki base Hinglish pe kamzor hai.
+        """
+        import saarthi.voice.stt as stt
+
+        original = stt.total_ram_gb
+        try:
+            stt.total_ram_gb = lambda: 31.0
+            self.assertNotEqual(
+                stt.recommend_model_size(), "base",
+                "31GB RAM pe 'base' suggest ho raha hai — BUG#13 wapas",
+            )
+        finally:
+            stt.total_ram_gb = original
+
+
+class LanguageOverride(SaarthiTestCase):
+    """
+    `transcribe(language=...)` override — `--stt-tune` ke liye zaroori.
+
+    Iske bina har language variant ke liye model dobara load karna
+    padta (dheema). Ab ek load, teen variants.
+    """
+
+    def test_transcribe_language_param_leta_hai(self):
+        import inspect
+
+        from saarthi.voice import WhisperSTT
+
+        params = list(inspect.signature(WhisperSTT.transcribe).parameters)
+        self.assertIn("language", params, "language override param gayab")
+
+    def test_sentinel_none_se_alag_hai(self):
+        """
+        `None` ka apna matlab hai (auto-detect), isliye "kuch diya hi
+        nahi" ke liye alag sentinel chahiye.
+        """
+        from saarthi.voice.stt import _USE_CONFIG
+
+        self.assertIsNotNone(_USE_CONFIG)
+        self.assertIsNot(_USE_CONFIG, None)
+
+    def test_config_ka_language_default_rehta_hai(self):
+        import inspect
+
+        from saarthi.voice import WhisperSTT
+
+        source = inspect.getsource(WhisperSTT.transcribe)
+        self.assertIn("_USE_CONFIG", source)
+        self.assertIn("self.config.language", source)
+
+
+class SttTuning(SaarthiTestCase):
+    """`--stt-tune` — guess ke bajaay measure karo."""
+
+    def load_module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "hardware_check", ROOT / "hardware_check.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        with captured_stdout():
+            spec.loader.exec_module(module)
+        return module
+
+    def test_similarity_sahi_score_deta_hai(self):
+        module = self.load_module()
+        expected = "paytm kholo"
+
+        self.assertEqual(module.similarity("paytm kholo", expected), 1.0)
+        self.assertEqual(module.similarity("Paytm kholo.", expected), 1.0,
+                         "case/punctuation ignore hona chahiye")
+        self.assertEqual(module.similarity("", expected), 0.0)
+
+        # User ka asli garbage output — kam score aana chahiye
+        garbage = "Kya kya ouri website, proper da yaar uca."
+        self.assertLess(module.similarity(garbage, expected), 0.4)
+
+        # ASR correction se pehle ka — thoda match karega
+        partial = module.similarity("pay time cholo", expected)
+        self.assertGreater(partial, 0.4)
+        self.assertLess(partial, 1.0)
+
+    def test_similarity_none_pe_crash_nahi_karta(self):
+        module = self.load_module()
+        self.assertEqual(module.similarity(None, "paytm kholo"), 0.0)
+        self.assertEqual(module.similarity("x", None), 0.0)
+
+    def test_scan_stt_function_maujood_hai(self):
+        module = self.load_module()
+        self.assertTrue(hasattr(module, "scan_stt"))
+        self.assertTrue(hasattr(module, "TUNE_PHRASE"))
+
+    def test_stt_tune_flag_wire_hua_hai(self):
+        source = (ROOT / "hardware_check.py").read_text(encoding="utf-8")
+        self.assertIn('"--stt-tune"', source)
+        self.assertIn("scan_stt()", source)
+
+    def test_quality_signals_dikhte_hain(self):
+        """
+        Galat suna kyun — ye batane ke liye avg_logprob aur detected
+        language dikhna zaroori hai. Pehle sirf text dikhta tha.
+        """
+        source = (ROOT / "hardware_check.py").read_text(encoding="utf-8")
+        self.assertIn("avg_logprob", source)
+        self.assertIn("no_speech_prob", source)
+        self.assertIn("language_probability", source)

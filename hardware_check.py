@@ -17,6 +17,7 @@ CHALANE KA TAREEKA:
     python hardware_check.py            # sab check karo
     python hardware_check.py --mic      # sirf mic
     python hardware_check.py --mic-scan # HAR mic try karo, best batao
+    python hardware_check.py --stt-tune # galat suna? best Whisper setting dhoondho
     python hardware_check.py --phone    # sirf phone (ADB)
     python hardware_check.py --speaker  # sirf awaaz
     python hardware_check.py --save     # report file mein bhi save karo
@@ -454,6 +455,37 @@ def check_mic(interactive: bool = True) -> None:
             f"suna: {transcript.text!r}",
         )
 
+        # QUALITY SIGNALS — yahi batate hain ki galat kyun suna.
+        #
+        # Ye pehle nahi dikhte the, isliye "galat suna" ka koi diagnosis
+        # nahi tha. avg_logprob confidence batata hai; detected language
+        # batata hai ki Whisper ne kaunsi bhasha maani.
+        say(
+            f"   confidence : logprob {transcript.avg_logprob:.2f}   "
+            f"no_speech {transcript.no_speech_prob:.2f}",
+            "muted",
+        )
+        if transcript.language:
+            say(
+                f"   language   : {transcript.language} "
+                f"({transcript.language_probability:.0%} sure)",
+                "muted",
+            )
+
+        # Confidence kam hai to model chhota hone ka shak
+        if transcript.avg_logprob < -0.9 and transcript.text.strip():
+            say("")
+            say(
+                "   Confidence kam hai — model chhota ho sakta hai, ya "
+                "bhasha setting galat.",
+                "warn",
+            )
+            say(
+                "   Kaunsi setting teri awaaz pe best hai wo MEASURE kar:",
+                "warn",
+            )
+            say("       python hardware_check.py --stt-tune", "warn")
+
         # Whisper ka RAW output vs correction ke baad — yahi ASR layer
         # ki asli value dikhata hai
         if transcript.raw_text and transcript.raw_text != transcript.text:
@@ -558,6 +590,194 @@ def scan_mics() -> None:
         say("Top options:", "muted")
         for peak, device in results[:3]:
             say(f"   peak {peak:>5}  [{device['index']}] {device['name']}", "muted")
+
+
+TUNE_PHRASE = "paytm kholo"
+
+
+def similarity(got: str, expected: str) -> float:
+    """
+    Do text kitne match karte hain (0.0 - 1.0).
+
+    stdlib `difflib` use kar rahe hain — koi nayi dependency nahi.
+    """
+    import difflib
+    import re
+
+    def clean(text):
+        return " ".join(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+    return difflib.SequenceMatcher(None, clean(got), clean(expected)).ratio()
+
+
+def scan_stt() -> None:
+    """
+    Kaunsi Whisper setting TERI AWAAZ pe best hai — measure karo.
+
+    KYUN YE BANA:
+        User ne "paytm kholo" bola. Audio quality perfect thi (peak
+        24087, rms 2940). Par Whisper ne suna:
+            "Kya kya ouri website, proper da yaar uca."
+
+        Do shak the: model chhota (base) hai, ya WHISPER_LANGUAGE=en
+        Hindi awaaz pe galat map kar raha hai.
+
+        Guess karke .env badalna time waste hai. Ye function EK
+        recording pe SAARI settings try karke score deta hai.
+
+    Ek hi model load hota hai aur teen language variants try hote hain
+    (transcribe(language=...) override se) — isliye tez hai.
+    """
+    section("STT tuning — kaunsi setting teri awaaz pe best hai")
+
+    try:
+        from saarthi.voice import WhisperConfig, is_audio_available, is_stt_available
+        from saarthi.voice.stt import recommend_model_size, total_ram_gb
+    except Exception as exc:  # noqa: BLE001
+        result("Voice module import", False, str(exc))
+        return
+
+    if not is_audio_available():
+        result("Mic available", False, "sounddevice / PortAudio nahi hai")
+        return
+    if not is_stt_available():
+        result("faster-whisper", False, "pip install faster-whisper")
+        return
+
+    config = WhisperConfig.from_env()
+    ram = total_ram_gb()
+    suggested = recommend_model_size()
+
+    say(f"[INFO] RAM: {ram:.1f} GB   Tera model: {config.model_size}   "
+        f"Suggested: {suggested}")
+    say(f"[INFO] Abhi ki language setting: {config.language or 'auto'}")
+
+    if config.model_size != suggested:
+        say("")
+        say(
+            f"   Dhyan: tere RAM pe '{suggested}' chal sakta hai par tu "
+            f"'{config.model_size}' use kar raha hai.",
+            "warn",
+        )
+        say(
+            "   Chhota model Hinglish pe kamzor hota hai — code-switched "
+            "speech mein galtiyan karta hai.",
+            "warn",
+        )
+
+    say("")
+    say(f'Main tujhse bolwaunga: "{TUNE_PHRASE}"', "muted")
+    say("Phir har setting pe try karke score dunga.", "muted")
+    say("")
+    try:
+        input(f'   Ready ho to Enter dabao, phir bol "{TUNE_PHRASE}" (skip: Ctrl+C): ')
+    except (EOFError, KeyboardInterrupt):
+        say("")
+        result("STT tune", None, "user ne skip kiya")
+        return
+
+    # --- Ek baar record karo, sab variants pe wahi audio use karo ---
+    try:
+        recorder = open_recorder()
+        say(f'   Bol: "{TUNE_PHRASE}" ... (3 second)', "muted")
+        samples = record_seconds(recorder, 3.0)
+    except Exception as exc:  # noqa: BLE001
+        result("Recording", False, f"{type(exc).__name__}: {exc}")
+        return
+
+    if samples is None or len(samples) == 0:
+        result("Recording", False, "koi audio nahi mila")
+        return
+
+    try:
+        import numpy as np
+
+        peak = int(abs(samples).max())
+    except Exception:  # noqa: BLE001
+        peak = 0
+
+    result("Recording", True, f"peak {peak}")
+    if peak < 1500:
+        say("   Awaaz bahut dheemi hai — pehle --mic-scan chala.", "warn")
+
+    # --- Har language variant try karo (ek hi model load) ---
+    say("")
+    say("   Model load kar raha hun...", "muted")
+
+    try:
+        stt = open_stt()
+        stt.load()
+    except Exception as exc:  # noqa: BLE001
+        result("Model load", False, f"{type(exc).__name__}: {exc}")
+        return
+
+    variants = [("en", "en"), ("hi", "hi"), ("auto", None)]
+    scores = []
+
+    say("")
+    say(f'   Expected: "{TUNE_PHRASE}"', "muted")
+    say("")
+
+    for label, language in variants:
+        try:
+            transcript = stt.transcribe(samples, language=language)
+        except Exception as exc:  # noqa: BLE001
+            print(f"      language={label:<5} chal nahi paya — {str(exc)[:40]}")
+            continue
+
+        raw_score = similarity(transcript.raw_text, TUNE_PHRASE)
+        fixed_score = similarity(transcript.text, TUNE_PHRASE)
+        best = max(raw_score, fixed_score)
+        scores.append((best, label, transcript))
+
+        print(f"      language={label:<5} score {best:.0%}   {transcript.text!r}")
+        if transcript.raw_text != transcript.text:
+            print(f"         (Whisper ne suna: {transcript.raw_text!r})")
+
+    if not scores:
+        result("STT tune", False, "koi variant chala hi nahi")
+        return
+
+    scores.sort(key=lambda item: item[0], reverse=True)
+    best_score, best_label, best_transcript = scores[0]
+
+    say("")
+    if best_score >= 0.75:
+        result("Best setting mil gayi", True, f"language={best_label} ({best_score:.0%})")
+        lines = [
+            f"Ye .env mein set kar:",
+            f"    WHISPER_LANGUAGE={best_label}",
+        ]
+        if config.model_size != suggested:
+            lines.append(f"    WHISPER_MODEL={suggested}      # aur accha hoga")
+    else:
+        result(
+            "Koi setting theek nahi chali",
+            False,
+            f"sabse accha bhi sirf {best_score:.0%} tha",
+        )
+        lines = [
+            "Teeno language settings fail hui. Sabse mumkin wajah:",
+            f"MODEL CHHOTA HAI ('{config.model_size}').",
+            "",
+            f"'{suggested}' try kar (tere {ram:.0f}GB RAM pe chalega):",
+            f"    WHISPER_MODEL={suggested}",
+            "",
+            "Phir dobara chala: python hardware_check.py --stt-tune",
+            "",
+            "Dhyan: 'small' ~500MB download hoga, 'medium' ~1.5GB.",
+            "Ek hi baar download hota hai.",
+        ]
+
+    if HAS_UI:
+        ui.hint("\n".join(lines), title="ab ye kar")
+    else:
+        for line in lines:
+            say(line)
+
+    say("Saare results:", "muted")
+    for score, label, transcript in scores:
+        say(f"   {score:>4.0%}  language={label:<5} {transcript.text!r}", "muted")
 
 
 # ----------------------------------------------------------------------
@@ -798,7 +1018,8 @@ def main() -> int:
         print(__doc__)
         return 0
 
-    only = args & {"--mic", "--speaker", "--phone", "--browser", "--keys", "--mic-scan"}
+    only = args & {"--mic", "--speaker", "--phone", "--browser", "--keys",
+                   "--mic-scan", "--stt-tune"}
     run_all = not only
 
     if HAS_UI:
@@ -820,6 +1041,9 @@ def main() -> int:
 
     if "--mic-scan" in only:
         scan_mics()
+
+    if "--stt-tune" in only:
+        scan_stt()
 
     if run_all or "--mic" in only:
         check_mic(interactive=("--mic" in only) or run_all)

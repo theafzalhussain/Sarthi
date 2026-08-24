@@ -51,6 +51,7 @@ Bas. Ye script:
 ```bash
 python hardware_check.py --mic       # sirf microphone
 python hardware_check.py --mic-scan  # HAR mic try karo, best batao
+python hardware_check.py --stt-tune  # galat suna? best Whisper setting dhoondho
 python hardware_check.py --speaker   # sirf awaaz
 python hardware_check.py --phone     # sirf phone (ADB)
 python hardware_check.py --browser   # sirf browser
@@ -133,6 +134,45 @@ python hardware_check.py --mic
 | Windows pe permission error | Mic permission nahi hai | Settings > Privacy > Microphone > allow |
 | **Sirf shor sunai deta hai** | int16→float32 conversion ka bug | ⚠️ **Ye report karo** — `voice/stt.py` mein `/32768` hona chahiye |
 | **`peak` 300-1500 (bahut dheema)** | Galat mic device select hai | `python hardware_check.py --mic-scan` chala — neeche padh |
+
+#### 🗣️ Awaaz sahi aa rahi hai par GALAT suna? — `--stt-tune`
+
+Asli case: user ne `"paytm kholo"` bola. Audio **perfect** thi
+(`peak=24087`, `rms=2940`). Par Whisper ne suna:
+
+```
+Transcribe — suna: 'Kya kya ouri website, proper da yaar uca.'
+```
+
+Matlab problem **audio ki nahi, model/setting ki hai.** Do shak hote hain:
+model chhota hai, ya `WHISPER_LANGUAGE` galat hai.
+
+**Guess mat kar — measure kar:**
+
+```bash
+python hardware_check.py --stt-tune
+```
+
+Ye **ek recording** leta hai aur usi pe **saari settings** try karta hai:
+
+```
+   Expected: "paytm kholo"
+
+      language=en    score  20%   'Kya kya ouri website, proper da yaar uca.'
+      language=hi    score  85%   'paytm kholo'
+      language=auto  score  85%   'paytm kholo'
+
+   Best setting mil gayi — language=hi (85%)
+```
+
+Phir jo suggest kare wo `.env` mein daal.
+
+**Aur ye bhi check kar:** `base` model **Hinglish pe kamzor hai.**
+`--keys` chala ke dekh kitni RAM hai — 8GB+ ho to `small` use kar:
+
+```env
+WHISPER_MODEL=small
+```
 
 #### 🎤 Galat mic select ho gaya? — `--mic-scan`
 

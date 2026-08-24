@@ -58,6 +58,7 @@ from .stt import (
     WhisperSTT,
     is_stt_available,
     recommend_model_size,
+    total_ram_gb,
     stt_setup_help,
 )
 from .tts import (
@@ -109,6 +110,7 @@ __all__ = [
     "is_stt_available",
     "stt_setup_help",
     "recommend_model_size",
+    "total_ram_gb",
     "MODEL_INFO",
     "HAS_WHISPER",
     # TTS

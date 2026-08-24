@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -233,6 +234,13 @@ class TranscriptResult:
         return "\n".join(lines)
 
 
+# `transcribe(language=...)` ke liye sentinel.
+#
+# `None` ka apna matlab hai (auto-detect), isliye "user ne kuch diya
+# hi nahi" ke liye alag object chahiye.
+_USE_CONFIG = object()
+
+
 class STTError(Exception):
     """STT layer ki problem."""
 
@@ -261,36 +269,101 @@ def stt_setup_help() -> str:
     return "\n".join(lines)
 
 
-def recommend_model_size() -> str:
+def total_ram_gb() -> float:
     """
-    Available RAM ke hisaab se model suggest karo.
+    Machine ki total RAM (GB mein). Pata na chale to 0.0.
 
-    Pillar #3 — budget hardware pe bhi chale.
+    ⚠️ YE FUNCTION EK ASLI BUG SE BANA HAI.
+
+    Pehle sirf do tareeke the — `/proc/meminfo` aur `os.sysconf()`.
+    DONO UNIX-ONLY HAIN. Windows pe `/proc` nahi hota aur `os.sysconf`
+    exist hi nahi karta (AttributeError). Nateeja: Windows pe ye
+    HAMESHA 0 return karta tha aur model "base" pe atak jaata tha —
+    chahe machine mein 32GB RAM ho.
+
+    Aur "base" Hinglish pe kamzor hai. User ne "paytm kholo" bola aur
+    Whisper ne "Kya kya ouri website, proper da yaar uca" suna. Wajah
+    yahi thi: budget-hardware wala fallback bade laptop pe bhi lag
+    raha tha.
     """
-    total_gb = 0.0
+    # --- Windows ---
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
 
-    # Linux
+            class MemoryStatusEx(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = MemoryStatusEx()
+            status.dwLength = ctypes.sizeof(MemoryStatusEx)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return status.ullTotalPhys / (1024**3)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # --- Linux ---
     try:
         meminfo = Path("/proc/meminfo")
         if meminfo.exists():
             for line in meminfo.read_text().splitlines():
                 if line.startswith("MemTotal:"):
-                    total_gb = int(line.split()[1]) / (1024 * 1024)
-                    break
+                    return int(line.split()[1]) / (1024 * 1024)
     except Exception:  # noqa: BLE001
         pass
 
-    # Fallback — os.sysconf
-    if total_gb <= 0:
+    # --- macOS / BSD ---
+    if sys.platform == "darwin":
         try:
-            pages = os.sysconf("SC_PHYS_PAGES")
-            page_size = os.sysconf("SC_PAGE_SIZE")
-            total_gb = (pages * page_size) / (1024**3)
-        except (ValueError, OSError, AttributeError):
-            total_gb = 0.0
+            import subprocess
+
+            out = subprocess.run(
+                ["sysctl", "-n", "hw.memsize"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+            if out:
+                return int(out) / (1024**3)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # --- Unix fallback ---
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        return (pages * page_size) / (1024**3)
+    except (ValueError, OSError, AttributeError):
+        pass
+
+    # --- psutil ho to (dependency nahi hai, par ho sakta hai) ---
+    try:
+        import psutil
+
+        return psutil.virtual_memory().total / (1024**3)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def recommend_model_size() -> str:
+    """
+    Available RAM ke hisaab se model suggest karo.
+
+    Pillar #3 — budget hardware pe bhi chale. PAR bade laptop pe
+    kamzor model thopna bhi galat hai, kyunki `base` Hinglish pe
+    theek se kaam nahi karta.
+    """
+    total_gb = total_ram_gb()
 
     if total_gb <= 0:
-        return "base"  # Safe default
+        return "base"  # Pata nahi chala — safe default
     if total_gb < 3:
         return "tiny"
     if total_gb < 6:
@@ -421,6 +494,7 @@ class WhisperSTT:
         audio,
         extra_words: list[str] | None = None,
         apply_correction: bool = True,
+        language=_USE_CONFIG,
     ) -> TranscriptResult:
         """
         Audio ko text banao.
@@ -430,6 +504,8 @@ class WhisperSTT:
             extra_words: Extra vocabulary — contact naam, skill naam.
                          Ye Whisper ko bias karta hai (PILLAR #1)
             apply_correction: Hinglish correction lagani hai?
+            language: Is call ke liye language override ("en"/"hi"/None).
+                      Na do to config ka use hota hai.
 
         Returns:
             TranscriptResult — .text mein final saaf text
@@ -443,9 +519,16 @@ class WhisperSTT:
         initial_prompt = build_initial_prompt(extra_words=extra_words)
 
         try:
+            # `language` override diya ho to wo use karo, warna config ka.
+            # Ye --stt-tune ke liye chahiye: ek hi model load karke
+            # en / hi / auto teeno try kar sakein.
+            use_language = (
+                self.config.language if language is _USE_CONFIG else language
+            )
+
             segments_iter, info = self._model.transcribe(
                 prepared,
-                language=self.config.language,
+                language=use_language,
                 initial_prompt=initial_prompt,
                 beam_size=self.config.beam_size,
                 vad_filter=self.config.vad_filter,
