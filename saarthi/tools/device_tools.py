@@ -494,18 +494,102 @@ class NotificationsTool(Tool):
 # ======================================================================
 
 
+class FillFieldTool(Tool):
+    name = "field_bharo"
+    description = (
+        "Browser mein koi input field bharo — label, placeholder ya naam se "
+        "dhoondh ke. Form bharne ke liye ye BEST hai (tap + type se behtar). "
+        "Example: field='email', value='abc@gmail.com'"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "field": {
+                "type": "string",
+                "description": "Field ka label/placeholder, jaise 'Search' ya 'email'",
+            },
+            "value": {"type": "string", "description": "Kya bharna hai"},
+            **DEVICE_PARAM,
+        },
+        "required": ["field", "value"],
+    }
+
+    async def run(
+        self,
+        ctx: ToolContext,
+        field: str,
+        value: str,
+        device: str | None = None,
+    ) -> ActionResult:
+        # SAFETY: password/OTP yahan bhi block
+        verdict = check_text_safety(value)
+        if verdict.is_blocked:
+            return ActionResult.failure(verdict.reason)
+
+        dev, error = _resolve_device(ctx, device or "browser")
+        if error:
+            return error
+
+        filler = getattr(dev, "fill_field", None)
+        if filler is None:
+            return ActionResult.failure(
+                f"'{dev.name}' pe field_bharo support nahi hai. "
+                f"text_pe_tap phir text_likho use kar."
+            )
+        return await filler(field, value)
+
+
+class ReadPageTool(Tool):
+    name = "page_padho"
+    description = (
+        "Browser mein khule page ka pura text padho. Website ka content "
+        "samajhne ke liye — news, article, search results, prices. "
+        "screen_padho buttons dikhata hai, ye pura CONTENT deta hai."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "max_chars": {
+                "type": "integer",
+                "description": "Max kitna text (default 6000)",
+            },
+            **DEVICE_PARAM,
+        },
+    }
+
+    async def run(
+        self,
+        ctx: ToolContext,
+        max_chars: int = 6000,
+        device: str | None = None,
+    ) -> ActionResult:
+        dev, error = _resolve_device(ctx, device or "browser")
+        if error:
+            return error
+
+        reader = getattr(dev, "read_page", None)
+        if reader is None:
+            return ActionResult.failure(
+                f"'{dev.name}' pe page_padho support nahi hai (ye browser "
+                f"ke liye hai)"
+            )
+        return await reader(max_chars=max_chars)
+
+
 def device_tools() -> list[Tool]:
     """Saare device tools ki list."""
     return [
         # Reading — pehle ye
         ReadScreenTool(),
         ScreenshotTool(),
+        ReadPageTool(),
         DeviceInfoTool(),
         NotificationsTool(),
         # Interaction
         TapTextTool(),
         TapTool(),
         TypeTextTool(),
+        FillFieldTool(),
         PressKeyTool(),
         ScrollTool(),
         # Apps

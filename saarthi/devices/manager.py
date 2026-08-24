@@ -18,6 +18,7 @@ from ..config import Settings, settings as default_settings
 from ..lang.lexicon import detect_target_device
 from .android import AndroidDevice
 from .base import ActionResult, Capability, Device
+from .browser import BrowserDevice
 from .desktop import DesktopDevice
 
 log = logging.getLogger("saarthi.devices")
@@ -44,13 +45,15 @@ class DeviceManager:
         """
         Standard devices register karo.
 
-        Desktop hamesha available hai. Android tab jab ADB connected ho —
-        par register hum abhi karte hain, availability check baad mein.
+        Desktop hamesha available hai. Android tab jab ADB connected ho.
+        Browser tab jab Playwright installed ho.
+        Register abhi karte hain, availability check baad mein.
         """
         self.register(DesktopDevice(name="desktop"))
         self.register(
             AndroidDevice(name="android", adb_path=self.settings.adb_path)
         )
+        self.register(BrowserDevice(name="browser"))
 
     # ------------------------------------------------------------------
     #  Lookup

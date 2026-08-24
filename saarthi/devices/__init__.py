@@ -37,6 +37,7 @@ from .base import (
     DeviceError,
     UIElement,
 )
+from .browser import HAS_PLAYWRIGHT, BrowserDevice
 from .desktop import HAS_GUI, DesktopDevice
 from .manager import DeviceManager
 
@@ -50,7 +51,9 @@ __all__ = [
     # Implementations
     "AndroidDevice",
     "DesktopDevice",
+    "BrowserDevice",
     "HAS_GUI",
+    "HAS_PLAYWRIGHT",
     # Manager
     "DeviceManager",
 ]

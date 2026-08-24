@@ -1,0 +1,579 @@
+"""
+Browser Device — "saari websites ka access".
+
+YAHAN ARCHITECTURE KA ASLI FAYDA DIKHTA HAI:
+
+    Browser ka DOM hi hamara `ui_tree` ban jaata hai. Matlab:
+
+      - `tap_text("Login")`        -> AUTOMATICALLY kaam karta hai
+      - Skills ka SELF-HEALING     -> AUTOMATICALLY kaam karta hai
+      - Dikha Do Mode              -> AUTOMATICALLY kaam karta hai
+
+    Ek line bhi nahi likhni padi in features ke liye. Kyunki Phase 1
+    mein `Device` abstraction theek se banaya tha.
+
+    Yahi accha architecture hota hai — naya device add karo, purane
+    features free mil jaate hain.
+
+
+KYA HO SAKTA HAI:
+    - Koi bhi website kholo
+    - Text/button pe click karo (text se, coordinates se nahi)
+    - Form bharo
+    - Screenshot lo (Gemini/GPT-4o dekh sakte hain)
+    - Page ka pura text padho
+    - Scroll, back, forward, tabs
+    - Login state YAAD rehti hai (persistent profile)
+
+IMAANDAAR LIMITATIONS:
+    - CAPTCHA: agent solve nahi karega (aur nahi karna chahiye)
+    - Bot-detection: kuch sites block karengi (~10%)
+    - Banking sites: automation detect karke block kar sakti hain
+    - Payment ka final button: USER dabayega (safety rule)
+
+SETUP (ek baar):
+    pip install playwright
+    playwright install chromium
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import logging
+from pathlib import Path
+
+from ..config import settings as default_settings
+from .base import ActionResult, Capability, Device, UIElement
+
+log = logging.getLogger("saarthi.devices.browser")
+
+# ----------------------------------------------------------------------
+#  Optional dependency
+# ----------------------------------------------------------------------
+
+try:
+    from playwright.async_api import async_playwright
+
+    HAS_PLAYWRIGHT = True
+    PLAYWRIGHT_ERROR = ""
+except Exception as exc:  # noqa: BLE001
+    async_playwright = None  # type: ignore[assignment]
+    HAS_PLAYWRIGHT = False
+    PLAYWRIGHT_ERROR = str(exc)
+
+
+# JavaScript jo page ke saare interactive elements nikaalta hai.
+# Ye DOM ko hamare UIElement format mein badal deta hai — isi se
+# tap_text aur self-healing free mil jaate hain.
+_EXTRACT_ELEMENTS_JS = """
+() => {
+  const out = [];
+  const selector = [
+    'a[href]', 'button', 'input', 'select', 'textarea',
+    '[role=button]', '[role=link]', '[role=tab]', '[role=menuitem]',
+    '[onclick]', '[contenteditable=true]'
+  ].join(',');
+
+  const nodes = document.querySelectorAll(selector);
+
+  for (const el of nodes) {
+    const rect = el.getBoundingClientRect();
+
+    // Chhupe hue elements skip karo — unpe click nahi ho sakta
+    if (rect.width < 2 || rect.height < 2) continue;
+    const style = window.getComputedStyle(el);
+    if (style.visibility === 'hidden' || style.display === 'none') continue;
+    if (parseFloat(style.opacity || '1') < 0.05) continue;
+
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+
+    // Element ka best naam dhoondo
+    let text = (el.innerText || el.textContent || '').trim();
+    if (!text) {
+      text = (el.getAttribute('aria-label')
+              || el.getAttribute('placeholder')
+              || el.getAttribute('title')
+              || el.getAttribute('name')
+              || el.value
+              || '').trim();
+    }
+    text = text.replace(/\\s+/g, ' ').slice(0, 120);
+
+    const editable = tag === 'textarea'
+      || el.getAttribute('contenteditable') === 'true'
+      || (tag === 'input' && !['checkbox','radio','submit','button','hidden','file'].includes(type));
+
+    out.push({
+      text: text,
+      desc: (el.getAttribute('aria-label') || el.getAttribute('title') || '').slice(0, 120),
+      id: (el.id || el.getAttribute('name') || '').slice(0, 80),
+      tag: tag + (type ? ':' + type : ''),
+      editable: editable,
+      enabled: !el.disabled,
+      x: Math.round(rect.left), y: Math.round(rect.top),
+      w: Math.round(rect.width), h: Math.round(rect.height)
+    });
+  }
+  return out.slice(0, 200);
+}
+"""
+
+
+class BrowserDevice(Device):
+    """
+    Playwright-based browser — saari websites ka access.
+
+    Browser LAZY start hota hai — object banane se kuch nahi khulta.
+    Pehle kaam pe browser launch hota hai.
+    """
+
+    kind = "browser"
+    capabilities = {
+        Capability.TAP,
+        Capability.TYPE,
+        Capability.KEY,
+        Capability.SCREENSHOT,
+        Capability.UI_TREE,      # DOM = ui_tree, isliye tap_text free
+        Capability.SWIPE,        # scroll
+        Capability.LAUNCH_APP,   # website kholna
+        Capability.DEVICE_INFO,
+    }
+
+    def __init__(
+        self,
+        name: str = "browser",
+        headless: bool = False,
+        profile_dir: str | Path | None = None,
+    ):
+        """
+        Args:
+            headless: True = browser dikhega nahi (background mein)
+                      False = dikhega (DEFAULT — user dekh sake kya ho raha hai)
+            profile_dir: Login state yahan save hogi. Isse Gmail/WhatsApp
+                         Web mein baar-baar login nahi karna padta.
+        """
+        super().__init__(name)
+        self.headless = headless
+        self.profile_dir = Path(
+            profile_dir or (default_settings.data_dir / "browser_profile")
+        )
+
+        self._playwright = None
+        self._context = None
+        self._page = None
+
+    # ------------------------------------------------------------------
+    #  Lifecycle
+    # ------------------------------------------------------------------
+
+    async def is_available(self) -> bool:
+        return HAS_PLAYWRIGHT
+
+    def setup_help(self) -> str:
+        lines = ["Browser control ke liye Playwright chahiye:"]
+        lines.append("")
+        lines.append("    pip install playwright")
+        lines.append("    playwright install chromium")
+        lines.append("")
+        lines.append("  (chromium ~150MB download hoga, ek hi baar)")
+        if PLAYWRIGHT_ERROR:
+            lines.append(f"\n  Abhi ka error: {PLAYWRIGHT_ERROR}")
+        return "\n".join(lines)
+
+    async def _ensure_browser(self) -> ActionResult | None:
+        """
+        Browser start karo (lazy). Problem ho to ActionResult return karo.
+        """
+        if self._page is not None:
+            return None
+
+        if not HAS_PLAYWRIGHT:
+            return ActionResult.failure(self.setup_help())
+
+        try:
+            self._playwright = await async_playwright().start()
+
+            self.profile_dir.mkdir(parents=True, exist_ok=True)
+
+            # persistent_context use kar rahe hain (normal launch nahi) —
+            # isse cookies aur login state save rehti hai. User ko
+            # baar-baar login nahi karna padta.
+            self._context = await self._playwright.chromium.launch_persistent_context(
+                user_data_dir=str(self.profile_dir),
+                headless=self.headless,
+                viewport={"width": 1280, "height": 800},
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+
+            pages = self._context.pages
+            self._page = pages[0] if pages else await self._context.new_page()
+            self._page.set_default_timeout(20_000)
+
+            log.info("Browser start ho gaya (headless=%s)", self.headless)
+            return None
+
+        except Exception as exc:  # noqa: BLE001
+            await self.close()
+            message = str(exc)
+            if "executable doesn't exist" in message.lower() or "install" in message.lower():
+                return ActionResult.failure(
+                    "Chromium install nahi hai. Ye chala:\n"
+                    "    playwright install chromium"
+                )
+            return ActionResult.failure(f"Browser start nahi hua: {exc}")
+
+    async def close(self) -> None:
+        """Browser band karo."""
+        for closer in (self._context, self._playwright):
+            if closer is None:
+                continue
+            try:
+                if hasattr(closer, "close"):
+                    await closer.close()
+                elif hasattr(closer, "stop"):
+                    await closer.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        self._playwright = None
+        self._context = None
+        self._page = None
+
+    # ------------------------------------------------------------------
+    #  Info
+    # ------------------------------------------------------------------
+
+    async def info(self) -> ActionResult:
+        if not HAS_PLAYWRIGHT:
+            return ActionResult.failure(self.setup_help())
+
+        if self._page is None:
+            return ActionResult.success(
+                "Browser ready hai (abhi khula nahi). "
+                "website_kholo ya app_kholo se koi site kholo."
+            )
+
+        try:
+            title = await self._page.title()
+            url = self._page.url
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Page info nahi mili: {exc}")
+
+        return ActionResult.success(
+            f"Abhi khula hai: {title}\n  URL: {url}", title=title, url=url
+        )
+
+    # ------------------------------------------------------------------
+    #  Navigation ("app kholna" = website kholna)
+    # ------------------------------------------------------------------
+
+    async def launch_app(self, app: str) -> ActionResult:
+        """
+        Website kholo. App ka naam bhi chalega — website mein badal jaayega.
+
+        "youtube" -> https://www.youtube.com
+        """
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        target = app.strip()
+
+        # App naam ho to website URL mein badlo
+        if not target.startswith(("http://", "https://")):
+            from ..tools.web_tools import COMMON_URLS  # circular import se bacho
+
+            lookup = target.lower()
+            known = COMMON_URLS.get(lookup)
+            if known and "{q}" not in known:
+                target = known
+            elif "." in target and " " not in target:
+                target = "https://" + target
+            else:
+                # Naam hai, URL nahi — Google pe search kar do
+                from urllib.parse import quote_plus
+
+                target = f"https://www.google.com/search?q={quote_plus(target)}"
+
+        if target.startswith("http://"):
+            target = "https://" + target[len("http://") :]
+
+        try:
+            await self._page.goto(target, wait_until="domcontentloaded")
+            # Thoda ruk jao — JS content load ho jaaye
+            await asyncio.sleep(1.2)
+            title = await self._page.title()
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"'{target}' khul nahi paya: {exc}")
+
+        return ActionResult.success(
+            f"Khol diya: {title}\n  URL: {self._page.url}", url=self._page.url
+        )
+
+    async def close_app(self, app: str) -> ActionResult:
+        """Tab band karo / blank page pe jao."""
+        if self._page is None:
+            return ActionResult.success("Browser pehle se band hai")
+        try:
+            await self._page.goto("about:blank")
+            return ActionResult.success("Page band kar diya")
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Band nahi hua: {exc}")
+
+    # ------------------------------------------------------------------
+    #  Screen reading — DOM se ui_tree
+    # ------------------------------------------------------------------
+
+    async def ui_tree(self) -> ActionResult:
+        """
+        Page ke saare interactive elements nikaalo.
+
+        YAHI wo method hai jisse `tap_text()` aur SELF-HEALING
+        automatically kaam karte hain — Phase 1 ka code chhedna
+        nahi padta.
+        """
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        try:
+            raw = await self._page.evaluate(_EXTRACT_ELEMENTS_JS)
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Page padh nahi paya: {exc}")
+
+        elements: list[UIElement] = []
+        for item in raw or []:
+            x, y = item.get("x", 0), item.get("y", 0)
+            w, h = item.get("w", 0), item.get("h", 0)
+            elements.append(
+                UIElement(
+                    text=item.get("text", ""),
+                    content_desc=item.get("desc", ""),
+                    resource_id=item.get("id", ""),
+                    class_name=item.get("tag", ""),
+                    clickable=True,  # sab interactive elements hain
+                    editable=bool(item.get("editable")),
+                    enabled=bool(item.get("enabled", True)),
+                    bounds=(x, y, x + w, y + h),
+                )
+            )
+
+        interactive = [el for el in elements if el.label]
+
+        lines = [f"Page pe {len(elements)} interactive elements mile"]
+        try:
+            lines.append(f"Title: {await self._page.title()}")
+        except Exception:  # noqa: BLE001
+            pass
+
+        if interactive:
+            lines.append("Ye cheezein hain:")
+            for el in interactive[:30]:
+                lines.append(f"  - {el}")
+
+        return ActionResult.success(
+            "\n".join(lines), elements=elements, interactive=interactive
+        )
+
+    async def read_page(self, max_chars: int = 6000) -> ActionResult:
+        """Page ka pura text padho."""
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        try:
+            text = await self._page.inner_text("body")
+            title = await self._page.title()
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Text nahi mila: {exc}")
+
+        import re
+
+        clean = re.sub(r"\n{3,}", "\n\n", text or "").strip()
+        truncated = len(clean) > max_chars
+        if truncated:
+            clean = clean[:max_chars] + "\n... (aur bhi hai)"
+
+        return ActionResult.success(f"[{title}]\n\n{clean}", truncated=truncated)
+
+    async def screenshot(self) -> ActionResult:
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        try:
+            raw = await self._page.screenshot(type="png")
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Screenshot fail: {exc}")
+
+        return ActionResult.success(
+            f"Screenshot liya ({len(raw) // 1024} KB)",
+            image_b64=base64.b64encode(raw).decode("ascii"),
+            image_mime="image/png",
+        )
+
+    # ------------------------------------------------------------------
+    #  Interaction
+    # ------------------------------------------------------------------
+
+    async def tap(self, x: int, y: int) -> ActionResult:
+        error = await self._ensure_browser()
+        if error:
+            return error
+        try:
+            await self._page.mouse.click(int(x), int(y))
+            await asyncio.sleep(0.6)
+            return ActionResult.success(f"click kiya ({x},{y})")
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Click fail: {exc}")
+
+    async def tap_text(self, text: str) -> ActionResult:
+        """
+        Text pe click karo.
+
+        Base class ka version bhi chalta (ui_tree se), par Playwright ka
+        apna text-matching zyada reliable hai — isliye override kiya.
+        Na mile to base class wala fallback try hota hai.
+        """
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        query = text.strip()
+
+        # Playwright ke locators — accuracy ke order mein
+        attempts = [
+            self._page.get_by_role("button", name=query, exact=False),
+            self._page.get_by_role("link", name=query, exact=False),
+            self._page.get_by_text(query, exact=False),
+            self._page.locator(f"[aria-label*='{query}' i]"),
+            self._page.locator(f"[placeholder*='{query}' i]"),
+        ]
+
+        for locator in attempts:
+            try:
+                if await locator.count() == 0:
+                    continue
+                await locator.first.click(timeout=6000)
+                await asyncio.sleep(0.8)
+                return ActionResult.success(f"'{query}' pe click kiya")
+            except Exception:  # noqa: BLE001
+                continue
+
+        # Playwright se nahi mila — ui_tree wala tareeka try karo
+        # (isi se self-healing bhi chalta hai)
+        return await super().tap_text(text)
+
+    async def type_text(self, text: str) -> ActionResult:
+        error = await self._ensure_browser()
+        if error:
+            return error
+        try:
+            await self._page.keyboard.type(str(text), delay=25)
+            return ActionResult.success(f"type kiya: {str(text)[:60]}")
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Type fail: {exc}")
+
+    async def fill_field(self, field: str, value: str) -> ActionResult:
+        """Kisi field ko dhoondh ke bharo (label/placeholder se)."""
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        attempts = [
+            self._page.get_by_label(field, exact=False),
+            self._page.get_by_placeholder(field, exact=False),
+            self._page.locator(f"[name*='{field}' i]"),
+            self._page.locator(f"[aria-label*='{field}' i]"),
+        ]
+
+        for locator in attempts:
+            try:
+                if await locator.count() == 0:
+                    continue
+                await locator.first.fill(str(value), timeout=6000)
+                return ActionResult.success(f"'{field}' mein '{value}' bhar diya")
+            except Exception:  # noqa: BLE001
+                continue
+
+        return ActionResult.failure(
+            f"'{field}' naam ka field nahi mila. screen_padho se dekh "
+            f"page pe kya hai."
+        )
+
+    async def press_key(self, key: str) -> ActionResult:
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        # Aam naam -> Playwright ke key naam
+        key_map = {
+            "enter": "Enter", "back": "AltLeft+ArrowLeft", "tab": "Tab",
+            "escape": "Escape", "esc": "Escape", "space": "Space",
+            "up": "ArrowUp", "down": "ArrowDown",
+            "left": "ArrowLeft", "right": "ArrowRight",
+            "delete": "Delete", "backspace": "Backspace",
+            "home": "Home", "end": "End",
+            "pageup": "PageUp", "pagedown": "PageDown",
+        }
+        target = key_map.get(key.lower().strip(), key)
+
+        # "back" browser ka back hai, keyboard ka nahi
+        if key.lower().strip() in ("back", "peeche", "wapas"):
+            try:
+                await self._page.go_back()
+                await asyncio.sleep(0.8)
+                return ActionResult.success("peeche gaya")
+            except Exception as exc:  # noqa: BLE001
+                return ActionResult.failure(f"Back fail: {exc}")
+
+        try:
+            await self._page.keyboard.press(target)
+            await asyncio.sleep(0.4)
+            return ActionResult.success(f"{key} press kiya")
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Key press fail: {exc}")
+
+    async def swipe(
+        self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300
+    ) -> ActionResult:
+        """Browser mein swipe = scroll."""
+        error = await self._ensure_browser()
+        if error:
+            return error
+        try:
+            await self._page.mouse.wheel(x2 - x1, y2 - y1)
+            await asyncio.sleep(0.5)
+            return ActionResult.success(f"scroll kiya ({x2 - x1},{y2 - y1})")
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Scroll fail: {exc}")
+
+    async def scroll(
+        self, direction: str = "down", amount: float = 0.5
+    ) -> ActionResult:
+        """Page scroll karo."""
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        pixels = int(700 * max(0.1, min(amount, 2.0)))
+        deltas = {
+            "down": (0, pixels), "neeche": (0, pixels),
+            "up": (0, -pixels), "upar": (0, -pixels),
+            "right": (pixels, 0), "daayen": (pixels, 0),
+            "left": (-pixels, 0), "baayen": (-pixels, 0),
+        }
+        delta = deltas.get(direction.lower().strip())
+        if delta is None:
+            return ActionResult.failure(
+                f"Direction samajh nahi aaya: {direction} "
+                "(down/up/left/right ya neeche/upar/baayen/daayen)"
+            )
+
+        try:
+            await self._page.mouse.wheel(*delta)
+            await asyncio.sleep(0.5)
+            return ActionResult.success(f"{direction} scroll kiya")
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Scroll fail: {exc}")
