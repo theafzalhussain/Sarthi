@@ -106,6 +106,18 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
+def _env_choice(key: str, allowed: tuple, default: str) -> str:
+    """
+    .env se ek fixed choice padho.
+
+    Galat value likhi ho to CHUP-CHAAP default use karte hain — crash
+    karna bekaar hai, aur galat value pe agent chalna band ho jaaye
+    to wo user ke liye zyada bura hai.
+    """
+    raw = (os.getenv(key) or "").strip().lower()
+    return raw if raw in allowed else default
+
+
 @dataclass
 class ProviderConfig:
     """Ek LLM provider ki settings."""
@@ -142,6 +154,32 @@ class Settings:
     # --- Devices ---
     adb_path: str = "adb"
     default_device: str = "desktop"
+
+    # --- Browser ---
+    #
+    # Ye setting "mera tab switch ho gaya" wali problem ka ilaaj hai.
+    #
+    #   agent  -> SAARTHI apni ALAG browser window use karega (Playwright).
+    #             Tere personal Chrome ke tabs ko haath bhi nahi lagega.
+    #             Sabse safe. Login state agent ke apne profile mein
+    #             save hoti hai (ek baar login karna padega).
+    #
+    #   system -> Tera default browser. Agent naye TAB mein kholega
+    #             (tera current tab replace NAHI karega) aur window
+    #             ko zabardasti aage laane ki koshish nahi karega.
+    #             Par dhyan: Chrome khud naye tab pe switch kar deta hai —
+    #             ye Chrome ka behaviour hai, isko code se roka nahi ja
+    #             sakta. Tab switch bilkul nahi chahiye to 'agent' use kar.
+    #
+    #   auto   -> Playwright installed ho to 'agent', warna 'system'.
+    #             DEFAULT — kyunki ye bina setup ke sahi kaam karta hai.
+    browser_mode: str = "auto"
+
+    # Agent ka browser dikhe ya nahi.
+    # False = dikhega (default — user dekh sakta hai kya ho raha hai,
+    #         aur zarurat pade to khud takeover kar sakta hai)
+    # True  = background mein, koi window nahi khulegi
+    browser_headless: bool = False
 
     # --- Paths ---
     data_dir: Path = DATA_DIR
@@ -209,6 +247,10 @@ class Settings:
             debug=_env_bool("SAARTHI_DEBUG", False),
             adb_path=os.getenv("ADB_PATH", "adb"),
             default_device=os.getenv("SAARTHI_DEFAULT_DEVICE", "desktop"),
+            browser_mode=_env_choice(
+                "SAARTHI_BROWSER_MODE", ("auto", "agent", "system"), "auto"
+            ),
+            browser_headless=_env_bool("SAARTHI_BROWSER_HEADLESS", False),
         )
 
         settings.data_dir.mkdir(parents=True, exist_ok=True)

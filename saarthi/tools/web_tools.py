@@ -214,54 +214,254 @@ class FetchPageTool(Tool):
         )
 
 
+def _normalize_url(raw: str) -> str:
+    """http:// ko https:// karo, scheme na ho to laga do."""
+    clean = raw.strip()
+    if clean.startswith("http://"):
+        return "https://" + clean[len("http://") :]
+    if not clean.startswith("https://"):
+        return "https://" + clean
+    return clean
+
+
+def _looks_like_domain(text: str) -> bool:
+    """'youtube.com' domain hai, 'tum hi ho gaana' nahi."""
+    return "." in text and " " not in text and not text.startswith(".")
+
+
+def resolve_target(url: str, search: str = "") -> str:
+    """
+    User/LLM ne jo diya usse ek chalne wala URL banao.
+
+    Ye jaan-boojh ke UDAAR hai. LLM kabhi poora URL deta hai, kabhi
+    sirf "youtube" likh deta hai. Dono chalne chahiye — warna agent
+    ek extra step barbaad karta hai (ya "URL galat hai" bolke ruk
+    jaata hai, jo user ke liye sabse irritating cheez hai).
+
+    >>> resolve_target("youtube", "tum hi ho")
+    'https://www.youtube.com/results?search_query=tum+hi+ho'
+    >>> resolve_target("youtube")
+    'https://www.youtube.com'
+    """
+    from urllib.parse import quote_plus
+
+    raw = (url or "").strip()
+    query = (search or "").strip()
+    lookup = raw.lower().rstrip("/")
+
+    # --- Search karna hai ---
+    if query:
+        # "youtube" + query -> "youtube search" template
+        template = COMMON_URLS.get(f"{lookup} search")
+        if template and "{q}" in template:
+            return template.replace("{q}", quote_plus(query))
+
+        # Site ka apna template hai? (maps waghairah)
+        direct = COMMON_URLS.get(lookup)
+        if direct and "{q}" in direct:
+            return direct.replace("{q}", quote_plus(query))
+
+        # Site ka naam pata nahi — Google pe site ke saath dhoondh lo
+        term = f"{raw} {query}".strip() if raw else query
+        return f"https://www.google.com/search?q={quote_plus(term)}"
+
+    if not raw:
+        return ""
+
+    # --- Sirf target diya ---
+    if raw.startswith(("http://", "https://")):
+        return _normalize_url(raw)
+
+    known = COMMON_URLS.get(lookup)
+    if known and "{q}" not in known:
+        return known
+
+    if _looks_like_domain(raw):
+        return _normalize_url(raw)
+
+    # Naam hai, URL nahi, search bhi nahi — Google pe dhoondh lo
+    return f"https://www.google.com/search?q={quote_plus(raw)}"
+
+
 class OpenWebsiteTool(Tool):
+    """
+    Website kholna — TAB SAFETY ke saath.
+
+    PEHLE KYA GALAT THA (asli bug jo user ne pakda):
+        Ye `webbrowser.open(url)` call karta tha. Python ka default
+        `new=0` hai, jiska matlab hai "same browser window mein khol
+        do" — aur `autoraise=True` window ko zabardasti aage le aata
+        hai. Nateeja: user kuch padh raha hota, agent ne kaam kiya,
+        aur user ka TAB SWITCH ho gaya / replace ho gaya.
+
+    AB KYA HOTA HAI:
+        1. mode 'agent'  -> SAARTHI ki APNI browser window (Playwright).
+                            User ke personal Chrome ko haath hi nahi
+                            lagta. Ye sabse safe hai.
+        2. mode 'system' -> user ka normal browser, par:
+                              new=2        -> NAYA TAB (current replace
+                                              nahi hoga)
+                              autoraise=False -> window aage laane ki
+                                              koshish nahi karega
+        3. mode 'auto'   -> Playwright ho to (1), warna (2). DEFAULT.
+
+    IMAANDAAR BAAT: 'system' mode mein Chrome KHUD naye tab pe switch
+    kar deta hai. Ye Chrome ka behaviour hai, iska koi command-line
+    flag nahi hai. Tab switch bilkul nahi chahiye to 'agent' mode.
+    """
+
     name = "website_kholo"
     description = (
-        "Browser mein koi website/URL kholo (laptop pe). YE BAHUT KAAM KA "
-        "HAI: phone connected na ho to bahut kaam laptop pe browser se ho "
-        "jaate hain — YouTube pe gaana, WhatsApp Web pe message, IRCTC pe "
-        "train, Instagram, Gmail, Maps, shopping. "
-        "Phone na ho to app_kholo ki jagah YE use kar. "
-        "Search bhi kar sakta hai: youtube pe gaana chalane ke liye "
-        "url='https://www.youtube.com/results?search_query=tum+hi+ho'"
+        "Browser mein website kholo (laptop pe). YE BAHUT KAAM KA HAI: "
+        "phone connected na ho to bahut kaam browser se ho jaate hain — "
+        "YouTube pe gaana, WhatsApp Web pe message, IRCTC pe train, "
+        "Instagram, Gmail, Maps, shopping. Phone na ho to app_kholo ki "
+        "jagah YE use kar.\n"
+        "EK HI CALL MEIN kaam ho jaata hai — do step mat lo:\n"
+        "  url='youtube', search='tum hi ho'   (search karna ho)\n"
+        "  url='youtube'                        (bas site kholni ho)\n"
+        "  url='https://web.whatsapp.com'       (poora URL bhi chalega)\n"
+        "Ye NAYE TAB mein khulta hai — user ka chalu kaam nahi todta."
     )
     parameters = {
         "type": "object",
         "properties": {
             "url": {
                 "type": "string",
-                "description": "Poora URL, jaise 'https://www.youtube.com'",
-            }
+                "description": (
+                    "Site ka naam ('youtube', 'irctc') ya poora URL "
+                    "('https://web.whatsapp.com'). Dono chalte hain."
+                ),
+            },
+            "search": {
+                "type": "string",
+                "description": (
+                    "Us site pe kya dhoondhna hai, jaise 'tum hi ho'. "
+                    "Isse ek hi step mein search result khul jaata hai."
+                ),
+            },
         },
         "required": ["url"],
     }
 
-    async def run(self, ctx: ToolContext, url: str) -> ActionResult:
+    async def run(
+        self, ctx: ToolContext, url: str, search: str = ""
+    ) -> ActionResult:
+        target = resolve_target(url, search)
+        if not target:
+            return ActionResult.failure("URL khali hai — kya kholna hai bata")
+
+        mode = getattr(ctx.settings, "browser_mode", "auto")
+
+        # --- Agent ka apna browser (tab bilkul safe) ---
+        if mode in ("auto", "agent"):
+            result = await self._open_in_agent_browser(ctx, target)
+
+            if result is not None and result.ok:
+                return result
+
+            # Fail hua — par KYUN fail hua, ye farak karta hai:
+            #
+            #   setup problem (playwright/chromium nahi hai)
+            #       -> auto mode system browser pe chala jaaye. User ka
+            #          kaam hona zyada important hai (prompt rule #8:
+            #          "haar mat maano").
+            #
+            #   asli problem (site khuli nahi, timeout)
+            #       -> fallback bekaar hai, wahi error doosre browser mein
+            #          bhi aayega. Seedha bata do.
+            setup_problem = result is None or bool(result.data.get("setup_error"))
+
+            if not setup_problem:
+                return result
+
+            if mode == "agent":
+                # User ne saaf bola 'agent' — chup-chaap uske personal
+                # browser pe jaana galat hoga, wahi to bachana tha
+                device = ctx.devices.get("browser")
+                setup = (
+                    device.setup_help()
+                    if device is not None and hasattr(device, "setup_help")
+                    else "pip install playwright && playwright install chromium"
+                )
+                return ActionResult.failure(
+                    "browser_mode='agent' set hai par agent ka browser "
+                    "available nahi hai.\n\n"
+                    f"{setup}\n\n"
+                    "Ya .env mein SAARTHI_BROWSER_MODE=system kar de "
+                    "(tera normal browser use hoga — naye tab mein)."
+                )
+
+        # --- System browser (naya tab, focus na chheeno) ---
+        return await self._open_in_system_browser(target)
+
+    @staticmethod
+    async def _open_in_agent_browser(
+        ctx: ToolContext, target: str
+    ) -> ActionResult | None:
+        """
+        SAARTHI ke apne browser mein kholo.
+
+        Returns:
+            ActionResult agar ho gaya/fail hua, ya None agar agent ka
+            browser hi available nahi hai (caller fallback kare).
+        """
+        device = ctx.devices.get("browser")
+        if device is None:
+            return None
+
+        try:
+            if not await device.is_available():
+                return None
+        except Exception:  # noqa: BLE001
+            return None
+
+        result = await device.launch_app(target)
+
+        if result.ok:
+            tabs = result.data.get("tab_count") or 1
+            note = (
+                "Agent ke apne browser mein naye tab mein khol diya — "
+                "tere personal browser ke tabs waise hi hain."
+            )
+            if tabs > 1:
+                note += f" (agent ke {tabs} tab khule hain)"
+            return ActionResult.success(
+                f"{note}\n{result.output}", url=target, tab_count=tabs
+            )
+
+        return result
+
+    @staticmethod
+    async def _open_in_system_browser(target: str) -> ActionResult:
+        """
+        User ke default browser mein kholo — kam se kam nuksaan ke saath.
+
+        new=2         -> NAYA TAB. Default new=0 current tab replace kar
+                         sakta hai. Yahi original bug tha.
+        autoraise=False -> window ko zabardasti aage na laao.
+        """
         import webbrowser
-
-        clean = url.strip()
-        if not clean:
-            return ActionResult.failure("URL khali hai")
-
-        # http:// ko https:// bana do
-        if clean.startswith("http://"):
-            clean = "https://" + clean[len("http://") :]
-        elif not clean.startswith("https://"):
-            clean = "https://" + clean
 
         try:
             # webbrowser stdlib mein hai — Windows/Mac/Linux sab pe chalta
             # hai, koi shell command nahi, koi extra dependency nahi.
-            opened = await asyncio.to_thread(webbrowser.open, clean)
+            opened = await asyncio.to_thread(
+                lambda: webbrowser.open(target, new=2, autoraise=False)
+            )
         except Exception as exc:  # noqa: BLE001
             return ActionResult.failure(f"Browser khul nahi paya: {exc}")
 
         if not opened:
             return ActionResult.failure(
-                f"Browser khul nahi paya. Khud khol le: {clean}"
+                f"Browser khul nahi paya. Khud khol le: {target}"
             )
 
-        return ActionResult.success(f"Browser mein khol diya: {clean}", url=clean)
+        return ActionResult.success(
+            f"Naye tab mein khol diya: {target}\n"
+            "  (tera current tab waise hi hai)",
+            url=target,
+        )
 
 
 # Aam kaam -> ready URL. LLM ko ye help karta hai sahi URL banane mein.

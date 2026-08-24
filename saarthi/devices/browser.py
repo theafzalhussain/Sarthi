@@ -25,11 +25,34 @@ KYA HO SAKTA HAI:
     - Scroll, back, forward, tabs
     - Login state YAAD rehti hai (persistent profile)
 
+TAB DISCIPLINE (ye bahut important hai — user ka kaam mat todo):
+
+    Ye browser SAARTHI ka APNA hai, user ke personal Chrome se alag.
+    Phir bhi user isi window mein aa ke kaam karta hai (agent ne
+    YouTube khola, user wahan video dekh raha hai).
+
+    Isliye rule: `launch_app` HAR BAAR NAYA TAB kholta hai.
+
+    Kyun? Pehle ye `self._page` reuse karta tha. Nateeja:
+        1. Agent ne YouTube search khola
+        2. User us tab pe gaya, video chalu kiya
+        3. User ne agent ko naya kaam diya ("gmail kholo")
+        4. Agent ne USI tab ko gmail pe bhej diya
+        -> User ka video band. Tab "switch" ho gaya.
+
+    Ab agent naya tab kholta hai aur user ka tab chhedta nahi.
+    `bring_to_front()` KABHI nahi call karte — warna user ka focus
+    chhin jaayega.
+
 IMAANDAAR LIMITATIONS:
     - CAPTCHA: agent solve nahi karega (aur nahi karna chahiye)
     - Bot-detection: kuch sites block karengi (~10%)
     - Banking sites: automation detect karke block kar sakti hain
     - Payment ka final button: USER dabayega (safety rule)
+    - Browser window PEHLI BAAR khulte waqt OS focus le sakta hai.
+      Ye OS/window-manager ka behaviour hai, isko code se pura roka
+      nahi ja sakta. Bilkul nahi chahiye to
+      SAARTHI_BROWSER_HEADLESS=true kar de.
 
 SETUP (ek baar):
     pip install playwright
@@ -141,21 +164,28 @@ class BrowserDevice(Device):
         Capability.DEVICE_INFO,
     }
 
+    # Itne se zyada tab ho jaayein to naya kholna band, purana reuse.
+    # Warna din bhar chalane pe 50 tab khul jaate hain.
+    MAX_TABS = 10
+
     def __init__(
         self,
         name: str = "browser",
-        headless: bool = False,
+        headless: bool | None = None,
         profile_dir: str | Path | None = None,
     ):
         """
         Args:
             headless: True = browser dikhega nahi (background mein)
-                      False = dikhega (DEFAULT — user dekh sake kya ho raha hai)
+                      False = dikhega (user dekh sake kya ho raha hai)
+                      None = .env ka SAARTHI_BROWSER_HEADLESS use karo
             profile_dir: Login state yahan save hogi. Isse Gmail/WhatsApp
                          Web mein baar-baar login nahi karna padta.
         """
         super().__init__(name)
-        self.headless = headless
+        self.headless = (
+            default_settings.browser_headless if headless is None else headless
+        )
         self.profile_dir = Path(
             profile_dir or (default_settings.data_dir / "browser_profile")
         )
@@ -163,6 +193,15 @@ class BrowserDevice(Device):
         self._playwright = None
         self._context = None
         self._page = None
+
+        # Agent ne is page ko KAHAN chhoda tha.
+        # Isse pata chalta hai user ne tab ko haath lagaya ya nahi:
+        # current URL != _agent_url  =>  user ne khud navigate kiya
+        # => us tab ko chhedna nahi hai.
+        self._agent_url: str | None = None
+
+        # Agent ne kaunse tab khole (order ke saath) — cap lagane ke liye
+        self._agent_pages: list = []
 
     # ------------------------------------------------------------------
     #  Lifecycle
@@ -190,7 +229,10 @@ class BrowserDevice(Device):
             return None
 
         if not HAS_PLAYWRIGHT:
-            return ActionResult.failure(self.setup_help())
+            # setup_error=True -> caller ko pata chalta hai ki ye "setup
+            # adhoora hai" wali problem hai, "website kharab hai" wali
+            # nahi. auto mode isi pe system browser pe fallback karta hai.
+            return ActionResult.failure(self.setup_help(), setup_error=True)
 
         try:
             self._playwright = await async_playwright().start()
@@ -204,12 +246,23 @@ class BrowserDevice(Device):
                 user_data_dir=str(self.profile_dir),
                 headless=self.headless,
                 viewport={"width": 1280, "height": 800},
-                args=["--disable-blink-features=AutomationControlled"],
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    # Pehli baar khulte waqt ka shor kam karo — "restore
+                    # pages?" bubble, default-browser prompt, infobars.
+                    # Inme se koi bhi popup user ka dhyan tod deta hai.
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-session-crashed-bubble",
+                    "--disable-infobars",
+                ],
             )
 
             pages = self._context.pages
             self._page = pages[0] if pages else await self._context.new_page()
             self._page.set_default_timeout(20_000)
+            self._agent_pages = [self._page]
+            self._remember_url()
 
             log.info("Browser start ho gaya (headless=%s)", self.headless)
             return None
@@ -220,9 +273,125 @@ class BrowserDevice(Device):
             if "executable doesn't exist" in message.lower() or "install" in message.lower():
                 return ActionResult.failure(
                     "Chromium install nahi hai. Ye chala:\n"
-                    "    playwright install chromium"
+                    "    playwright install chromium",
+                    setup_error=True,
                 )
-            return ActionResult.failure(f"Browser start nahi hua: {exc}")
+            return ActionResult.failure(
+                f"Browser start nahi hua: {exc}", setup_error=True
+            )
+
+    # ------------------------------------------------------------------
+    #  TAB MANAGEMENT — "mera tab switch ho gaya" ka ilaaj
+    # ------------------------------------------------------------------
+
+    def _current_url(self) -> str:
+        """Abhi ka URL. Page band ho gaya ho to khali string."""
+        if self._page is None:
+            return ""
+        try:
+            return self._page.url or ""
+        except Exception:  # noqa: BLE001 — page band ho sakta hai
+            return ""
+
+    def _remember_url(self) -> None:
+        """
+        Agent ne page ko yahan chhoda — yaad rakh lo.
+
+        Agent ka HAR action ke baad ye call hota hai. Isse baad mein
+        pata chal jaata hai ki URL agent ne badla tha ya user ne.
+        """
+        self._agent_url = self._current_url() or None
+
+    def _is_blank(self, url: str) -> bool:
+        """Khali tab hai? (ise reuse karna safe hai)"""
+        return url in ("", "about:blank", "chrome://newtab/", "about:newtab")
+
+    def _user_took_over(self) -> bool:
+        """
+        User ne is tab ko khud navigate kiya hai?
+
+        Agar haan, to is tab ko chhedna MANA hai — user wahan kaam
+        kar raha hai.
+        """
+        current = self._current_url()
+        if self._is_blank(current) or self._agent_url is None:
+            return False
+        return current != self._agent_url
+
+    def _live_pages(self) -> list:
+        """Jo tabs abhi khule hain."""
+        if self._context is None:
+            return []
+        try:
+            return [p for p in self._context.pages if not p.is_closed()]
+        except Exception:  # noqa: BLE001
+            return []
+
+    async def _open_tab(self) -> ActionResult | None:
+        """
+        Naya tab kholo aur usko current bana do.
+
+        Tab count cap se zyada ho gaya to naya nahi kholte — sabse
+        purana AGENT ka tab reuse karte hain. User ka navigate kiya
+        hua tab kabhi reuse nahi karte.
+        """
+        live = self._live_pages()
+
+        if len(live) >= self.MAX_TABS:
+            # Sabse purana agent ka tab dhoondo jo abhi bhi khula hai
+            for page in self._agent_pages:
+                try:
+                    if page.is_closed() or page is self._page:
+                        continue
+                except Exception:  # noqa: BLE001
+                    continue
+                log.info(
+                    "%d tab ho gaye — purana agent tab reuse kar raha hun",
+                    len(live),
+                )
+                self._page = page
+                self._page.set_default_timeout(20_000)
+                return None
+
+        try:
+            page = await self._context.new_page()
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Naya tab khul nahi paya: {exc}")
+
+        page.set_default_timeout(20_000)
+        self._page = page
+        self._agent_pages.append(page)
+        # NOTE: bring_to_front() JAAN-BOOJH KE nahi call kar rahe.
+        # Wo user ka focus chheen leta hai — yahi to fix kar rahe hain.
+        return None
+
+    async def _page_for_navigation(self) -> ActionResult | None:
+        """
+        Navigate karne ke liye kaunsa tab use karein.
+
+        Ye pura fix isi function mein hai:
+          - Khali tab hai        -> wahi use karo (bekaar tab kyun banao)
+          - User ne takeover kiya -> NAYA tab (uska kaam nahi todenge)
+          - Warna                -> NAYA tab (purana browsing history
+                                     ke liye chhod do)
+        """
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        current = self._current_url()
+
+        if self._is_blank(current):
+            return None
+
+        if self._user_took_over():
+            log.info("User ne tab takeover kiya (%s) — naya tab khol raha hun", current)
+
+        return await self._open_tab()
+
+    def tab_count(self) -> int:
+        """Kitne tab khule hain."""
+        return len(self._live_pages())
 
     async def close(self) -> None:
         """Browser band karo."""
@@ -239,6 +408,8 @@ class BrowserDevice(Device):
         self._playwright = None
         self._context = None
         self._page = None
+        self._agent_pages = []
+        self._agent_url = None
 
     # ------------------------------------------------------------------
     #  Info
@@ -260,8 +431,12 @@ class BrowserDevice(Device):
         except Exception as exc:  # noqa: BLE001
             return ActionResult.failure(f"Page info nahi mili: {exc}")
 
+        tabs = self.tab_count()
         return ActionResult.success(
-            f"Abhi khula hai: {title}\n  URL: {url}", title=title, url=url
+            f"Abhi khula hai: {title}\n  URL: {url}\n  Khule tabs: {tabs}",
+            title=title,
+            url=url,
+            tab_count=tabs,
         )
 
     # ------------------------------------------------------------------
@@ -273,8 +448,11 @@ class BrowserDevice(Device):
         Website kholo. App ka naam bhi chalega — website mein badal jaayega.
 
         "youtube" -> https://www.youtube.com
+
+        NAYE TAB mein khulta hai — user ka chalu kaam nahi todta.
+        (Detail ke liye file ke top pe "TAB DISCIPLINE" padh.)
         """
-        error = await self._ensure_browser()
+        error = await self._page_for_navigation()
         if error:
             return error
 
@@ -307,8 +485,14 @@ class BrowserDevice(Device):
         except Exception as exc:  # noqa: BLE001
             return ActionResult.failure(f"'{target}' khul nahi paya: {exc}")
 
+        self._remember_url()
+
+        # Prose yahan nahi likh rahe — `website_kholo` tool user ko
+        # samjhaata hai ki tab safe hai. Yahan sirf facts.
         return ActionResult.success(
-            f"Khol diya: {title}\n  URL: {self._page.url}", url=self._page.url
+            f"Khol diya: {title}\n  URL: {self._page.url}",
+            url=self._page.url,
+            tab_count=self.tab_count(),
         )
 
     async def close_app(self, app: str) -> ActionResult:
@@ -317,6 +501,7 @@ class BrowserDevice(Device):
             return ActionResult.success("Browser pehle se band hai")
         try:
             await self._page.goto("about:blank")
+            self._remember_url()
             return ActionResult.success("Page band kar diya")
         except Exception as exc:  # noqa: BLE001
             return ActionResult.failure(f"Band nahi hua: {exc}")
@@ -424,6 +609,9 @@ class BrowserDevice(Device):
         try:
             await self._page.mouse.click(int(x), int(y))
             await asyncio.sleep(0.6)
+            # Click se page badal sakta hai — agent ka URL update karo,
+            # warna agli baar lagega ki user ne navigate kiya tha
+            self._remember_url()
             return ActionResult.success(f"click kiya ({x},{y})")
         except Exception as exc:  # noqa: BLE001
             return ActionResult.failure(f"Click fail: {exc}")
@@ -457,6 +645,7 @@ class BrowserDevice(Device):
                     continue
                 await locator.first.click(timeout=6000)
                 await asyncio.sleep(0.8)
+                self._remember_url()
                 return ActionResult.success(f"'{query}' pe click kiya")
             except Exception:  # noqa: BLE001
                 continue
@@ -524,6 +713,7 @@ class BrowserDevice(Device):
             try:
                 await self._page.go_back()
                 await asyncio.sleep(0.8)
+                self._remember_url()
                 return ActionResult.success("peeche gaya")
             except Exception as exc:  # noqa: BLE001
                 return ActionResult.failure(f"Back fail: {exc}")
@@ -531,6 +721,8 @@ class BrowserDevice(Device):
         try:
             await self._page.keyboard.press(target)
             await asyncio.sleep(0.4)
+            # Enter se search/submit ho sakta hai -> URL badal jaata hai
+            self._remember_url()
             return ActionResult.success(f"{key} press kiya")
         except Exception as exc:  # noqa: BLE001
             return ActionResult.failure(f"Key press fail: {exc}")
