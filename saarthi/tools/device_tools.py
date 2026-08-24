@@ -33,6 +33,57 @@ def _resolve_device(ctx: ToolContext, device: str | None):
     return dev, None
 
 
+# Ye apps browser mein bhi khul jaate hain — phone na ho to laptop pe
+# website khol ke kaam ho jaata hai.
+WEB_FALLBACK_URLS: dict[str, str] = {
+    "youtube": "https://www.youtube.com",
+    "yt": "https://www.youtube.com",
+    "whatsapp": "https://web.whatsapp.com",
+    "wa": "https://web.whatsapp.com",
+    "instagram": "https://www.instagram.com",
+    "insta": "https://www.instagram.com",
+    "gmail": "https://mail.google.com",
+    "maps": "https://maps.google.com",
+    "map": "https://maps.google.com",
+    "irctc": "https://www.irctc.co.in",
+    "flipkart": "https://www.flipkart.com",
+    "amazon": "https://www.amazon.in",
+    "zomato": "https://www.zomato.com",
+    "swiggy": "https://www.swiggy.com",
+    "twitter": "https://twitter.com",
+    "x": "https://twitter.com",
+    "linkedin": "https://www.linkedin.com",
+    "facebook": "https://www.facebook.com",
+    "fb": "https://www.facebook.com",
+    "netflix": "https://www.netflix.com",
+    "hotstar": "https://www.hotstar.com",
+    "spotify": "https://open.spotify.com",
+    "paytm": "https://paytm.com",
+    "digilocker": "https://www.digilocker.gov.in",
+    "chrome": "https://www.google.com",
+    "browser": "https://www.google.com",
+    "youtube music": "https://music.youtube.com",
+}
+
+
+def _web_fallback_hint(app: str) -> str:
+    """
+    Phone na ho to LLM ko batao ki laptop pe website se kaam ho sakta hai.
+
+    Ye ek asli problem thi: user ne "youtube pe song play kar do" bola,
+    phone connected nahi tha, aur agent ne haar maan li — jabki laptop
+    pe browser se aaram se ho jaata.
+    """
+    url = WEB_FALLBACK_URLS.get(app.strip().lower())
+    if not url:
+        return ""
+    return (
+        f"\n  ALTERNATIVE: '{app}' website se bhi khul jaata hai. "
+        f"Phone connected nahi hai to laptop pe kholo — "
+        f"command_chalao se: start {url}  (device='desktop')"
+    )
+
+
 # Common parameter — har device tool mein hai
 DEVICE_PARAM = {
     "device": {
@@ -295,7 +346,28 @@ class LaunchAppTool(Tool):
         dev, error = _resolve_device(ctx, device)
         if error:
             return error
-        return await dev.launch_app(app)
+
+        # Android maanga par connected nahi hai? Pehle hi bata do +
+        # web alternative suggest karo. Warna agent 3 tools try karke
+        # haar maan leta hai (asli bug tha).
+        if dev.kind == "android" and not await dev.is_available():
+            hint = _web_fallback_hint(app)
+            return ActionResult.failure(
+                f"Phone connected nahi hai, isliye '{app}' phone pe nahi "
+                f"khul sakta.\n"
+                f"  Phone use karna hai to: USB laga + USB Debugging ON + "
+                f"'adb devices' check kar." + hint
+            )
+
+        result = await dev.launch_app(app)
+
+        # App khulne mein fail hua aur website available hai to bata do
+        if not result.ok:
+            hint = _web_fallback_hint(app)
+            if hint:
+                return ActionResult.failure(result.error + hint)
+
+        return result
 
 
 class CloseAppTool(Tool):

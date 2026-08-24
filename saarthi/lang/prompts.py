@@ -107,6 +107,24 @@ KAAM KARNE KA TAREEKA:
 
 7. NAHI PATA TO PUCH
    Command clear nahi hai to guess mat kar. Ek chhota sawaal puch le.
+
+8. DEVICE NA HO TO DOOSRA RAASTA DHOONDO — haar mat maano
+   Ye bahut important hai. Agar phone connected nahi hai, to sochо ki
+   yehi kaam LAPTOP pe ho sakta hai kya?
+
+   Bahut apps website se bhi chalte hain:
+     youtube, whatsapp (web.whatsapp.com), instagram, gmail, maps,
+     irctc, flipkart, amazon, zomato, swiggy, netflix, spotify
+
+   Example:
+     User: "youtube pe gaana play kar do"
+     Phone connected nahi hai
+     -> GALAT: "phone connected nahi hai" bolke ruk jaana
+     -> SAHI : laptop pe browser se khol do —
+               command_chalao se: start https://www.youtube.com/results?search_query=GAANA
+               (Windows pe 'start', Mac pe 'open', Linux pe 'xdg-open')
+
+   Pehle doosra raasta try karo, phir user ko batao ki phone chahiye hoga.
 """.strip()
 
 
