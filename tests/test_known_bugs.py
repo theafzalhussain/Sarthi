@@ -855,3 +855,207 @@ class Bug18VoiceLookedStuck(SaarthiTestCase):
         source = inspect.getsource(VoiceSession._report_listening)
         self.assertIn("loudness", source)
         self.assertIn("threshold", source)
+
+
+
+class PowerTools(SaarthiTestCase):
+    """
+    BUG#15 ka poora ilaaj — `python_chalao` aur `file_kholo`.
+
+    BUG#15 mein `file_banao` add kiya tha, jo do-step solution deta hai
+    (file likho, phir chalao). `python_chalao` se EK step mein ho jaata
+    hai, aur agent ki taakat bahut badh jaati hai:
+        Excel/CSV, JSON, maths, bulk file operations, text processing.
+
+    Aur `file_kholo` — user ne "file do mujhe" bola tha aur agent ke
+    paas file kholne ka koi tareeka hi nahi tha.
+    """
+
+    def ctx(self, auto_approve=True):
+        from saarthi.config import Settings
+        from saarthi.devices import DeviceManager
+        from saarthi.tools.base import ToolContext
+        from tests.helpers import clean_env
+
+        with clean_env(GROQ_API_KEY="fake"):
+            settings = Settings.load()
+        settings.auto_approve = auto_approve
+
+        manager = DeviceManager(settings)
+        manager.setup_defaults()
+        return ToolContext(devices=manager, settings=settings)
+
+    def run_tool(self, name, args, ctx=None):
+        from saarthi.brain.types import ToolCall
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(
+                default_registry().execute(
+                    ToolCall(id="t", name=name, arguments=args), ctx or self.ctx()
+                )
+            )
+        finally:
+            loop.close()
+
+    def test_power_tools_registered_hain(self):
+        registry = default_registry()
+        for name in ("python_chalao", "file_kholo"):
+            self.assertIn(name, registry, f"'{name}' tool gayab hai")
+
+    def test_python_chalao_multiline_code_chalata_hai(self):
+        result = self.run_tool(
+            "python_chalao",
+            {"code": 'x = 2 + 3\nname = "afzal"\nprint(f"{name} {x}")\n'},
+        )
+        self.assertTrue(result.ok, result.error)
+        self.assertIn("afzal 5", result.output)
+
+    def test_python_chalao_nested_quotes_handle_karta_hai(self):
+        """
+        Yahi BUG#15 ka core tha — shell mein ye impossible tha.
+        """
+        code = (
+            'formula = \'=IF(A1>=90,"A+",IF(A1>=80,"A","B"))\'\n'
+            'print(formula)\n'
+        )
+        result = self.run_tool("python_chalao", {"code": code})
+        self.assertTrue(result.ok, result.error)
+        self.assertIn('=IF(A1>=90,"A+"', result.output)
+
+    def test_python_chalao_error_saaf_batata_hai(self):
+        result = self.run_tool("python_chalao", {"code": "print(1/0)"})
+        self.assertFalse(result.ok)
+        self.assertIn("ZeroDivisionError", result.error)
+
+    def test_python_chalao_khali_code_reject_karta_hai(self):
+        result = self.run_tool("python_chalao", {"code": "   "})
+        self.assertFalse(result.ok)
+
+    def test_python_chalao_print_bhoolne_pe_hint_deta_hai(self):
+        result = self.run_tool("python_chalao", {"code": "x = 5"})
+        self.assertTrue(result.ok)
+        self.assertIn("print()", result.output)
+
+    def test_python_chalao_timeout_lagta_hai(self):
+        result = self.run_tool(
+            "python_chalao",
+            {"code": "import time\ntime.sleep(30)", "timeout": 5},
+        )
+        self.assertFalse(result.ok)
+        self.assertIn("khatam nahi hua", result.error)
+
+    def test_python_chalao_asli_file_bana_sakta_hai(self):
+        """Wahi kaam jo shell se 20+ baar fail hua tha."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            target = f"{folder}/out.csv".replace("\\", "/")
+            code = (
+                "import csv\n"
+                f'with open(r"{target}", "w", newline="", encoding="utf-8") as f:\n'
+                "    w = csv.writer(f)\n"
+                '    w.writerow(["Roll", "Name", "Total"])\n'
+                '    w.writerow([1, "Aarav Sharma", 255])\n'
+                'print("done")\n'
+            )
+            result = self.run_tool("python_chalao", {"code": code})
+            self.assertTrue(result.ok, result.error)
+
+            read = self.run_tool("file_padho", {"path": target})
+            self.assertTrue(read.ok, read.error)
+            self.assertIn("Aarav Sharma", read.output)
+
+    # --- Safety ---
+
+    def test_python_chalao_destructive_code_block_karta_hai(self):
+        from saarthi.tools.file_tools import check_python_safety
+
+        dangerous = [
+            'import shutil; shutil.rmtree("/")',
+            'import shutil\nshutil.rmtree("C:/Windows")',
+            'import os; os.system("rm -rf /")',
+            'import subprocess; subprocess.run("mkfs.ext4 /dev/sda")',
+            'import os; os.system("shutdown -h now")',
+        ]
+        for code in dangerous:
+            self.assertTrue(
+                check_python_safety(code),
+                f"Ye code block nahi hua: {code!r}",
+            )
+
+    def test_python_chalao_aam_code_allowed_hai(self):
+        from saarthi.tools.file_tools import check_python_safety
+
+        safe = [
+            "print(2+2)",
+            'import openpyxl\nwb = openpyxl.Workbook()\nwb.save("x.xlsx")',
+            'import shutil\nshutil.copy("a.txt", "b.txt")',
+            'import os\nprint(os.listdir("."))',
+        ]
+        for code in safe:
+            self.assertEqual(
+                check_python_safety(code), "",
+                f"Aam code galti se block hua: {code!r}",
+            )
+
+    def test_python_chalao_hard_block_auto_approve_se_bhi_nahi_hatta(self):
+        """
+        Full access mode se bhi destructive code nahi chalna chahiye.
+
+        ⚠️ YE TEST PEHLE GALAT WAJAH SE PASS HO RAHA THA.
+
+        Pehle sirf `assertFalse(result.ok)` tha. Par `rmtree("/")` to
+        permission error se KHUD FAIL ho jaata hai — chahe safety layer
+        ho ya na ho. Maine safety check hata ke verify kiya: test phir
+        bhi pass hua. Matlab wo kuch test hi nahi kar raha tha.
+
+        Ab error MESSAGE check karte hain — "block" word se pata chalta
+        hai ki SAFETY LAYER ne roka, code khud crash nahi hua.
+
+        Sabak: assert karo ki cheez SAHI WAJAH se hui.
+        """
+        result = self.run_tool(
+            "python_chalao",
+            {"code": 'import shutil; shutil.rmtree("/")'},
+            ctx=self.ctx(auto_approve=True),
+        )
+        self.assertFalse(
+            result.ok,
+            "auto_approve ON hone pe rmtree('/') chal gaya — hard block toota!",
+        )
+        self.assertIn(
+            "block", (result.error or "").lower(),
+            f"Code chala aur khud crash hua — SAFETY LAYER ne nahi roka!\n"
+            f"error: {result.error}",
+        )
+        self.assertNotIn(
+            "Traceback", result.error or "",
+            "Traceback aaya matlab code CHAL GAYA tha — safety se pehle nahi ruka",
+        )
+
+    def test_python_chalao_otp_password_block_karta_hai(self):
+        from saarthi.tools.file_tools import check_python_safety
+
+        self.assertTrue(check_python_safety('otp = "123456"\nprint(otp)'))
+
+    def test_python_chalao_risky_hai(self):
+        """Confirmation ke bina nahi chalna chahiye."""
+        tool = default_registry().get("python_chalao")
+        self.assertTrue(tool.risky, "python_chalao risky=True hona chahiye")
+
+    def test_file_kholo_na_mile_to_saaf_error(self):
+        result = self.run_tool(
+            "file_kholo", {"path": "/aisi/koi/file/nahi/hai.txt"}
+        )
+        self.assertFalse(result.ok)
+        self.assertIn("files_dikhao", result.error)
+
+    def test_prompt_mein_power_tool_rules_hain(self):
+        from saarthi.lang import build_system_prompt
+
+        prompt = build_system_prompt()
+        self.assertIn("python_chalao", prompt)
+        self.assertIn("file_kholo", prompt)
+        self.assertIn("openpyxl", prompt, "concrete example hona chahiye")
+        self.assertIn("TAAKATWAR", prompt)

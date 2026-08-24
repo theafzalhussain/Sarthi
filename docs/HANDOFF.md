@@ -9,9 +9,9 @@
 > **Last updated:** August 2026 · 16 commits
 > **Status:** Phase 1 ✅ · Phase 2 ✅ · Phase 3 🟡 (part 1 done) · Phase 4-5 ⬜
 >
-> **Ek line mein abhi ka haal:** 8 LLM providers, 37 tools, 110 Indian apps,
+> **Ek line mein abhi ka haal:** 8 LLM providers, 39 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, aur **294 tests jo `python run_tests.py` se chalte hain.**
+> automation, aur **309 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -70,7 +70,7 @@ saarthi/
 ├── brain/          LLM providers + auto-fallback
 ├── lang/           PILLAR #1 — Hinglish parsing
 ├── devices/        Universal device adapters
-├── tools/          37 tools + safety layer
+├── tools/          39 tools + safety layer
 ├── memory/         SQLite (facts + conversations)
 └── skills/         PILLAR #2 — Dikha Do Mode
 cli.py              Text REPL
@@ -97,7 +97,7 @@ cli.py              Text REPL
 - `desktop.py` — shell/files/apps + optional pyautogui
 - `manager.py` — `DeviceManager`, Hinglish→device routing
 
-### `tools/` — 37 tools
+### `tools/` — 39 tools
 - `registry.py` — **`execute()` = single safety chokepoint**
   (validate → type-coerce → confirm → run → never raise)
 - `safety.py` — hard blocks + confirm rules + `is_affirmative()`
@@ -343,7 +343,7 @@ wapas nahi aata.
 | 12 | **`SAARTHI_DEFAULT_DEVICE` pe validation nahi thi** — user ne `Realtek` likh diya (mic ki setting samajh ke). Chup-chaap accept ho gaya; ittefaq se desktop pe girta tha, par wo luck thi | `_env_choice` validation (`desktop`/`android`/`browser`) |
 | 13 | **RAM detection Windows pe kaam hi nahi karti thi** — sirf `/proc/meminfo` aur `os.sysconf()` (dono Unix-only). Windows pe hamesha 0 → `recommend_model_size()` "base" pe atak jaata tha, chahe 31GB RAM ho. Aur `base` Hinglish pe kamzor hai: "paytm kholo" → "Kya kya ouri website, proper da yaar uca" | `total_ram_gb()` mein Windows (`GlobalMemoryStatusEx`), macOS (`sysctl`), Linux, Unix fallback aur psutil — chaar branch. `.env.example` ka default `base` → `small` |
 | 14 | **Whisper `initial_prompt` HALLUCINATION karata tha** — prompt mein poore sentences the ("Laptop pe chrome khol ke YouTube chala do"). Whisper ka initial_prompt "pichla context" hai, prose daalo to model usko AAGE BADHATA hai. User: "paytm kholo" → "Open YouTube and play Theravins on." Audio PERFECT thi. **Pillar #1 pe seedha chot** | Prompt mein sirf VOCABULARY (comma-separated), sentences NAHI. 569→329 chars. Plus `looks_like_prompt_echo()` guard jo echo pakad ke bina-prompt retry karta hai |
-| 15 | **File likhne ka tool hi nahi tha** — "excel marks sheet bana de" pe agent ne poora Python script shell mein ghusane ki koshish ki (`@'...'@ >`, `echo >>`). 20+ koshish fail, max steps khatam. Agent ki galti nahi thi, TOOL nahi tha | Naye `file_banao` / `file_padho` / `files_dikhao` (34→37 tools). Multi-line content seedha, koi escaping nahi. Prompt rule #6b bhi |
+| 15 | **File likhne ka tool hi nahi tha** — "excel marks sheet bana de" pe agent ne poora Python script shell mein ghusane ki koshish ki (`@'...'@ >`, `echo >>`). 20+ koshish fail, max steps khatam. Agent ki galti nahi thi, TOOL nahi tha | Naye `file_banao` / `file_padho` / `files_dikhao` (34→39 tools). Multi-line content seedha, koi escaping nahi. Prompt rule #6b bhi |
 | 16 | **Lagatar fail hone wala provider HAR STEP pe retry hota tha** — deepseek 8 step mein 8 baar fail, ek task mein 58 second. Error permanent nahi tha to `mark_dead()` nahi lagta tha | `MAX_CONSECUTIVE_FAILURES=3` — 3 baar lagatar fail = cooldown, chahe error temporary ho. Success pe counter reset |
 | 17 | **`WHISPER_MODEL` pe validation nahi thi** — user ne `big` likha (aisa model nahi hai), load pe crash | `_valid_model_size()` + aliases (`big`→`medium`). Default `base`→`small` |
 | 18 | **Voice mode HANG hua lagta tha** — `_report_listening` sirf SPEAKING/CALIBRATING report karta tha. WAITING pe kuch nahi → user ko pata hi nahi chalta ki AB BOLNA HAI | WAITING pe "AB BOL — sun raha hun", loudness vs threshold feedback, aur state dedupe (15 baar spam band) |
@@ -377,7 +377,7 @@ Ab rule #9 (`KAAM PURA KARO`) ulta hai — jab tak kaam ho na jaaye, rukna nahi.
 
 ## 11. TESTING STATUS — ye IMAANDAARI se padh
 
-### ✅ AB ASLI TEST SUITE HAI — 294 tests
+### ✅ AB ASLI TEST SUITE HAI — 309 tests
 
 ```bash
 python run_tests.py              # sab (0.1 second mein)
@@ -413,6 +413,39 @@ FAIL: test_bug3_semantic_healing_coordinates_se_pehle_hai
 
 **Naya bug mile to yahan test add karna — fix ke SAATH, baad mein nahi.**
 
+### ⚡ AGENT KI TAAKAT — `python_chalao`
+
+BUG#15 ka poora ilaaj. Pehle agent complex kaam ke liye shell ka jugaad
+karta tha aur fail hota tha. Ab:
+
+```
+python_chalao(code='''
+import openpyxl
+wb = openpyxl.Workbook()
+ws = wb.active
+ws.append(["Roll No", "Name", "Total"])
+ws["D2"] = "=SUM(A2:C2)"
+wb.save("C:/Users/xyz/Desktop/marks.xlsx")
+print("ban gaya")
+''')
+```
+
+Isse agent ye sab kar sakta hai: Excel/CSV, JSON/data processing,
+complex maths, bulk file rename/organize, text processing, aur jo bhi
+library user ke paas hai.
+
+**Verify kiya:** wahi Excel task jo shell se **20+ koshish mein fail**
+hua tha, ab **EK step mein** ho jaata hai (formulas + styling ke saath,
+5316 bytes ki file).
+
+Safety: `command_chalao` ke same gate se guzarta hai (risky=True →
+confirmation), plus Python-specific hard blocks
+(`check_python_safety()` — `shutil.rmtree("/")`, `os.system("rm -rf /")`,
+mkfs, shutdown, raw disk write, OTP/password).
+
+Saath mein `file_kholo` — file bana ke user ko DE bhi deta hai (Excel
+Excel mein khulti hai, folder Explorer mein).
+
 ### ⚠️ BUG#9 se seekha ek zaroori sabak
 
 `hardware_check.py` mein maine (AI ne) voice API ke naam GUESS kar liye
@@ -432,6 +465,19 @@ naam script ke ANDAR the, function-level import mein.
    verify karta hai, **chahe wo function ke andar likhe hon.**
    Function-level imports sabse khatarnak hain — wo sirf tab fail hote
    hain jab wo function chalta hai.
+
+### ⚠️ EK AUR SABAK: test SAHI WAJAH se pass ho
+
+`test_python_chalao_hard_block_auto_approve_se_bhi_nahi_hatta` pehle
+sirf `assertFalse(result.ok)` check karta tha. Par `rmtree("/")` to
+permission error se **khud fail** ho jaata hai — safety layer ho ya na
+ho. Maine safety check hata ke verify kiya: **test phir bhi pass hua.**
+Matlab wo kuch test hi nahi kar raha tha.
+
+Fix: error MESSAGE check karo (`"block"` word), aur `Traceback` NA ho —
+Traceback matlab code chal gaya tha.
+
+**Assert karo ki cheez SAHI WAJAH se hui, sirf "hui" nahi.**
 
 **Aur sabse zaroori:** maine bug WAPAS daal ke verify kiya ki test
 sach mein fail hota hai. Warna "test pass ho raha hai" ka jhoota
@@ -669,11 +715,11 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 | **Files** | 53 tracked, 56 Python |
 | **Lines** | ~15,300 Python (+2,700 tests) |
 | **Python** | 3.9+ |
-| **Tools** | 37 |
+| **Tools** | 39 |
 | **Indian apps** | 110 |
 | **LLM providers** | **8** (chaar ek hi NVIDIA key pe) |
 | **ASR corrections** | 65 rules |
-| **Tests** | **294 pass** — `python run_tests.py` |
+| **Tests** | **309 pass** — `python run_tests.py` |
 | **Interface** | English (professional) |
 | **Agent ki baat** | User ki bhasha — `SAARTHI_LANGUAGE=auto` |
 | **Max steps** | 25 |
