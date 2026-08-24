@@ -251,6 +251,7 @@ voice_cli.py    Voice interface
 ```
 
 **Docs:**
+**[HANDOFF.md](docs/HANDOFF.md) — 👈 naya developer/AI ho to YE pehle padho (pura context)** ·
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) — code kaise organize hai ·
 [VOICE.md](docs/VOICE.md) — voice setup + Hinglish tuning ·
 [DEPLOYMENT.md](docs/DEPLOYMENT.md) — server, bijli, hardware ·
