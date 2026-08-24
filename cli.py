@@ -11,11 +11,15 @@ Commands:
                     "model_not_found" error aaye to YE chala
     /tools       -> kaunse tools hain
     /skills      -> kaunsi skills seekhi hain
-    /devices     -> connected devices
+    /devices     -> connected devices + setup help
     /memory      -> yaad rakhi baatein
+    /browser     -> browser kaise khulega (tab switch setting)
+    /verbose     -> tool results dikhao/chhupao
     /reset       -> baat bhool jao (memory safe rahegi)
     /help        -> madad
     /quit        -> band karo
+
+Look ka pura code `saarthi/ui.py` mein hai — yahan sirf logic hai.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
 
 # Project root ko path mein daalo — taaki kahin se bhi chal jaaye
@@ -32,50 +37,11 @@ from saarthi import __version__  # noqa: E402
 from saarthi.agent import Agent  # noqa: E402
 from saarthi.config import settings  # noqa: E402
 from saarthi.tools.safety import format_confirmation, is_affirmative  # noqa: E402
+from saarthi.ui import BRAND, ERR, MUTED, OK, TEXT, WARN, Ui  # noqa: E402
 
-# ----------------------------------------------------------------------
-#  Terminal colors — rich ho to accha, na ho to plain
-# ----------------------------------------------------------------------
+ui = Ui()
 
-try:
-    from rich.console import Console
-    from rich.markdown import Markdown
-
-    console: Console | None = Console()
-except ImportError:
-    console = None
-    Markdown = None  # type: ignore[assignment]
-
-
-COLORS = {
-    "user": "\033[96m",       # cyan
-    "agent": "\033[92m",      # green
-    "tool": "\033[93m",       # yellow
-    "error": "\033[91m",      # red
-    "dim": "\033[90m",        # gray
-    "bold": "\033[1m",
-    "reset": "\033[0m",
-}
-
-
-def paint(text: str, color: str) -> str:
-    """Text ko rang do."""
-    return f"{COLORS.get(color, '')}{text}{COLORS['reset']}"
-
-
-def show(text: str, color: str = "reset") -> None:
-    print(paint(text, color))
-
-
-BANNER = r"""
-   ____    _        _    ____ _____ _   _ ___
-  / ___|  / \      / \  |  _ \_   _| | | |_ _|
-  \___ \ / _ \    / _ \ | |_) || | | |_| || |
-   ___) / ___ \  / ___ \|  _ < | | |  _  || |
-  |____/_/   \_\/_/   \_\_| \_\|_| |_| |_|___|
-
-  Tera apna AI agent — Hinglish samajhta hai
-"""
+TAGLINE = "Hinglish-first personal AI agent"
 
 
 # ----------------------------------------------------------------------
@@ -89,20 +55,29 @@ async def ask_confirmation(action: str, details: dict) -> bool:
 
     input() blocking hai — thread mein chalate hain taaki async
     loop na ruke.
+
+    FAIL-SAFE: koi bhi gadbad (Ctrl+C, EOF, samajh na aaye) ho to
+    NAHI. Chup-chaap kaam aage nahi badhta.
     """
-    show(format_confirmation(action, details), "tool")
+    ui.blank()
+    ui.hint(format_confirmation(action, details), title="confirm karna hai")
+
+    prompt = "  " + ui.paint("haan / nahi", WARN, bold=True) + " " + ui.paint(
+        ui.sym["prompt"], WARN
+    ) + " "
 
     try:
-        answer = await asyncio.to_thread(input, paint("  > ", "bold"))
+        answer = await asyncio.to_thread(input, prompt)
     except (EOFError, KeyboardInterrupt):
-        show("  (cancel kar diya)", "dim")
+        ui.error("cancel kar diya")
         return False
 
     approved = is_affirmative(answer)
-    show(
-        "  -> theek hai, kar raha hun" if approved else "  -> nahi kar raha",
-        "dim" if approved else "error",
-    )
+    if approved:
+        ui.success("theek hai, kar raha hun")
+    else:
+        ui.error("nahi kar raha")
+    ui.blank()
     return approved
 
 
@@ -119,55 +94,280 @@ def make_output_handler(verbose: bool):
             return
 
         if kind == "thinking":
-            show(f"  ...{text}", "dim")
+            ui.activity("thinking", text.strip())
         elif kind == "tool":
-            show(f"  [chal raha hai] {text}", "tool")
+            ui.activity("tool", text.strip())
         elif kind == "result":
             if verbose:
                 first = text.splitlines()[0] if text else ""
-                show(f"  [result] {first[:160]}", "dim")
+                ui.activity("result", first[:150])
         elif kind == "error":
             first = text.splitlines()[0] if text else ""
-            show(f"  [fail] {first[:200]}", "error")
+            ui.activity("error", first[:200])
         elif kind == "debug":
-            show(f"  {text}", "dim")
+            ui.activity("debug", text.strip())
 
     return handle
+
+
+# ----------------------------------------------------------------------
+#  Startup
+# ----------------------------------------------------------------------
+
+
+async def show_startup(agent: Agent) -> None:
+    """Boot screen — brain, devices, aur kya missing hai."""
+    ui.section("Brain")
+    ui.brain_table(agent.brain)
+    ui.blank()
+
+    ui.section("Devices")
+    status = await agent.devices.check_availability()
+    hints = ui.devices_table(agent.devices, status)
+    ui.blank()
+
+    # Kya missing hai — ek compact line. Detail /devices pe milegi,
+    # startup pe screen bharna nahi chahiye.
+    if hints:
+        missing = ", ".join(name for name, _ in hints)
+        ui.muted(f"{missing} abhi connected nahi — setup ke liye /devices")
+
+    if not agent.brain.has_vision:
+        ui.muted("Vision provider nahi — screenshot nahi dekh paunga (/models)")
+
+    ui.blank()
+    ui.line(
+        f"  Ready hun bhai. Bol kya karna hai.   {ui.sym['bullet']}   /help se madad",
+        OK,
+    )
+    ui.blank()
 
 
 # ----------------------------------------------------------------------
 #  Slash commands
 # ----------------------------------------------------------------------
 
-HELP_TEXT = """
-SAARTHI — kaise use kare
+COMMANDS = [
+    ("/status", "brain, devices, memory, skills — sab ek jagah"),
+    ("/models", "kaunse LLM models available hain (LIVE check)"),
+    ("/tools", "saare tools ki list"),
+    ("/skills", "seekhi hui skills (Dikha Do Mode)"),
+    ("/devices", "connected devices + setup instructions"),
+    ("/memory", "yaad rakhi hui baatein"),
+    ("/browser", "browser kaise khulega — tab switch setting"),
+    ("/verbose", "tool results dikhao ya chhupao"),
+    ("/reset", "current baat bhool jao (memory safe rahegi)"),
+    ("/help", "ye madad"),
+    ("/quit", "band karo"),
+]
 
-Bas normal Hinglish mein bol:
-    "paytm kholo"
-    "mere phone me kya notifications hain"
-    "internet pe dhoondh ki IRCTC tatkal ka time kya hai"
-    "yaad rakh ki mummy ka number 98765xxxxx hai"
-    "laptop pe batao kitni disk space bachi hai"
+EXAMPLES = [
+    "youtube pe tum hi ho gaana chala do",
+    "mere phone me kya notifications hain",
+    "internet pe dhoondh IRCTC tatkal ka time",
+    "yaad rakh ki mummy ka number 98765xxxxx hai",
+    "laptop pe batao kitni disk space bachi hai",
+]
 
-DIKHA DO MODE (naya kaam sikhana):
-    "dekh, ye kaam yaad kar le"     -> recording ON
-    ... phir batao kya karna hai ...
-    "isko bijli ka bill bol de"     -> skill save
-    Agli baar: "bijli ka bill bhar de"  -> khud ho jaayega
 
-Commands:
-    /status    sab kuch ka status
-    /models    kaunse LLM models available hain (live check)
-               -> "model_not_found" error aaye to ye chala
-    /tools     saare tools ki list
-    /skills    seekhi hui skills
-    /devices   connected devices
-    /memory    yaad rakhi baatein
-    /verbose   tool results dikhao/chhupao
-    /reset     current baat bhool jao
-    /help      ye madad
-    /quit      band karo
-"""
+def show_help() -> None:
+    """Madad — sections mein baanti hui."""
+    ui.blank()
+    ui.section("Kaise use kare")
+    ui.muted("Bas normal Hinglish mein bol. Koi syntax yaad karne ki zarurat nahi.")
+    ui.blank()
+    for example in EXAMPLES:
+        ui.line(f'    {ui.sym["arrow"]}  "{example}"', TEXT)
+    ui.blank()
+
+    ui.section("Dikha Do Mode — naya kaam sikhana")
+    ui.table(
+        ["bol", "kya hoga"],
+        [
+            ['"dekh, ye kaam yaad kar le"', "recording ON"],
+            ["... phir steps batao ...", "agent har step yaad karta hai"],
+            ['"isko bijli ka bill bol de"', "skill save ho gayi"],
+            ['"bijli ka bill bhar de"', "agli baar khud ho jaayega"],
+        ],
+    )
+    ui.blank()
+
+    ui.section("Commands")
+    ui.table(["command", "kaam"], [[c, d] for c, d in COMMANDS])
+    ui.blank()
+
+
+def rank_model(model: str) -> int:
+    """
+    Model ko priority do — free aur sasta pehle.
+
+    OpenRouter pe 300+ models hote hain, unme se kaam ke wahi hain
+    jo free hain. Isliye ranking zaroori hai.
+    """
+    lowered = model.lower()
+    if lowered.endswith(":free"):
+        return 0  # bilkul free — sabse pehle
+    if "gpt-oss" in lowered or "/free" in lowered:
+        return 1  # Groq ke free models / free router
+    if any(k in lowered for k in ("flash-lite", "instant", "mini", "gemma")):
+        return 2  # chhote aur sasta
+    if "flash" in lowered:
+        return 3
+    return 9
+
+
+async def show_models(agent: Agent) -> None:
+    """LIVE model discovery — deprecated model ka ilaaj."""
+    ui.blank()
+    ui.muted("Har provider se live pata kar raha hun (thoda time lagega)...")
+    ui.blank()
+
+    results = await agent.brain.discover_models()
+
+    for provider_name, models in results.items():
+        current = next(
+            (p.model for p in agent.brain.providers if p.name == provider_name),
+            "?",
+        )
+        ui.section(provider_name)
+
+        if isinstance(models, str):
+            ui.error(models)
+            ui.blank()
+            continue
+
+        if not models:
+            ui.error("koi model nahi mila")
+            ui.blank()
+            continue
+
+        ranked = sorted(models, key=lambda m: (rank_model(m), m))
+        recommended = [m for m in ranked if rank_model(m) <= 2]
+        others = [m for m in ranked if rank_model(m) > 2]
+
+        rows = []
+        for model in recommended[:15]:
+            in_use = model == current
+            rows.append(
+                [
+                    ui.badge(in_use),
+                    model,
+                    "abhi yahi use ho raha" if in_use else "free / sasta",
+                ]
+            )
+
+        # Current model recommended list mein na ho to bhi dikhao —
+        # user ko pata hona chahiye abhi kya chal raha hai
+        if current in others:
+            rows.append([ui.badge(True), current, "abhi yahi use ho raha"])
+
+        if rows:
+            ui.table(["", "model", "note"], rows)
+
+        extra = []
+        if len(recommended) > 15:
+            extra.append(f"{len(recommended) - 15} aur free models")
+        if others:
+            extra.append(f"{len(others)} baaki models (zyadatar paid)")
+        if extra:
+            ui.muted("  ... " + ", ".join(extra))
+
+        ui.blank()
+
+    ui.hint(
+        "Model badalna hai? .env mein set kar, phir SAARTHI restart kar:\n"
+        "    GROQ_MODEL=...      NVIDIA_MODEL=...\n"
+        "    GEMINI_MODEL=...    BLUESMINDS_MODEL=...",
+        title="model kaise badle",
+    )
+
+
+async def show_status(agent: Agent) -> None:
+    """Sab kuch ek jagah."""
+    ui.blank()
+    ui.section("Brain")
+    ui.brain_table(agent.brain)
+    ui.blank()
+
+    ui.section("Devices")
+    status = await agent.devices.check_availability()
+    ui.devices_table(agent.devices, status)
+    ui.blank()
+
+    memory_stats = await agent.memory.stats()
+    skill_stats = await agent.skills.stats()
+
+    ui.section("Agent")
+    rows = [
+        ["tools", str(len(agent.tools))],
+        ["memory", f"{memory_stats['facts']} facts, {memory_stats['messages']} messages"],
+        [
+            "skills",
+            f"{skill_stats['skills']} seekhi "
+            f"({skill_stats['steps']} steps, {skill_stats['total_runs']} baar chali)",
+        ],
+        ["language", settings.language],
+        [
+            "risky confirmation",
+            "ON" if settings.confirm_risky else "OFF  <-- khatarnak!",
+        ],
+        ["browser mode", settings.browser_mode],
+        ["max steps", str(settings.max_steps)],
+    ]
+    if agent.recorder.recording:
+        rows.append(
+            ["dikha do mode", f"ON ({agent.recorder.step_count} steps record hue)"]
+        )
+    ui.table(["setting", "value"], rows)
+    ui.blank()
+
+
+async def show_devices(agent: Agent) -> None:
+    """Devices + poora setup help."""
+    ui.blank()
+    agent.devices.invalidate_cache()  # phone plug/unplug hua ho to dobara check
+    status = await agent.devices.check_availability()
+
+    ui.section("Devices")
+    hints = ui.devices_table(agent.devices, status, detailed=True)
+    ui.blank()
+
+    for name, hint in hints:
+        ui.hint(hint, title=f"{name} connect kaise kare")
+
+
+def show_browser_info() -> None:
+    """Browser kaise khulega — tab switch wali setting."""
+    ui.blank()
+    ui.section("Browser mode")
+
+    modes = [
+        [
+            ui.badge(settings.browser_mode == "agent"),
+            "agent",
+            "SAARTHI ki apni alag window. Tere tabs kabhi nahi badlenge.",
+        ],
+        [
+            ui.badge(settings.browser_mode == "system"),
+            "system",
+            "Tera normal browser. Naye tab mein khulega (focus nahi chheenta).",
+        ],
+        [
+            ui.badge(settings.browser_mode == "auto"),
+            "auto",
+            "Playwright ho to agent, warna system.",
+        ],
+    ]
+    ui.table(["", "mode", "matlab"], modes)
+    ui.blank()
+    ui.hint(
+        f"Abhi: SAARTHI_BROWSER_MODE={settings.browser_mode}\n"
+        f"      SAARTHI_BROWSER_HEADLESS="
+        f"{'true' if settings.browser_headless else 'false'}\n\n"
+        "Badalna hai to .env mein set kar aur restart kar.\n"
+        "Tera tab switch ho raha hai? 'agent' mode use kar.",
+        title="setting",
+    )
 
 
 async def handle_command(command: str, agent: Agent, state: dict) -> bool:
@@ -179,148 +379,81 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
     cmd = command.strip().lower()
 
     if cmd in ("/quit", "/exit", "/q", "/bye"):
-        show("\n  Chalo bye! Phir milte hain. \n", "agent")
+        ui.blank()
+        ui.line("  Chalo bye! Phir milte hain.", OK)
+        ui.blank()
         return False
 
     if cmd in ("/help", "/h", "/madad"):
-        show(HELP_TEXT, "dim")
+        show_help()
         return True
 
     if cmd == "/status":
-        show("")
-        show(await agent.status(), "dim")
-        show("")
+        await show_status(agent)
         return True
 
     if cmd in ("/models", "/model"):
-        show(
-            "\n  Har provider se live pata kar raha hun "
-            "(thoda time lagega)...\n",
-            "dim",
-        )
-        results = await agent.brain.discover_models()
-
-        # Priority: pehle bilkul FREE models (":free" suffix), phir
-        # chhote/fast models. OpenRouter pe 300+ models hote hain,
-        # unme se kaam ke wahi hain.
-        def rank(model: str) -> int:
-            lowered = model.lower()
-            if lowered.endswith(":free"):
-                return 0  # bilkul free — sabse pehle
-            if "gpt-oss" in lowered or "/free" in lowered:
-                return 1  # Groq ke free models / free router
-            if any(k in lowered for k in ("flash-lite", "instant", "mini", "gemma")):
-                return 2  # chhote aur sasta
-            if "flash" in lowered:
-                return 3
-            return 9
-
-        for provider_name, models in results.items():
-            current = next(
-                (
-                    p.model
-                    for p in agent.brain.providers
-                    if p.name == provider_name
-                ),
-                "?",
-            )
-            show(f"  {provider_name}  (abhi use ho raha: {current})", "bold")
-
-            if isinstance(models, str):
-                show(f"      {models}", "error")
-                show("")
-                continue
-
-            if not models:
-                show("      koi model nahi mila", "error")
-                show("")
-                continue
-
-            ranked = sorted(models, key=lambda m: (rank(m), m))
-            recommended = [m for m in ranked if rank(m) <= 2]
-            others = [m for m in ranked if rank(m) > 2]
-
-            if recommended:
-                show("      -- YE TRY KAR (free / sasta) --", "dim")
-                for model in recommended[:15]:
-                    mark = "  <-- abhi yahi use ho raha" if model == current else ""
-                    show(f"      {model}{mark}", "agent" if mark else "dim")
-                if len(recommended) > 15:
-                    show(f"      ... aur {len(recommended) - 15} free models", "dim")
-
-            # Current model recommended list mein na ho to bhi dikhao
-            if current in others:
-                show(f"      {current}  <-- abhi yahi use ho raha", "agent")
-
-            if others:
-                show(f"      -- baaki {len(others)} models (zyadatar paid) --", "dim")
-
-            show("")
-
-        show(
-            "  Model badalna hai? .env mein ye set kar:\n"
-            "      GROQ_MODEL=...\n"
-            "      GEMINI_MODEL=...\n"
-            "      OPENROUTER_MODEL=...\n"
-            "  Phir SAARTHI restart kar.\n",
-            "tool",
-        )
+        await show_models(agent)
         return True
 
     if cmd == "/tools":
-        show(f"\n  {len(agent.tools)} tools available:\n", "bold")
-        show(agent.tools.describe(), "dim")
-        show("")
+        ui.blank()
+        ui.section(f"Tools ({len(agent.tools)})")
+        ui.tools_table(agent.tools)
+        ui.blank()
         return True
 
     if cmd == "/skills":
+        ui.blank()
         skills = await agent.skills.list_skills()
         if not skills:
-            show(
-                "\n  Abhi koi skill nahi seekhi.\n"
-                "  Sikhane ke liye bol: 'dekh, ye kaam yaad kar le'\n",
-                "dim",
-            )
+            ui.section("Skills")
+            ui.muted("Abhi koi skill nahi seekhi.")
+            ui.muted('Sikhane ke liye bol: "dekh, ye kaam yaad kar le"')
         else:
-            show(f"\n  {len(skills)} skills seekhi hui hain:\n", "bold")
-            for skill in skills:
-                show(f"  - {skill.summary()}", "dim")
-            show("")
+            ui.section(f"Skills ({len(skills)})")
+            ui.table(
+                ["skill", "detail"],
+                [[s.name, s.summary()] for s in skills],
+            )
+        ui.blank()
         return True
 
     if cmd == "/devices":
-        show("")
-        agent.devices.invalidate_cache()  # dobara check karo
-        show(await agent.devices.describe(), "dim")
-        show("")
+        await show_devices(agent)
+        return True
+
+    if cmd in ("/browser", "/tab"):
+        show_browser_info()
         return True
 
     if cmd == "/memory":
+        ui.blank()
         facts = await agent.memory.all_facts()
         if not facts:
-            show("\n  Abhi kuch yaad nahi hai.\n", "dim")
+            ui.section("Memory")
+            ui.muted("Abhi kuch yaad nahi hai.")
         else:
-            show(f"\n  {len(facts)} baatein yaad hain:\n", "bold")
-            for fact in facts:
-                show(f"  - [{fact.category}] {fact.key}: {fact.value}", "dim")
-            show("")
+            ui.section(f"Memory ({len(facts)})")
+            ui.table(
+                ["category", "kya", "value"],
+                [[f.category, f.key, f.value] for f in facts],
+            )
+        ui.blank()
         return True
 
     if cmd == "/verbose":
         state["verbose"] = not state["verbose"]
         agent.on_output = make_output_handler(state["verbose"])
-        show(
-            f"  Verbose mode: {'ON' if state['verbose'] else 'OFF'}",
-            "dim",
-        )
+        ui.muted(f"Verbose mode: {'ON' if state['verbose'] else 'OFF'}")
         return True
 
     if cmd == "/reset":
         agent.reset_conversation()
-        show("  Baat reset kar di. Memory aur skills safe hain.", "dim")
+        ui.muted("Baat reset kar di. Memory aur skills safe hain.")
         return True
 
-    show(f"  '{command}' samajh nahi aaya. /help try kar.", "error")
+    ui.error(f"'{command}' samajh nahi aaya. /help try kar.")
     return True
 
 
@@ -336,8 +469,7 @@ async def main() -> int:
             format="%(levelname)s [%(name)s] %(message)s",
         )
 
-    show(BANNER, "agent")
-    show(f"  v{__version__}", "dim")
+    ui.banner(__version__, TAGLINE)
 
     state = {"verbose": True}
 
@@ -348,35 +480,22 @@ async def main() -> int:
 
     # --- Brain ready hai? ---
     if not agent.brain.is_ready:
-        show("\n  RUK JA — pehle setup karna padega:\n", "error")
-        show(settings.setup_help(), "dim")
-        show("")
+        ui.hint(settings.setup_help(), title="ruk ja — pehle setup")
         return 1
 
-    show("\n  Brain:", "bold")
-    show(agent.brain.status(), "dim")
-
-    # --- Devices ---
-    show("\n  Devices:", "bold")
-    show(await agent.devices.describe(), "dim")
-
-    if not agent.brain.has_vision:
-        show(
-            "\n  Dhyan: Gemini key nahi hai, isliye screenshot nahi dekh "
-            "paunga.\n  Free key: https://aistudio.google.com/apikey",
-            "tool",
-        )
-
-    show("\n  Ready hun bhai. Bol kya karna hai. (/help se madad)\n", "agent")
-
+    await show_startup(agent)
     await agent.start_session()
+
+    prompt = ui.prompt("tu")
 
     # --- REPL ---
     while True:
         try:
-            user_input = await asyncio.to_thread(input, paint("  tu > ", "user"))
+            user_input = await asyncio.to_thread(input, prompt)
         except (EOFError, KeyboardInterrupt):
-            show("\n\n  Chalo bye!\n", "agent")
+            ui.blank(2)
+            ui.line("  Chalo bye!", OK)
+            ui.blank()
             break
 
         user_input = user_input.strip()
@@ -389,39 +508,42 @@ async def main() -> int:
             continue
 
         # --- Agent ko kaam do ---
+        started = time.monotonic()
         try:
             result = await agent.run_turn(user_input)
         except KeyboardInterrupt:
-            show("\n  (rok diya)\n", "error")
+            ui.blank()
+            ui.error("rok diya")
+            ui.blank()
             continue
         except Exception as exc:  # noqa: BLE001 — CLI kabhi crash na ho
-            show(f"\n  Kuch gadbad ho gayi: {exc}\n", "error")
+            ui.blank()
+            ui.reply_error(f"Kuch gadbad ho gayi: {exc}")
+            ui.blank()
             if settings.debug:
                 import traceback
 
                 traceback.print_exc()
             continue
 
-        show("")
-        if result.error:
-            show(f"  saarthi > {result.error}", "error")
-        else:
-            if console and Markdown:
-                print(paint("  saarthi > ", "agent"), end="")
-                console.print(Markdown(result.reply))
-            else:
-                show(f"  saarthi > {result.reply}", "agent")
+        elapsed = time.monotonic() - started
 
-        if state["verbose"] and result.tool_calls:
-            show(
-                f"  ({result.steps_used} steps, tools: "
-                f"{', '.join(result.tool_calls)})",
-                "dim",
-            )
+        ui.blank()
+        if result.error:
+            ui.reply_error(result.error)
+        else:
+            # Meta line — kitna kaam laga. Debugging mein bahut kaam aata hai.
+            meta = ""
+            if state["verbose"]:
+                bits = [f"{result.steps_used} steps", f"{elapsed:.1f}s"]
+                if result.tool_calls:
+                    bits.insert(1, ", ".join(result.tool_calls))
+                meta = f"  {ui.sym['bullet']}  ".join(bits)
+            ui.reply(result.reply, meta=meta)
 
         # Free tier ke tokens bachao — purani baat trim karo
         agent.trim_history()
-        show("")
+        ui.blank()
 
     return 0
 

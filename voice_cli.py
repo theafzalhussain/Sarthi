@@ -10,6 +10,9 @@ Pehle setup check kar:
 
 Ek baar sun ke test kar (loop nahi):
     python voice_cli.py --once
+
+Look ka pura code `saarthi/ui.py` mein hai — text CLI ke saath
+bilkul same theme rehta hai.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from saarthi import __version__  # noqa: E402
 from saarthi.agent import Agent  # noqa: E402
 from saarthi.config import settings  # noqa: E402
+from saarthi.ui import BRAND, ERR, MUTED, OK, TEXT, WARN, Ui  # noqa: E402
 from saarthi.voice import (  # noqa: E402
     VoiceConfig,
     VoiceSession,
@@ -37,61 +41,32 @@ from saarthi.voice import (  # noqa: E402
 )
 from saarthi.voice.tts import TTSEngine  # noqa: E402
 
-# ----------------------------------------------------------------------
-#  Colors
-# ----------------------------------------------------------------------
+ui = Ui()
 
-COLORS = {
-    "user": "\033[96m",
-    "agent": "\033[92m",
-    "tool": "\033[93m",
-    "error": "\033[91m",
-    "dim": "\033[90m",
-    "bold": "\033[1m",
-    "reset": "\033[0m",
-}
-
-
-def paint(text: str, color: str) -> str:
-    return f"{COLORS.get(color, '')}{text}{COLORS['reset']}"
-
-
-def show(text: str, color: str = "reset") -> None:
-    print(paint(text, color))
-
-
-BANNER = r"""
-   ____    _        _    ____ _____ _   _ ___
-  / ___|  / \      / \  |  _ \_   _| | | |_ _|
-  \___ \ / _ \    / _ \ | |_) || | | |_| || |
-   ___) / ___ \  / ___ \|  _ < | | |  _  || |
-  |____/_/   \_\/_/   \_\_| \_\|_| |_| |_|___|
-
-  VOICE MODE — bol ke kaam karwa
-"""
+TAGLINE = "Hinglish-first personal AI agent"
 
 
 # ----------------------------------------------------------------------
 #  Event display
 # ----------------------------------------------------------------------
 
-# Har event kaise dikhana hai: (prefix, color)
+# Voice session ke events -> (nishaan, rang)
 EVENT_STYLE: dict[str, tuple[str, str]] = {
-    "calibrating": ("  ...", "dim"),
-    "listening": ("  >>>", "user"),
-    "thinking": ("  ...", "dim"),
-    "corrected": ("  fix", "dim"),
-    "heard": ("  tu >", "user"),
-    "working": ("  ...", "dim"),
-    "reply": ("  saarthi >", "agent"),
-    "confirm": ("  !!!", "tool"),
-    "approved": ("  ok", "dim"),
-    "denied": ("  no", "error"),
-    "quiet": ("  ---", "dim"),
-    "unclear": ("  ???", "tool"),
-    "error": ("  ERR", "error"),
-    "info": ("  ---", "dim"),
-    "ready": ("  ***", "agent"),
+    "calibrating": ("think", MUTED),
+    "listening": ("mic", BRAND),
+    "thinking": ("think", MUTED),
+    "corrected": ("arrow", MUTED),
+    "heard": ("prompt", BRAND),
+    "working": ("run", MUTED),
+    "reply": ("ok", OK),
+    "confirm": ("warn", WARN),
+    "approved": ("ok", OK),
+    "denied": ("fail", ERR),
+    "quiet": ("bullet", MUTED),
+    "unclear": ("warn", WARN),
+    "error": ("fail", ERR),
+    "info": ("bullet", MUTED),
+    "ready": ("on", OK),
 }
 
 
@@ -99,16 +74,23 @@ def handle_event(kind: str, text: str) -> None:
     """Voice session ke events dikhao."""
     if not text:
         return
-    prefix, color = EVENT_STYLE.get(kind, ("  ", "reset"))
 
-    # Multi-line text (setup help) alag se
-    if "\n" in text:
-        show(f"{prefix}", color)
-        for line in text.splitlines():
-            show(f"      {line}", color)
+    symbol_key, color = EVENT_STYLE.get(kind, ("bullet", TEXT))
+    mark = ui.sym.get(symbol_key, ui.sym["bullet"])
+
+    # Reply ko panel mein — wo sabse important hai
+    if kind == "reply":
+        ui.blank()
+        ui.reply(text)
+        ui.blank()
         return
 
-    show(f"{prefix} {text}", color)
+    # Multi-line (setup help waghairah) — box mein
+    if "\n" in text:
+        ui.hint(text, title=kind)
+        return
+
+    ui.line(f"  {mark}  {text}", color)
 
 
 # ----------------------------------------------------------------------
@@ -118,75 +100,101 @@ def handle_event(kind: str, text: str) -> None:
 
 async def run_check() -> int:
     """Voice setup check karo aur batao kya missing hai."""
-    show(BANNER, "agent")
-    show(f"  v{__version__} — setup check\n", "dim")
+    ui.banner(__version__, TAGLINE, mode="setup check")
 
     problems: list[str] = []
+    hints: list[tuple[str, str]] = []
 
     # --- 1. LLM ---
-    show("  1. BRAIN (LLM)", "bold")
+    ui.section("1  Brain (LLM)")
     agent = Agent()
     if agent.brain.is_ready:
-        show(agent.brain.status(), "dim")
+        ui.brain_table(agent.brain)
     else:
-        show("     Koi API key nahi hai", "error")
-        show("     Free key: https://console.groq.com", "dim")
+        ui.error("Koi API key nahi hai")
         problems.append("LLM key")
+        hints.append(("brain", settings.setup_help()))
+    ui.blank()
 
     # --- 2. Mic ---
-    show("\n  2. MICROPHONE", "bold")
+    ui.section("2  Microphone (sunne ke liye)")
     if is_audio_available():
         devices = list_input_devices()
-        show(f"     {len(devices)} input device mile:", "dim")
-        for device in devices[:5]:
-            show(f"       {device}", "dim")
+        ui.table(
+            ["", "input device"],
+            [[ui.badge(True), str(d)] for d in devices[:6]] or [[ui.badge(False), "—"]],
+        )
+        if len(devices) > 6:
+            ui.muted(f"  ... aur {len(devices) - 6} devices")
     else:
-        show("     Mic available nahi hai", "error")
-        for line in audio_setup_help().splitlines():
-            show(f"     {line}", "dim")
+        ui.error("Mic available nahi hai")
         problems.append("microphone")
+        hints.append(("microphone", audio_setup_help()))
+    ui.blank()
 
     # --- 3. STT ---
-    show("\n  3. SPEECH-TO-TEXT (sunna)", "bold")
+    ui.section("3  Speech-to-text (Whisper)")
     if is_stt_available():
         suggested = recommend_model_size()
-        show("     faster-whisper ready", "dim")
-        show(f"     Tere RAM ke hisaab se model: {suggested}", "dim")
-        show(f"     (.env mein WHISPER_MODEL={suggested})", "dim")
+        ui.table(
+            ["", "cheez", "value"],
+            [
+                [ui.badge(True), "faster-whisper", "ready"],
+                [ui.badge(True), "tere RAM ke hisaab se model", suggested],
+                [ui.badge(True), ".env mein daal", f"WHISPER_MODEL={suggested}"],
+            ],
+        )
     else:
-        show("     faster-whisper install nahi hai", "error")
-        for line in stt_setup_help().splitlines():
-            show(f"     {line}", "dim")
+        ui.error("faster-whisper install nahi hai")
         problems.append("speech-to-text")
+        hints.append(("speech-to-text", stt_setup_help()))
+    ui.blank()
 
     # --- 4. TTS ---
-    show("\n  4. TEXT-TO-SPEECH (bolna)", "bold")
+    ui.section("4  Text-to-speech (bolne ke liye)")
     engine = TTSEngine()
-    for name, available, quality in TTSEngine.available_backends():
-        mark = "OK  " if available else "    "
-        color = "dim" if available else "dim"
-        show(f"     {mark} {name:<9} {quality}", color)
-    show(f"     -> chuna gaya: {engine.backend.name}", "dim")
+    ui.table(
+        ["", "backend", "quality"],
+        [
+            [ui.badge(available), name, quality]
+            for name, available, quality in TTSEngine.available_backends()
+        ],
+    )
+    ui.muted(f"  chuna gaya: {engine.backend.name}")
     if not engine.has_voice:
-        show("     Awaaz nahi aayegi (text print hoga)", "tool")
-        show("     Awaaz chahiye: sudo apt install espeak-ng", "dim")
+        hints.append(
+            (
+                "awaaz",
+                "Awaaz nahi aayegi (jawab print honge).\n"
+                "Theek karne ke liye: sudo apt install espeak-ng",
+            )
+        )
+    ui.blank()
 
     # --- 5. Wake ---
-    show("\n  5. WAKE MODE (jagana)", "bold")
-    for name, available, description in available_wake_modes():
-        mark = "OK  " if available else "    "
-        show(f"     {mark} {name:<14} {description}", "dim")
+    ui.section("5  Wake mode (jagane ka tareeka)")
+    ui.table(
+        ["", "mode", "kya hai"],
+        [
+            [ui.badge(available), name, description]
+            for name, available, description in available_wake_modes()
+        ],
+    )
+    ui.blank()
 
     # --- Verdict ---
-    show("\n" + "  " + "=" * 56, "dim")
+    for title, hint in hints:
+        ui.hint(hint, title=title)
+
+    ui.section("Nateeja")
     if problems:
-        show(f"  Ye cheezein missing hain: {', '.join(problems)}", "error")
-        show("  Upar ke instructions follow kar.", "dim")
-        show("")
+        ui.error(f"Ye missing hain: {', '.join(problems)}")
+        ui.muted("Upar ke instructions follow kar, phir dobara --check chala.")
+        ui.blank()
         return 1
 
-    show("  Sab ready hai! Chala: python voice_cli.py", "agent")
-    show("")
+    ui.success("Sab ready hai!  Chala:  python voice_cli.py")
+    ui.blank()
     return 0
 
 
@@ -202,7 +210,8 @@ async def main() -> int:
         return await run_check()
 
     if "--help" in args or "-h" in args:
-        show(__doc__ or "", "dim")
+        ui.banner(__version__, TAGLINE, mode="voice")
+        ui.block(__doc__ or "", MUTED)
         return 0
 
     if settings.debug:
@@ -210,49 +219,61 @@ async def main() -> int:
             level=logging.DEBUG, format="%(levelname)s [%(name)s] %(message)s"
         )
 
-    show(BANNER, "agent")
-    show(f"  v{__version__}\n", "dim")
+    once = "--once" in args
+    ui.banner(__version__, TAGLINE, mode="voice test" if once else "voice mode")
 
     # --- Agent + session ---
-    agent = Agent(on_output=lambda kind, text: None)  # voice session output handle karta hai
+    # Voice session khud output handle karta hai, isliye agent chup rahega
+    agent = Agent(on_output=lambda kind, text: None)
     config = VoiceConfig.from_env()
     session = VoiceSession(agent, config, on_event=handle_event)
 
     # --- Readiness ---
     ready, problems = session.readiness()
     if not ready:
-        show("  RUK JA — pehle ye theek kar:\n", "error")
-        for problem in problems:
-            show(f"    - {problem}", "error")
-        show("\n  Detail ke liye chala: python voice_cli.py --check\n", "dim")
+        ui.hint(
+            "\n".join(f"- {p}" for p in problems)
+            + "\n\nDetail ke liye chala: python voice_cli.py --check",
+            title="ruk ja — pehle ye theek kar",
+        )
         return 1
 
     # --- Status ---
-    show("  " + session.status().replace("\n", "\n  "), "dim")
+    ui.section("Voice setup")
+    ui.block(session.status(), MUTED)
+    ui.blank()
 
     if not session.tts.has_voice:
-        show(
-            "\n  Dhyan: awaaz available nahi hai, jawab print honge.\n"
-            "  Awaaz chahiye: sudo apt install espeak-ng",
-            "tool",
-        )
+        ui.muted("Awaaz available nahi — jawab print honge (espeak-ng install kar)")
 
-    show("\n  Band karne ke liye: 'band karo' bol, ya Ctrl+C\n", "dim")
+    ui.blank()
 
     # --- Single-shot test mode ---
-    if "--once" in args:
-        show("  [--once mode: ek baar sunke transcribe karunga]\n", "dim")
+    if once:
+        ui.muted("--once mode: ek baar sunke transcribe karunga")
+        ui.blank()
         await asyncio.to_thread(session.stt.load)
         await session.refresh_vocabulary()
         text = await session.listen_once()
-        show(f"\n  Result: {text!r}\n", "agent")
+        ui.blank()
+        ui.reply(f"Suna: `{text}`" if text else "Kuch suna hi nahi.")
+        ui.blank()
         return 0
+
+    ui.line(
+        f"  Bol ke kaam karwa.   {ui.sym['bullet']}   "
+        "Band karne ke liye 'band karo' bol ya Ctrl+C",
+        OK,
+    )
+    ui.blank()
 
     # --- Full loop ---
     try:
         await session.run()
     except KeyboardInterrupt:
-        show("\n\n  Bye bhai!\n", "agent")
+        ui.blank(2)
+        ui.line("  Bye bhai!", OK)
+        ui.blank()
 
     return 0
 
