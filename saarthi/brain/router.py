@@ -13,6 +13,7 @@ ek provider thak jaaye to agent ruke nahi, doosre se kaam chalaye.
 from __future__ import annotations
 
 import logging
+import time
 
 from ..config import Settings, settings as default_settings
 from .base import LLMProvider
@@ -23,7 +24,9 @@ from .types import (
     BrainError,
     LLMResponse,
     Message,
+    ModelUnavailableError,
     NoProviderError,
+    RateLimitError,
     ToolSchema,
 )
 
@@ -69,6 +72,82 @@ class Brain:
         self.providers.sort(
             key=lambda p: order.index(p.name) if p.name in order else 99
         )
+
+        # ---- PROVIDER HEALTH ----
+        #
+        # Kyun ye chahiye: user ka bluesminds/glm-5.2 har message pe
+        # HTTP 400 de raha tha ("model has not been priced"). Wo error
+        # HAR BAAR aayega — par purana code har turn pe usko pehle try
+        # karta tha, 1-2 second barbaad karta tha, phir fallback.
+        #
+        # Ab: dead provider SESSION KE LIYE hat jaata hai, aur rate-limit
+        # wala thodi der ke liye. User ko sirf ek baar batate hain.
+        self._dead: dict[str, str] = {}        # naam -> wajah (permanent)
+        self._cooldown: dict[str, float] = {}  # naam -> kab tak skip karna hai
+
+        # CLI/voice isko set karta hai taaki fallback ki khabar UI mein
+        # theek se dikhe. Warna logging ka raw warning stderr pe chhap
+        # jaata hai aur look kharab lagta hai.
+        self.notify = None
+
+    # ------------------------------------------------------------------
+    #  Provider health
+    # ------------------------------------------------------------------
+
+    COOLDOWN_SECONDS = 90
+
+    def _say(self, kind: str, text: str) -> None:
+        """UI ko batao (agar koi sun raha hai)."""
+        if callable(self.notify):
+            try:
+                self.notify(kind, text)
+            except Exception:  # noqa: BLE001 — UI ki galti se agent na ruke
+                pass
+
+    def _is_usable(self, provider: LLMProvider) -> bool:
+        """Ye provider abhi try karne layak hai?"""
+        if provider.name in self._dead:
+            return False
+        until = self._cooldown.get(provider.name, 0.0)
+        if until and time.monotonic() < until:
+            return False
+        # Cooldown khatam — saaf kar do
+        self._cooldown.pop(provider.name, None)
+        return True
+
+    def mark_dead(self, name: str, reason: str) -> None:
+        """Ye provider session bhar ke liye band."""
+        if name not in self._dead:
+            self._dead[name] = reason
+            log.warning("%s ko session ke liye hata diya: %s", name, reason)
+
+    def mark_cooldown(self, name: str) -> None:
+        """Rate limit — thodi der ke liye chhod do."""
+        self._cooldown[name] = time.monotonic() + self.COOLDOWN_SECONDS
+
+    def health(self) -> dict[str, str]:
+        """
+        Har provider ka haal — UI ke liye.
+
+        Returns: {provider_name: "ok" | "dead: wajah" | "cooldown: 42s"}
+        """
+        status: dict[str, str] = {}
+        now = time.monotonic()
+        for provider in self.providers:
+            if provider.name in self._dead:
+                status[provider.name] = f"dead: {self._dead[provider.name]}"
+                continue
+            until = self._cooldown.get(provider.name, 0.0)
+            if until and now < until:
+                status[provider.name] = f"cooldown: {int(until - now)}s"
+                continue
+            status[provider.name] = "ok"
+        return status
+
+    def reset_health(self) -> None:
+        """Sab dobara try karo (CLI ka /retry)."""
+        self._dead.clear()
+        self._cooldown.clear()
 
     # ------------------------------------------------------------------
     #  Status
@@ -174,9 +253,23 @@ class Brain:
             if with_tools:
                 candidates = with_tools + without_tools
 
+        # Dead / cooldown wale providers hata do — inko try karna sirf
+        # waqt barbaad karna hai
+        healthy = [p for p in candidates if self._is_usable(p)]
+
+        # Sab dead? To phir bhi try karo — kuch na karne se behtar hai
+        # (ho sakta hai provider ab theek ho gaya ho)
+        if not healthy:
+            if candidates:
+                log.info("Saare providers dead the — dobara try kar raha hun")
+                self.reset_health()
+                healthy = candidates
+            else:
+                raise NoProviderError(self.settings.setup_help())
+
         errors: list[str] = []
 
-        for provider in candidates:
+        for index, provider in enumerate(healthy):
             try:
                 log.debug("Trying provider: %s", provider.name)
                 response = await provider.chat(
@@ -185,6 +278,16 @@ class Brain:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
+
+                # Pehla provider fail hua tha par ye chal gaya — user ko
+                # bata do, warna usko lagta hai kuch gadbad hai
+                if index > 0:
+                    self._say(
+                        "debug",
+                        f"{healthy[0].name} ne kaam nahi kiya, "
+                        f"{provider.name} se kar diya",
+                    )
+
                 if self.settings.debug:
                     log.info(
                         "%s ne jawab diya (%d prompt + %d completion tokens)",
@@ -193,6 +296,25 @@ class Brain:
                         response.completion_tokens,
                     )
                 return response
+
+            except ModelUnavailableError as exc:
+                # Ye permanent hai — session bhar ke liye hata do
+                short = str(exc).splitlines()[0]
+                self.mark_dead(provider.name, short)
+                self._say("error", f"{provider.name} hata diya — {short}")
+                errors.append(f"{provider.name}: {exc}")
+                continue
+
+            except RateLimitError as exc:
+                # Temporary — thodi der ke liye chhod do
+                self.mark_cooldown(provider.name)
+                self._say(
+                    "debug",
+                    f"{provider.name} ki limit khatam — "
+                    f"{self.COOLDOWN_SECONDS}s ke liye chhod raha hun",
+                )
+                errors.append(f"{provider.name}: {exc}")
+                continue
 
             except BrainError as exc:
                 # Ye provider fail hua — agle pe jao

@@ -532,16 +532,27 @@ class Ui:
     #    2. Test mein fake object pass kar sakte hain
     # ------------------------------------------------------------------
 
-    def brain_table(self, brain) -> None:
+    def brain_table(self, brain, show_health: bool = True) -> None:
         """
         LLM providers ka table.
 
-        `brain.providers` mein sirf wahi hote hain jinke paas key hai,
-        isliye sab "available" hain. Pehla primary, baaki fallback.
+        `brain.providers` mein sirf wahi hote hain jinke paas key hai.
+        Pehla primary, baaki fallback.
+
+        `show_health` ON ho to ye bhi dikhta hai ki koi provider dead
+        hai ya cooldown pe — user ko pata hona chahiye ki uska primary
+        model kaam kar raha hai ya chup-chaap skip ho raha hai.
         """
         yes = self.sym["ok"]
         no = self.sym["fail"]
         dash = "—" if self.unicode else "-"
+
+        health = {}
+        if show_health:
+            try:
+                health = brain.health() or {}
+            except Exception:  # noqa: BLE001 — purana Brain object bhi chale
+                health = {}
 
         rows = []
         for index, provider in enumerate(brain.providers):
@@ -558,12 +569,24 @@ class Ui:
                 f"[{OK}]{yes}[/]" if provider.supports_vision else f"[{MUTED}]{dash}[/]"
             )
 
+            state = health.get(provider.name, "ok")
+            if state.startswith("dead"):
+                # Ye provider session bhar ke liye hat gaya — saaf dikhao
+                role_cell = f"[{ERR}]HATA DIYA[/]"
+                badge_cell = f"[{ERR}]{no}[/]"
+            elif state.startswith("cooldown"):
+                role_cell = f"[{WARN}]{state}[/]"
+                badge_cell = f"[{WARN}]{self.sym['off']}[/]"
+            else:
+                role_cell = "primary" if primary else "fallback"
+                badge_cell = self.badge(primary)
+
             rows.append(
                 [
-                    self.badge(primary),
+                    badge_cell,
                     provider.name,
                     provider.model,
-                    "primary" if primary else "fallback",
+                    role_cell,
                     tools_cell,
                     vision_cell,
                 ]
@@ -574,6 +597,11 @@ class Ui:
             return
 
         self.table(["", "provider", "model", "role", "tools", "aankh"], rows)
+
+        # Dead providers ki wajah neeche — table mein jagah nahi hai
+        for name, state in health.items():
+            if state.startswith("dead"):
+                self.line(f"  {no}  {name}: {state[6:]}", ERR)
 
     def devices_table(self, manager, status: dict, detailed: bool = False) -> list:
         """

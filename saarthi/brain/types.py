@@ -149,3 +149,81 @@ class NoProviderError(BrainError):
 
 class AllProvidersFailedError(BrainError):
     """Saare providers try kiye, sab fail ho gaye."""
+
+
+class ModelUnavailableError(BrainError):
+    """
+    Ye model AB CHALEGA HI NAHI — dobara try karna bekaar hai.
+
+    Kab: model deprecate ho gaya (404), key galat hai (401), ya
+    provider ne model enable hi nahi kiya (400 pricing/config error).
+
+    Ye alag exception isliye hai ki Brain aise provider ko SESSION KE
+    LIYE disable kar de. Warna har message pe wahi dead provider
+    pehle try hota hai, fail hota hai, aur user ko 2-3 second extra
+    intezaar karna padta hai — har baar.
+    """
+
+
+class RateLimitError(BrainError):
+    """
+    Free tier ki limit khatam — thodi der baad chal jaayega.
+
+    Ye TEMPORARY hai, isliye provider ko permanently disable nahi
+    karte, sirf kuch der ke liye cooldown pe daal dete hain.
+    """
+
+
+def classify_http_error(provider: str, status: int, body: str) -> BrainError:
+    """
+    HTTP status + response body dekh ke sahi exception banao.
+
+    Ek jagah rakha hai taaki saare providers (OpenAI-compatible aur
+    Gemini) same tareeke se behave karein.
+    """
+    snippet = (body or "")[:300]
+    lowered = (body or "").lower()
+
+    if status == 429:
+        return RateLimitError(
+            f"{provider}: free tier limit khatam ho gayi. "
+            f"Thodi der baad try kar — abhi doosra provider use karunga."
+        )
+
+    if status in (401, 403):
+        return ModelUnavailableError(
+            f"{provider}: API key galat ya expire ho gayi hai. "
+            f".env file check kar."
+        )
+
+    if status == 404:
+        return ModelUnavailableError(
+            f"{provider}: model nahi mila — shayad deprecate ho gaya.\n"
+            f"  Fix: CLI mein '/models' chala, available models dikhenge.\n"
+            f"  Phir .env mein {provider.upper()}_MODEL update kar de.\n"
+            f"  (server ne kaha: {snippet})"
+        )
+
+    # 400 — yahan do tarah ki cheezein aati hain:
+    #   (a) model hi available/enabled nahi hai  -> permanent
+    #   (b) hamare request mein kuch galat hai   -> temporary
+    #
+    # (a) ka asli example: Bluesminds pe glm-5.2 ne diya tha
+    #     "Model glm-5.2 has not been priced by the administrator yet"
+    #     Ye har baar aayega, isliye provider ko disable karna sahi hai.
+    if status == 400:
+        model_problems = (
+            "model_price_error", "has not been priced", "model_not_found",
+            "does not exist", "not available", "unsupported model",
+            "invalid model", "no such model", "model is not",
+            "尚未由管理员配置",  # wahi pricing error, Chinese mein
+        )
+        if any(hint in lowered for hint in model_problems):
+            return ModelUnavailableError(
+                f"{provider}: ye model is provider pe enable nahi hai.\n"
+                f"  Fix: '/models' chala ke doosra model chun, ya .env mein\n"
+                f"  {provider.upper()}_MODEL badal de.\n"
+                f"  (server ne kaha: {snippet})"
+            )
+
+    return BrainError(f"{provider}: HTTP {status} — {snippet}")

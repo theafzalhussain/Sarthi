@@ -116,9 +116,19 @@ NVIDIA_HOSTED: tuple = ("nvidia", "deepseek", "muse", "gemma")
 #
 #  Dhyan: nvidia/deepseek/muse/gemma SAARE ek hi NVIDIA key pe chalte
 #  hain. Isliye groq (alag key) pehle rakha hai — load bant jaata hai.
+#  BEST PEHLE. Pehle groq (tez) pehle tha, par user ne bola "jo best
+#  ho wo pehle rakho" — kyunki smart model ek hi prompt mein pura kaam
+#  kar deta hai, jabki tez-par-kamzor model 3-4 baar galti karta hai.
+#  Aakhir mein wahi dheema pad jaata hai.
 DEFAULT_PROVIDER_ORDER: list[str] = [
-    "groq", "nvidia", "deepseek", "muse",
-    "bluesminds", "openrouter", "gemini", "gemma",
+    "deepseek",    # 1.6T MoE, 1M context — SABSE SMART, agentic
+    "nvidia",      # nemotron ultra — long-running agents ke liye bana
+    "muse",        # vision + tools dono, 30B (tez bhi hai)
+    "groq",        # sabse TEZ, aur iski key ALAG hai (backup ke liye)
+    "bluesminds",  # gateway (gpt-4o/gpt-5.6/glm)
+    "openrouter",  # 98 free models ka router
+    "gemini",      # aankh (screenshot)
+    "gemma",       # SABSE AAKHIR — tool calling bharosemand nahi
 ]
 
 
@@ -209,7 +219,25 @@ class Settings:
     # --- Behaviour ---
     language: str = "hinglish"
     confirm_risky: bool = True
-    max_steps: int = 12
+
+    # Ek command ke liye max kitne steps.
+    #
+    # 12 se 25 kiya gaya. Wajah: "youtube pe gaana chala do" jaisa kaam
+    # 6-8 steps leta hai (site kholo -> page padho -> video pe click ->
+    # verify). 12 mein multi-part command ("gaana chala aur mausam bata")
+    # beech mein atak jaati thi.
+    max_steps: int = 25
+
+    # FULL ACCESS MODE — risky tools bina puche chalenge.
+    #
+    # DHYAN: isse HARD BLOCKS nahi hatte. OTP/PIN/password type karna
+    # aur rm -rf / jaise commands PHIR BHI blocked rehte hain — wo
+    # safety.py mein alag layer hai jise bypass nahi kiya ja sakta.
+    #
+    # Ye sirf "confirmation" wale kaam auto-approve karta hai
+    # (shell command, skill chalana, memory delete).
+    auto_approve: bool = False
+
     debug: bool = False
 
     # --- Devices ---
@@ -244,6 +272,12 @@ class Settings:
 
     # --- Paths ---
     data_dir: Path = DATA_DIR
+
+    # User ne .env mein khud order likha hai? Aur usme kaunse providers
+    # chhoot gaye? (Startup pe batana hai — warna naye models chup-chaap
+    # aakhir mein chale jaate hain aur user ko pata bhi nahi chalta.)
+    order_is_explicit: bool = False
+    order_missing: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -326,12 +360,22 @@ class Settings:
 
         # Provider order — .env se override ho sakta hai
         raw_order = os.getenv("SAARTHI_PROVIDER_ORDER", "").strip()
+        order_is_explicit = bool(raw_order)
+        order_missing: list[str] = []
+
         if raw_order:
             order = [p.strip().lower() for p in raw_order.split(",") if p.strip()]
-            # Jo provider order mein nahi likha, wo end mein daal do
             known = {p.name for p in providers}
             order = [p for p in order if p in known]
-            order += [p for p in DEFAULT_PROVIDER_ORDER if p not in order]
+
+            # Jo provider user ne likha hi nahi, wo end mein daal do.
+            #
+            # Ye ek CHUP-CHAAP TRAP hai: user ne purana order likha tha
+            # (jab 5 providers the), phir naye models add hue — wo
+            # automatically SABSE AAKHIR chale gaye, chahe wo sabse
+            # smart hon. Isliye startup pe batate hain.
+            order_missing = [p for p in DEFAULT_PROVIDER_ORDER if p not in order]
+            order += order_missing
         else:
             order = list(DEFAULT_PROVIDER_ORDER)
 
@@ -340,7 +384,10 @@ class Settings:
             provider_order=order,
             language=os.getenv("SAARTHI_LANGUAGE", "hinglish").strip().lower(),
             confirm_risky=_env_bool("SAARTHI_CONFIRM_RISKY", True),
-            max_steps=_env_int("SAARTHI_MAX_STEPS", 12),
+            auto_approve=_env_bool("SAARTHI_AUTO_APPROVE", False),
+            max_steps=_env_int("SAARTHI_MAX_STEPS", 25),
+            order_is_explicit=order_is_explicit,
+            order_missing=order_missing,
             debug=_env_bool("SAARTHI_DEBUG", False),
             adb_path=os.getenv("ADB_PATH", "adb"),
             default_device=os.getenv("SAARTHI_DEFAULT_DEVICE", "desktop"),

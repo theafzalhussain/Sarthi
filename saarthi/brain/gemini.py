@@ -17,7 +17,15 @@ import httpx
 
 from ..config import ProviderConfig
 from .base import LLMProvider
-from .types import BrainError, LLMResponse, Message, Role, ToolCall, ToolSchema
+from .types import (
+    BrainError,
+    LLMResponse,
+    Message,
+    Role,
+    ToolCall,
+    ToolSchema,
+    classify_http_error,
+)
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
@@ -223,27 +231,9 @@ class GeminiProvider(LLMProvider):
         except httpx.RequestError as exc:
             raise BrainError(f"gemini: network problem — {exc}") from exc
 
-        if resp.status_code == 429:
-            raise BrainError(
-                "gemini: free tier limit khatam. Thodi der baad try kar."
-            )
-
-        if resp.status_code in (401, 403):
-            raise BrainError("gemini: API key galat hai. .env check kar.")
-
-        # Model deprecate ho gaya — actionable message do
-        if resp.status_code == 404:
-            raise BrainError(
-                f"gemini: model '{self.model}' nahi mila — shayad deprecate "
-                f"ho gaya.\n"
-                f"  Fix: CLI mein '/models' chala, available models dikhenge.\n"
-                f"  Phir .env mein GEMINI_MODEL update kar de.\n"
-                f"  (server ne kaha: {resp.text[:200]})"
-            )
-
+        # Baaki providers ki tarah error classify karo — Brain ko pata
+        # hona chahiye ki ye temporary problem hai ya permanent
         if resp.status_code >= 400:
-            raise BrainError(
-                f"gemini: HTTP {resp.status_code} — {resp.text[:300]}"
-            )
+            raise classify_http_error("gemini", resp.status_code, resp.text)
 
         return self._parse_response(resp.json())

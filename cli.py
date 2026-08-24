@@ -135,6 +135,32 @@ async def show_startup(agent: Agent) -> None:
     if not agent.brain.has_vision:
         ui.muted("Vision provider nahi — screenshot nahi dekh paunga (/models)")
 
+    # .env mein purana provider order pada hai?
+    #
+    # Ye ek chup-chaap trap hai: user ne pehle order likha tha, baad mein
+    # naye (smarter) models add hue — wo automatically SABSE AAKHIR chale
+    # gaye. User ko lagta hai naya model use ho raha hai, par nahi ho raha.
+    if settings.order_is_explicit and settings.order_missing:
+        ui.blank()
+        ui.hint(
+            ".env mein SAARTHI_PROVIDER_ORDER khud likha hua hai, aur usme\n"
+            f"ye providers nahi hain: {', '.join(settings.order_missing)}\n"
+            "Isliye wo sabse AAKHIR mein try honge — chahe wo smarter hon.\n\n"
+            "Best-first order chahiye to .env se SAARTHI_PROVIDER_ORDER wali\n"
+            "line HATA de (ya # laga de). Phir SAARTHI khud best model\n"
+            "pehle rakhega.",
+            title="dhyan de — provider order purana hai",
+        )
+
+    if settings.auto_approve:
+        ui.hint(
+            "FULL ACCESS MODE ON hai — risky kaam bina puche honge.\n"
+            "(Hard blocks phir bhi lage hain: OTP/PIN/password type karna\n"
+            "aur rm -rf jaise commands kabhi nahi chalenge.)\n\n"
+            "Band karne ke liye: /auto",
+            title="full access",
+        )
+
     ui.blank()
     ui.line(
         f"  Ready hun bhai. Bol kya karna hai.   {ui.sym['bullet']}   /help se madad",
@@ -155,6 +181,8 @@ COMMANDS = [
     ("/devices", "connected devices + setup instructions"),
     ("/memory", "yaad rakhi hui baatein"),
     ("/browser", "browser kaise khulega — tab switch setting"),
+    ("/auto", "FULL ACCESS — risky kaam bina puche (hard blocks bache rahenge)"),
+    ("/retry", "hate hue providers ko dobara try karo"),
     ("/verbose", "tool results dikhao ya chhupao"),
     ("/reset", "current baat bhool jao (memory safe rahegi)"),
     ("/help", "ye madad"),
@@ -311,6 +339,10 @@ async def show_status(agent: Agent) -> None:
             "risky confirmation",
             "ON" if settings.confirm_risky else "OFF  <-- khatarnak!",
         ],
+        [
+            "full access (/auto)",
+            "ON — bina puche karega" if settings.auto_approve else "OFF",
+        ],
         ["browser mode", settings.browser_mode],
         ["max steps", str(settings.max_steps)],
     ]
@@ -427,6 +459,35 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
         show_browser_info()
         return True
 
+    if cmd in ("/auto", "/full"):
+        settings.auto_approve = not settings.auto_approve
+        if settings.auto_approve:
+            ui.blank()
+            ui.hint(
+                "FULL ACCESS ON — risky kaam ab bina puche honge\n"
+                "(shell command, skill chalana, memory delete).\n\n"
+                "Ye PHIR BHI blocked rahenge, chahe kuch bhi ho:\n"
+                "  - OTP / PIN / password / CVV type karna\n"
+                "  - rm -rf /, mkfs, fork bomb, curl | bash\n"
+                "  - final payment button dabana\n"
+                "Ye hard blocks hain, inko koi setting bypass nahi karti.\n\n"
+                "Band karne ke liye dobara: /auto",
+                title="full access ON",
+            )
+        else:
+            ui.success("Full access OFF — risky kaam pe dobara puchunga")
+        return True
+
+    if cmd in ("/retry", "/revive"):
+        health = agent.brain.health()
+        gone = [n for n, s in health.items() if s != "ok"]
+        agent.brain.reset_health()
+        if gone:
+            ui.success(f"Dobara try karunga: {', '.join(gone)}")
+        else:
+            ui.muted("Sab providers already theek hain.")
+        return True
+
     if cmd == "/memory":
         ui.blank()
         facts = await agent.memory.all_facts()
@@ -468,6 +529,20 @@ async def main() -> int:
             level=logging.DEBUG,
             format="%(levelname)s [%(name)s] %(message)s",
         )
+    else:
+        # Warnings ko stderr pe chhapne se roko.
+        #
+        # Python ka `logging.lastResort` handler har WARNING ko SEEDHA
+        # stderr pe likh deta hai jab koi handler set na ho. Isse
+        # "bluesminds fail hua: HTTP 400..." jaisi lines beech screen
+        # mein aa jaati thi — bina rang, layout todti hui.
+        #
+        # Ye khabar ab UI se aati hai (agent -> brain.notify), isliye
+        # logger ko chup kara rahe hain. NullHandler zaroori hai —
+        # sirf level set karne se lastResort phir bhi chal jaata hai.
+        saarthi_log = logging.getLogger("saarthi")
+        saarthi_log.addHandler(logging.NullHandler())
+        saarthi_log.setLevel(logging.ERROR)
 
     ui.banner(__version__, TAGLINE)
 

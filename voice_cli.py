@@ -218,6 +218,13 @@ async def main() -> int:
         logging.basicConfig(
             level=logging.DEBUG, format="%(levelname)s [%(name)s] %(message)s"
         )
+    else:
+        # Raw warnings ko stderr pe chhapne se roko — wo voice ke
+        # output ke beech mein aa ke look tod dete hain.
+        # (Detail cli.py mein likhi hai.)
+        saarthi_log = logging.getLogger("saarthi")
+        saarthi_log.addHandler(logging.NullHandler())
+        saarthi_log.setLevel(logging.ERROR)
 
     once = "--once" in args
     ui.banner(__version__, TAGLINE, mode="voice test" if once else "voice mode")

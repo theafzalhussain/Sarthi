@@ -20,7 +20,15 @@ import httpx
 
 from ..config import ProviderConfig
 from .base import LLMProvider
-from .types import BrainError, LLMResponse, Message, Role, ToolCall, ToolSchema
+from .types import (
+    BrainError,
+    LLMResponse,
+    Message,
+    Role,
+    ToolCall,
+    ToolSchema,
+    classify_http_error,
+)
 
 # Provider ka naam -> API base URL
 #
@@ -228,33 +236,11 @@ class OpenAICompatProvider(LLMProvider):
         except httpx.RequestError as exc:
             raise BrainError(f"{self.name}: network problem — {exc}") from exc
 
-        # Rate limit — free tier mein ye aayega, isliye clear message
-        if resp.status_code == 429:
-            raise BrainError(
-                f"{self.name}: free tier limit khatam ho gayi. "
-                f"Thodi der baad try kar, ya doosra provider use hoga."
-            )
-
-        if resp.status_code == 401:
-            raise BrainError(
-                f"{self.name}: API key galat hai. .env file check kar."
-            )
-
-        # Model deprecate ho gaya — ye BAHUT common hai, isliye
-        # clear + actionable message dete hain
-        if resp.status_code == 404:
-            raise BrainError(
-                f"{self.name}: model '{self.model}' nahi mila — shayad "
-                f"deprecate ho gaya.\n"
-                f"  Fix: CLI mein '/models' chala, available models dikhenge.\n"
-                f"  Phir .env mein {self.name.upper()}_MODEL update kar de.\n"
-                f"  (server ne kaha: {resp.text[:200]})"
-            )
-
+        # Error ko classify karo — rate limit (temporary) aur dead model
+        # (permanent) mein farak hai. Brain isi farak se decide karta hai
+        # ki provider ko thodi der ke liye chhodna hai ya session bhar.
         if resp.status_code >= 400:
-            raise BrainError(
-                f"{self.name}: HTTP {resp.status_code} — {resp.text[:300]}"
-            )
+            raise classify_http_error(self.name, resp.status_code, resp.text)
 
         data = resp.json()
 

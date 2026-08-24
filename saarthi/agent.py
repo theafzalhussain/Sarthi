@@ -92,6 +92,14 @@ class Agent:
         self.confirm = confirm
         self.on_output = on_output or (lambda kind, text: None)
 
+        # Brain ko UI se jod do.
+        #
+        # Kyun: provider fail hone pe Brain `log.warning` karta tha, aur
+        # Python ka lastResort handler use SEEDHA stderr pe chhap deta
+        # tha — bilkul beech mein, bina rang, look todte hue. Ab wo
+        # khabar normal activity line ban ke aati hai.
+        self.brain.notify = lambda kind, text: self.on_output(kind, text)
+
         # --- Conversation state ---
         self.session_id = uuid.uuid4().hex[:12]
         self.messages: list[Message] = []

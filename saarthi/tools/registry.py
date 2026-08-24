@@ -136,15 +136,43 @@ class ToolRegistry:
         arguments = tool.coerce_args(call.arguments)
 
         # 3. Safety gate — risky tool pe confirmation
+        #
+        # DHYAN: ye sirf "confirm" wale kaam hain. HARD BLOCKS (OTP/PIN
+        # type karna, rm -rf /) alag layer hain — safety.py ke andar,
+        # tools ke apne code mein. Unko na auto_approve bypass kar sakta
+        # hai, na ye approval memory. Wo design ke hisaab se hai.
         if tool.risky and ctx.settings.confirm_risky:
-            approved = await ctx.ask_confirmation(
-                f"{tool.name} chalana hai",
-                dict(arguments),
-            )
-            if not approved:
-                return ActionResult.failure(
-                    "User ne mana kar diya. Ye kaam nahi kiya."
-                )
+            if getattr(ctx.settings, "auto_approve", False):
+                # FULL ACCESS MODE — user ne khud on kiya hai
+                log.info("auto-approve ON — %s bina puche chala raha hun", tool.name)
+            else:
+                # Is TURN mein isi tool ke liye pehle haan bol diya tha?
+                #
+                # Kyun: "youtube pe gaana chala aur volume badha" jaisi
+                # ek command mein agent 5-6 steps leta hai. Har step pe
+                # dobara "haan?" puchna irritating hai aur user blindly
+                # haan dabane lagta hai — jo safety ke liye ULTA bura hai.
+                #
+                # ctx.scratch har turn pe naya banta hai (agent.run_turn
+                # ek hi baar _build_context call karta hai), isliye ye
+                # approval AGLI command tak nahi jaati.
+                approved_tools = ctx.scratch.setdefault("approved_tools", set())
+
+                if tool.name in approved_tools:
+                    log.debug(
+                        "%s ke liye is turn mein pehle haan bol diya tha",
+                        tool.name,
+                    )
+                else:
+                    approved = await ctx.ask_confirmation(
+                        f"{tool.name} chalana hai",
+                        dict(arguments),
+                    )
+                    if not approved:
+                        return ActionResult.failure(
+                            "User ne mana kar diya. Ye kaam nahi kiya."
+                        )
+                    approved_tools.add(tool.name)
 
         # 4. Chalao
         try:
