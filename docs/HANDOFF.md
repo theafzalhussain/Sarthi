@@ -11,7 +11,7 @@
 >
 > **Ek line mein abhi ka haal:** 8 LLM providers, 39 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, aur **309 tests jo `python run_tests.py` se chalte hain.**
+> automation, aur **326 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -337,6 +337,7 @@ wapas nahi aata.
 | 5 | **Porcupine error khali** — short-circuit se `_error` populate nahi hua, user ko wajah nahi pata chalti | `_build()` pehle call + `unavailable_reason()` jo SAARE blockers batata hai |
 | 6 | **Deprecated model names** — teeno providers 404 de rahe the | `/models` discovery + actionable 404 + `.env.example` mein model lines commented |
 | 7 | **Browser tab hijack** — agent user ka chalu tab chheen leta tha. Do jagah se: `webbrowser.open()` ka default `new=0` current tab REPLACE kar sakta tha, aur `launch_app()` hamesha `self._page` reuse karta tha | `new=2` + `autoraise=False`; naya tab per task; `_agent_url` se **user-takeover detection**; `MAX_TABS=10` cap; `bring_to_front()` kabhi nahi |
+| 8 | **`extract_amount()` substring** (BUG#1 ka same class) — money context `"rs"` SUBSTRING se check hota tha, to "yea**rs**", "fi**rs**t", "hou**rs**" amount de dete the | `\b` word boundaries + payment app naam explicit (`paytm`/`phonepe`/`upi`), kyunki `"pay"` substring hatane se wo miss ho rahe the |
 | 9 | **Galat voice API naam** `hardware_check.py` mein — `Microphone` (asli `Recorder`), `engine.speak()` (asli `engine.say()`). Sandbox mein pakda nahi gaya kyunki mic nahi tha, wo code path chala hi nahi | Asli code padh ke sahi naam. Plus thin wrappers + AST test jo function-level imports bhi verify karta hai |
 | 10 | **Galat mic device** — Windows pe default "Microsoft Sound Mapper" (legacy MME) select hota tha, `peak` sirf 303 = silence. Whisper ko kuch sunai nahi deta tha. Asli wajah: `AudioConfig` mein device field HI NAHI THA, mic chunne ka koi tareeka nahi tha | `AudioConfig.device` + `from_env()` + `SAARTHI_MIC_DEVICE` (naam ya index se). Plus `--mic-scan` jo har mic try karke best batata hai, aur live level meter |
 | 11 | **`.env` ki generation settings KUCH NAHI KARTI THI** — user ne `NVIDIA_ENABLE_THINKING`, `NVIDIA_MAX_TOKENS`, `NVIDIA_TOP_P` likha tha, teeno code mein hi nahi the. Aur `max_tokens` har jagah 2048 hardcoded tha — reasoning model ke saath jawab beech mein kat jaata tha | `_provider_tuning()` — per-provider `{NAME}_MAX_TOKENS` / `_TOP_P` / `_ENABLE_THINKING`, plus global `SAARTHI_MAX_TOKENS` (default 2048 → 4096). Tests payload check karte hain, sirf config nahi |
@@ -347,7 +348,9 @@ wapas nahi aata.
 | 16 | **Lagatar fail hone wala provider HAR STEP pe retry hota tha** — deepseek 8 step mein 8 baar fail, ek task mein 58 second. Error permanent nahi tha to `mark_dead()` nahi lagta tha | `MAX_CONSECUTIVE_FAILURES=3` — 3 baar lagatar fail = cooldown, chahe error temporary ho. Success pe counter reset |
 | 17 | **`WHISPER_MODEL` pe validation nahi thi** — user ne `big` likha (aisa model nahi hai), load pe crash | `_valid_model_size()` + aliases (`big`→`medium`). Default `base`→`small` |
 | 18 | **Voice mode HANG hua lagta tha** — `_report_listening` sirf SPEAKING/CALIBRATING report karta tha. WAITING pe kuch nahi → user ko pata hi nahi chalta ki AB BOLNA HAI | WAITING pe "AB BOL — sun raha hun", loudness vs threshold feedback, aur state dedupe (15 baar spam band) |
-| 8 | **`extract_amount()` substring** (BUG#1 ka same class) — money context `"rs"` SUBSTRING se check hota tha, to "yea**rs**", "fi**rs**t", "hou**rs**" amount de dete the | `\b` word boundaries + payment app naam explicit (`paytm`/`phonepe`/`upi`), kyunki `"pay"` substring hatane se wo miss ho rahe the |
+| 19 | **Biasing prompt output KHARAAB karta tha** (BUG#14 ka bacha hua hissa) — sentences hataane ke BAAD bhi: "paytm kholo" → `'Open YouTube'` / `'Open, Growman'`. YouTube aur Groww dono PRIORITY_APPS mein hain, aur output mein comma bhi tha — Whisper ne prompt ki list hi ugal di. Audio PERFECT thi (peak 27506) | `WHISPER_BIASING` setting, **default OFF**. Pillar #1 ka asli kaam correction layer (65 rules) karta hai jo transcribe ke BAAD chalta hai — wo hallucinate nahi karata |
+| 20 | **`--stt-tune` UPGRADE ke liye WAHI model suggest karta tha** — user `small` pe tha, tool ne kaha "MODEL CHHOTA HAI ('small') ... 'small' try kar". Bekaar advice se user ka bharosa jaata hai | `next_bigger_model()` — alag function, taaki test SEEDHA call kar sake. Plus `at_top` case: `large-v3` pe already ho to "bada model lo" bolna band |
+| 21 | **RAM ka NUMBER chhupa hua tha** — output sirf "Tere RAM ke hisaab se Whisper model: base" dikhata tha. 7.3 GB machine pe `base` kyun chuna, ye samajh hi nahi aata tha | `RAM: 7.3 GB -> suggested: small`, plus `.env` ki `WHISPER_MODEL` se MISMATCH warning. Chupchap kamzor model chalana sabse bada silent bug hai |
 
 ### ⚠️ Jo galti MAINE (AI ne) ki thi — isse seekh
 
@@ -377,7 +380,7 @@ Ab rule #9 (`KAAM PURA KARO`) ulta hai — jab tak kaam ho na jaaye, rukna nahi.
 
 ## 11. TESTING STATUS — ye IMAANDAARI se padh
 
-### ✅ AB ASLI TEST SUITE HAI — 309 tests
+### ✅ AB ASLI TEST SUITE HAI — 326 tests
 
 ```bash
 python run_tests.py              # sab (0.1 second mein)
@@ -465,6 +468,30 @@ naam script ke ANDAR the, function-level import mein.
    verify karta hai, **chahe wo function ke andar likhe hon.**
    Function-level imports sabse khatarnak hain — wo sirf tab fail hote
    hain jab wo function chalta hai.
+
+### 🔬 SABAK: guess karna band karo, INSTRUMENT karo
+
+User ki machine pe ek contradiction tha:
+
+```
+--stt-tune  (record_fixed)          -> peak 27506, LOUD audio
+voice_cli   (record_until_silence)  -> "kuch sunai nahi diya"
+```
+
+Ek hi mic, ek hi awaaz, do alag nateeje. Maine code padh ke ye sab
+check kiya — **sab SAHI the:**
+- `record_until_silence` `device=self.device` pass karta hai ✅
+- `rms()` `float64` mein cast karta hai (int16 overflow se bachne ko) ✅
+- `SAMPLE_RATE = 16_000` (Whisper ka requirement) ✅
+- `_prepare_audio()` `/32768.0` karta hai (gotcha #1) ✅
+
+Aage guess karna time waste tha. Isliye **`--mic-live`** banaya — wo
+detector ke ANDAR ke asli numbers dikhata hai (noise_floor, threshold,
+per-chunk rms) aur teen alag diagnosis deta hai:
+stream khali / audio threshold se kam / lagatar chunks nahi mile.
+
+**Jab code padh ke bug na mile, to measure karo — user ki machine pe
+jawab hota hai, tumhare paas nahi.**
 
 ### ⚠️ EK AUR SABAK: test SAHI WAJAH se pass ho
 
@@ -603,7 +630,7 @@ pip install -r requirements.txt
 cp .env.example .env          # Windows: Copy-Item .env.example .env
 # .env mein keys daal (model lines COMMENTED rehne do)
 
-python run_tests.py           # PEHLE YE — 195 tests, 0.1 second
+python run_tests.py           # PEHLE YE — 326 tests, 5 second
 python cli.py                 # text mode
 ```
 
@@ -719,7 +746,7 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 | **Indian apps** | 110 |
 | **LLM providers** | **8** (chaar ek hi NVIDIA key pe) |
 | **ASR corrections** | 65 rules |
-| **Tests** | **309 pass** — `python run_tests.py` |
+| **Tests** | **326 pass** — `python run_tests.py` |
 | **Interface** | English (professional) |
 | **Agent ki baat** | User ki bhasha — `SAARTHI_LANGUAGE=auto` |
 | **Max steps** | 25 |
@@ -731,7 +758,7 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 
 ### Naye AI ke liye 60-second summary
 
-1. `python run_tests.py` chala — 195 pass hone chahiye. Kuch fail ho to
+1. `python run_tests.py` chala — 326 pass hone chahiye. Kuch fail ho to
    **wahi pehle theek kar**, naya feature baad mein.
 2. Interface **English** hai, agent ki **baat user ki bhasha** mein. Ye do
    alag cheezein hain — confuse mat kar.

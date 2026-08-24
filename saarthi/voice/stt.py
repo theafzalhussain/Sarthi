@@ -121,6 +121,29 @@ class WhisperConfig:
     # Whisper ka andar ka silence filter — hallucination kam karta hai
     vad_filter: bool = True
 
+    # Biasing prompt bhejna hai ya nahi.
+    #
+    # ⚠️ DEFAULT OFF HAI — ASLI EVIDENCE KI WAJAH SE.
+    #
+    # User ki machine pe (audio PERFECT, peak 27506):
+    #     bola "paytm kholo"
+    #     suna 'Open YouTube'  /  'Open, Growman'
+    #
+    # "YouTube" aur "Groww" DONO hamare PRIORITY_APPS mein hain, aur
+    # output mein COMMA bhi tha — matlab Whisper ne prompt ki list hi
+    # wapas ugal di. Sentences hataane ke baad BHI ye ho raha tha.
+    #
+    # Whisper ka initial_prompt sirf tab faayda deta hai jab audio saaf
+    # aur lamba ho. Chhote command ("paytm kholo" = 1 second) pe wo
+    # ULTA nuksaan karta hai.
+    #
+    # Pillar #1 ka asli kaam `hinglish_asr.py` ka CORRECTION layer
+    # karta hai (65 regex rules) — wo transcribe ke BAAD chalta hai
+    # aur hallucinate nahi karata. Wo waise hi chalu rehta hai.
+    #
+    # Saaf audio pe biasing chahiye to: WHISPER_BIASING=vocab
+    biasing: str = "off"
+
     # Model kahan cache ho (None = default HuggingFace cache)
     download_root: str | None = None
 
@@ -153,6 +176,9 @@ class WhisperConfig:
             language=None if language.lower() in ("auto", "", "none") else language,
             beam_size=_int("WHISPER_BEAM_SIZE", 5),
             vad_filter=_bool("WHISPER_VAD", True),
+            biasing=(os.getenv("WHISPER_BIASING", "off").strip().lower()
+                     if os.getenv("WHISPER_BIASING", "off").strip().lower()
+                     in ("off", "vocab") else "off"),
             download_root=os.getenv("WHISPER_CACHE") or None,
             cpu_threads=_int("WHISPER_THREADS", 0),
         )
@@ -423,6 +449,43 @@ def recommend_model_size() -> str:
     return "medium"
 
 
+# Accuracy ke order mein models. Isse "agla bada model" nikalte hain.
+MODEL_LADDER: tuple = ("tiny", "base", "small", "medium", "large-v3")
+
+
+def next_bigger_model(current: str) -> str:
+    """
+    Isse ek step bada model do. Sabse bade pe already ho to wahi wapas.
+
+    ⚠️ YE FUNCTION EK GALAT ADVICE SE BANA HAI.
+
+    `--stt-tune` pehle bolta tha "MODEL CHHOTA HAI ('small') — 'small'
+    try kar". Matlab jo model user already chala raha tha, wahi suggest
+    kar raha tha. Bekaar advice se user ka bharosa jaata hai.
+
+    Alag function isliye hai ki TEST ise seedha call kar sake — pehle
+    ye logic `scan_stt()` ke andar dafan tha aur test sirf itna check
+    karta tha ki source mein "ladder" shabd hai ya nahi. Wo test bug
+    wapas daalne pe bhi PASS ho gaya tha.
+    """
+    value = (current or "").strip()
+
+    # "small.en" / "distil-large-v3" jaise variants ko base naam pe laao
+    stem = value.replace(".en", "").replace("distil-", "")
+
+    if stem in MODEL_LADDER:
+        index = MODEL_LADDER.index(stem)
+        if index + 1 < len(MODEL_LADDER):
+            return MODEL_LADDER[index + 1]
+        return MODEL_LADDER[-1]  # already sabse bada
+
+    # "large-v2" / "turbo" jaise naam — large family maan lo
+    if "large" in stem or stem == "turbo":
+        return "large-v3"
+
+    return "medium"  # pata nahi chala — ek solid middle option
+
+
 # ----------------------------------------------------------------------
 #  STT engine
 # ----------------------------------------------------------------------
@@ -565,8 +628,16 @@ class WhisperSTT:
         started = time.time()
         prepared = self._prepare_audio(audio)
 
-        # --- PILLAR #1: Hinglish biasing ---
-        initial_prompt = build_initial_prompt(extra_words=extra_words)
+        # --- PILLAR #1: Hinglish biasing (default OFF) ---
+        #
+        # Kyun OFF: prompt Whisper ko hallucinate karata hai chhote
+        # commands pe (upar `biasing` field ka comment padh).
+        # Correction layer neeche phir bhi chalta hai — wo hi asli
+        # Pillar #1 hai.
+        if self.config.biasing == "vocab":
+            initial_prompt = build_initial_prompt(extra_words=extra_words)
+        else:
+            initial_prompt = None
 
         try:
             # `language` override diya ho to wo use karo, warna config ka.

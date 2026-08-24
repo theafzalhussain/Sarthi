@@ -13,7 +13,7 @@ Iska matlab:
 
 | Cheez | Status |
 |---|---|
-| Logic, parsing, safety, tools, browser | ✅ **195 automated tests** se verified |
+| Logic, parsing, safety, tools, browser | ✅ **326 automated tests** se verified |
 | Whisper ka int16→float32 conversion | ⚠️ Code sahi hai, par asli mic pe kabhi chala nahi |
 | Porcupine ka 512-sample frame buffer | ⚠️ Same |
 | TTS ki awaaz sach mein aati hai | ⚠️ Same |

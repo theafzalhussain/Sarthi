@@ -803,3 +803,258 @@ class SttTuning(SaarthiTestCase):
         self.assertIn("avg_logprob", source)
         self.assertIn("no_speech_prob", source)
         self.assertIn("language_probability", source)
+
+
+
+class Bug19BiasingContaminatesOutput(SaarthiTestCase):
+    """
+    BUG#19 — biasing prompt OUTPUT KHARAAB kar raha tha (BUG#14 ka bacha hua hissa).
+
+    BUG#14 mein prompt se SENTENCES hataye the. Par user ki machine pe
+    phir bhi ye hua (audio PERFECT, peak 27506):
+
+        bola : "paytm kholo"
+        suna : 'Open YouTube'
+        suna : 'Open, Growman'
+
+    "YouTube" aur "Groww" DONO hamare PRIORITY_APPS mein hain, aur
+    output mein COMMA bhi tha — matlab Whisper ne prompt ki comma-wali
+    LIST hi wapas ugal di.
+
+    Matlab sirf sentences hataana kaafi nahi tha. Whisper ka
+    initial_prompt chhote command ("paytm kholo" = 1 second) pe ULTA
+    nuksaan karta hai.
+
+    FIX: `WHISPER_BIASING` setting, DEFAULT OFF. Pillar #1 ka asli kaam
+    correction layer (65 regex rules) karta hai — wo transcribe ke BAAD
+    chalta hai aur hallucinate nahi karata.
+    """
+
+    def test_bug19_biasing_default_off_hai(self):
+        from saarthi.voice import WhisperConfig
+
+        with clean_env():
+            self.assertEqual(
+                WhisperConfig.from_env().biasing, "off",
+                "Biasing default ON hai — output contaminate hoga",
+            )
+
+    def test_bug19_biasing_env_se_on_ho_sakti_hai(self):
+        from saarthi.voice import WhisperConfig
+
+        with clean_env(WHISPER_BIASING="vocab"):
+            self.assertEqual(WhisperConfig.from_env().biasing, "vocab")
+
+    def test_bug19_galat_value_pe_off(self):
+        from saarthi.voice import WhisperConfig
+
+        for value in ("bakwaas", "true", "yes", ""):
+            with clean_env(WHISPER_BIASING=value):
+                self.assertEqual(WhisperConfig.from_env().biasing, "off")
+
+    def test_bug19_biasing_off_pe_prompt_none_jaata_hai(self):
+        import inspect
+
+        from saarthi.voice import WhisperSTT
+
+        source = inspect.getsource(WhisperSTT.transcribe)
+        self.assertIn('self.config.biasing == "vocab"', source)
+        self.assertIn("initial_prompt = None", source)
+
+    def test_bug19_correction_layer_zinda_hai(self):
+        """
+        Biasing off hui, par Pillar #1 ka ASLI engine chalna chahiye.
+        Yahi wo hissa hai jo hallucinate nahi karata.
+        """
+        from saarthi.lang import parse
+        from saarthi.voice.hinglish_asr import correct_transcript
+
+        result = correct_transcript("pay time cholo aur die hazaar ka bell bhar do")
+        parsed = parse(result.corrected)
+
+        self.assertEqual([a[0] for a in parsed.apps], ["paytm"])
+        self.assertEqual(parsed.amount, 2500.0)
+
+
+class SilenceDetectorDiagnostic(SaarthiTestCase):
+    """
+    `--mic-live` — `record_until_silence` ke andar ka haal dikhata hai.
+
+    Ek contradiction tha jo main code padh ke solve nahi kar paya:
+        record_fixed          -> peak 27506 (LOUD)
+        record_until_silence  -> "kuch sunai nahi diya"
+
+    Device passing, rms() ka float64 cast, sample rate, int16->float32
+    conversion — sab check kiya, sab sahi the. Isliye guess karna band
+    kiya aur INSTRUMENT kiya: ye tool asli noise_floor, threshold aur
+    per-chunk rms dikhata hai.
+    """
+
+    def load_module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "hardware_check", ROOT / "hardware_check.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        with captured_stdout():
+            spec.loader.exec_module(module)
+        return module
+
+    def test_watch_function_maujood_hai(self):
+        self.assertTrue(hasattr(self.load_module(), "watch_silence_detector"))
+
+    def test_record_until_silence_ka_contract(self):
+        """
+        BUG#9 KA CLASS — `watch_silence_detector()` sirf ASLI MIC pe
+        chalta hai. Agar maine galat attribute naam likha (jaise
+        `status.volume` jabki asli `status.loudness` hai) to sandbox
+        mein KABHI pakda nahi jaayega — user ki machine pe crash hoga.
+
+        Isliye contract yahan lock karte hain, bina mic ke.
+        """
+        import inspect
+
+        from saarthi.voice.audio import DetectorStatus, ListenState, Recorder
+
+        # 1. record_until_silence ek callback leta hai aur TUPLE deta hai
+        signature = inspect.signature(Recorder.record_until_silence)
+        self.assertIn(
+            "on_status", signature.parameters,
+            "callback ka naam badal gaya — watch_silence_detector tut jaayega",
+        )
+
+        # 2. Jo attributes hum padhte hain wo sach mein hain
+        status = DetectorStatus(state=ListenState.WAITING)
+        for attribute in ("state", "loudness", "threshold", "got_speech"):
+            self.assertTrue(
+                hasattr(status, attribute),
+                f"DetectorStatus mein '{attribute}' nahi hai",
+            )
+
+        # 3. Jo states hum naam se use karte hain wo exist karti hain
+        for name in ("CALIBRATING", "WAITING", "SPEAKING", "DONE", "TIMEOUT"):
+            self.assertTrue(hasattr(ListenState, name), f"ListenState.{name} gayab")
+
+        # 4. `.value` padhte hain — str Enum hona chahiye
+        self.assertEqual(ListenState.WAITING.value, "waiting")
+
+    def test_config_ke_threshold_fields_maujood_hain(self):
+        """`watch_silence_detector` teen config fields print karta hai."""
+        from saarthi.voice import AudioConfig
+
+        config = AudioConfig()
+        for field in ("noise_multiplier", "min_threshold", "speech_start_chunks"):
+            self.assertTrue(hasattr(config, field), f"AudioConfig.{field} gayab")
+
+    def test_mic_live_flag_wire_hua_hai(self):
+        source = (ROOT / "hardware_check.py").read_text(encoding="utf-8")
+        self.assertIn('"--mic-live"', source)
+        self.assertIn("watch_silence_detector()", source)
+
+    def test_teeno_diagnosis_case_handle_hote_hain(self):
+        """
+        Teen alag wajah ho sakti hain — teeno ka apna diagnosis chahiye:
+          stream khali        -> device/streaming ka issue
+          audio < threshold   -> threshold kam karo
+          audio > threshold   -> lagatar chunks nahi mile
+        """
+        import inspect
+
+        module = self.load_module()
+        source = inspect.getsource(module.watch_silence_detector)
+
+        self.assertIn("STREAM SE AUDIO HI NAHI AA RAHA", source)
+        self.assertIn("THRESHOLD SE KAM", source)
+        self.assertIn("SPEECH CONFIRM NAHI HUI", source)
+        self.assertIn("SAARTHI_MIC_MIN_THRESHOLD", source)
+
+    def test_stt_tune_countdown_deta_hai(self):
+        """
+        User message padhta rehta tha aur bolna bhool jaata tha — phir
+        Whisper ko aadha shabd milta tha.
+        """
+        source = (ROOT / "hardware_check.py").read_text(encoding="utf-8")
+        self.assertIn("AB BOL:", source)
+
+    def test_stt_tune_biasing_aur_mic_live_suggest_karta_hai(self):
+        import inspect
+
+        module = self.load_module()
+        source = inspect.getsource(module.scan_stt)
+
+        self.assertIn("WHISPER_BIASING", source, "biasing ka shak nahi batata")
+        self.assertIn("--mic-live", source, "voice diagnostic suggest nahi karta")
+
+
+class NextBiggerModel(SaarthiTestCase):
+    """
+    BUG#20 — `--stt-tune` UPGRADE ke liye WAHI model suggest karta tha.
+
+    User 'small' pe tha. Tool ne kaha:
+        "MODEL CHHOTA HAI ('small') ... 'small' try kar"
+
+    Bekaar advice. Ab `next_bigger_model()` alag function hai taaki
+    test ise SEEDHA call kar sake.
+
+    (Pehla test sirf source mein "ladder" shabd dhoondhta tha — maine
+    bug wapas daala aur wo test PASS HO GAYA, kyunki shabd doosri line
+    pe bacha hua tha. Isliye behaviour test likha.)
+    """
+
+    def test_har_model_apne_se_bada_deta_hai(self):
+        from saarthi.voice.stt import MODEL_LADDER, next_bigger_model
+
+        for current in ("tiny", "base", "small", "medium"):
+            bigger = next_bigger_model(current)
+            self.assertNotEqual(
+                bigger, current, f"{current} ke liye wahi model suggest kiya",
+            )
+            self.assertGreater(
+                MODEL_LADDER.index(bigger), MODEL_LADDER.index(current),
+                f"{current} -> {bigger} upgrade nahi hai",
+            )
+
+    def test_sabse_bade_pe_wahi_rehta_hai(self):
+        """large-v3 se aage kuch nahi — jhoothi advice nahi deni."""
+        from saarthi.voice.stt import next_bigger_model
+
+        self.assertEqual(next_bigger_model("large-v3"), "large-v3")
+
+    def test_variants_bhi_handle_hote_hain(self):
+        from saarthi.voice.stt import next_bigger_model
+
+        self.assertEqual(next_bigger_model("small.en"), "medium")
+        self.assertEqual(next_bigger_model("base.en"), "small")
+        self.assertEqual(next_bigger_model("large-v2"), "large-v3")
+        self.assertEqual(next_bigger_model("turbo"), "large-v3")
+
+    def test_bakwaas_input_pe_crash_nahi(self):
+        from saarthi.voice.stt import MODEL_LADDER, next_bigger_model
+
+        for junk in ("", "   ", "bakwaas", "big"):
+            self.assertIn(next_bigger_model(junk), MODEL_LADDER)
+
+    def test_stt_tune_sabse_bade_model_pe_bada_model_suggest_nahi_karta(self):
+        """
+        `at_top` case: agar user already large-v3 pe hai to advice mein
+        "Bada model" nahi hona chahiye.
+        """
+        import inspect
+
+        module = self.load_module()
+        source = inspect.getsource(module.scan_stt)
+
+        self.assertIn("at_top", source, "sabse bade model ka case handle nahi hai")
+        self.assertIn("Model badalne se ab kuch nahi hoga", source)
+
+    def load_module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "hardware_check", ROOT / "hardware_check.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        with captured_stdout():
+            spec.loader.exec_module(module)
+        return module

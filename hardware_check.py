@@ -6,7 +6,7 @@ YE SCRIPT KIS LIYE HAI:
 
     Phase 1 aur 2 ka code sandbox mein bana tha jahan MIC NAHI THA,
     SPEAKER NAHI THA, PHONE NAHI THA. Logic sab verify ho chuka hai
-    (195 automated tests), par asli hardware pe kabhi chala nahi.
+    (326 automated tests), par asli hardware pe kabhi chala nahi.
 
     Ye script tere hardware ko check karti hai aur ek REPORT banati
     hai jo tu copy-paste karke dev/AI ko de sakta hai. Wo report se
@@ -18,6 +18,7 @@ CHALANE KA TAREEKA:
     python hardware_check.py --mic      # sirf mic
     python hardware_check.py --mic-scan # HAR mic try karo, best batao
     python hardware_check.py --stt-tune # galat suna? best Whisper setting dhoondho
+    python hardware_check.py --mic-live # voice_cli "kuch sunai nahi diya" bole to
     python hardware_check.py --phone    # sirf phone (ADB)
     python hardware_check.py --speaker  # sirf awaaz
     python hardware_check.py --save     # report file mein bhi save karo
@@ -31,6 +32,7 @@ YE SCRIPT SAFE HAI:
 
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
@@ -198,11 +200,40 @@ def check_system() -> None:
 
     say(f"[INFO] OS: {platform.system()} {platform.release()} ({platform.machine()})")
 
-    # RAM — Whisper model size isi pe depend karta hai
+    # RAM — Whisper model size isi pe depend karta hai.
+    #
+    # ⚠️ Pehle ye line sirf model naam chhaapti thi ("base"), RAM number
+    # nahi. User ki machine mein 7.3 GB thi par "base" dikh raha tha aur
+    # samajh hi nahi aaya KYUN — number chhupa hua tha. Ab dono dikhte
+    # hain, aur .env ki setting se match bhi karte hain.
     try:
-        from saarthi.voice import recommend_model_size
+        from saarthi.voice.stt import recommend_model_size, total_ram_gb
 
-        say(f"[INFO] Tere RAM ke hisaab se Whisper model: {recommend_model_size()}")
+        ram = total_ram_gb()
+        suggested = recommend_model_size()
+        ram_text = f"{ram:.1f} GB" if ram > 0 else "pata nahi chala"
+        say(f"[INFO] RAM: {ram_text}  ->  suggested Whisper model: {suggested}")
+
+        if ram <= 0:
+            say(
+                "   -> RAM detect nahi hui, isliye safe default 'base' chuna. "
+                ".env mein WHISPER_MODEL=small likh de.",
+                "warn",
+            )
+
+        # .env kya keh raha hai? Mismatch ho to batao — chupchap kamzor
+        # model chalana sabse bada silent bug hai.
+        configured = (os.getenv("WHISPER_MODEL") or "").strip()
+        if configured and configured != suggested:
+            say(
+                f"   -> .env mein WHISPER_MODEL={configured} set hai "
+                f"(suggestion {suggested} thi). Jaan-boojh ke ho to theek hai.",
+            )
+        elif not configured:
+            say(
+                f"   -> .env mein WHISPER_MODEL set nahi hai — code ka default "
+                f"'small' chalega (suggestion: {suggested})."
+            )
     except Exception:  # noqa: BLE001
         pass
 
@@ -592,6 +623,155 @@ def scan_mics() -> None:
             say(f"   peak {peak:>5}  [{device['index']}] {device['name']}", "muted")
 
 
+def watch_silence_detector() -> None:
+    """
+    `record_until_silence` ka LIVE andar dikhao.
+
+    KYUN YE BANA:
+        User ki machine pe ek contradiction tha —
+            --stt-tune (record_fixed)      -> peak 27506, LOUD audio
+            voice_cli (record_until_silence) -> "kuch sunai nahi diya"
+
+        Ek hi mic, ek hi awaaz, do alag nateeje. Maine code padh ke
+        device passing, rms() ka float64 cast, sample rate (16000) aur
+        int16->float32 conversion — sab check kiya. Sab SAHI the.
+
+        Isliye guess karna band kiya. Ye tool detector ke ANDAR ke asli
+        numbers dikhata hai: noise_floor, threshold, aur har chunk ka
+        rms. Usse pata chal jaayega ki speech detect kyun nahi hui.
+    """
+    section("Silence detector — live andar ka haal")
+
+    try:
+        from saarthi.voice import AudioConfig, is_audio_available
+        from saarthi.voice.audio import ListenState
+    except Exception as exc:  # noqa: BLE001
+        result("Voice module import", False, str(exc))
+        return
+
+    if not is_audio_available():
+        result("Mic available", False, "sounddevice / PortAudio nahi hai")
+        return
+
+    config = AudioConfig.from_env()
+    say(f"[INFO] threshold formula: max(noise_floor x {config.noise_multiplier}, "
+        f"{config.min_threshold:.0f})")
+    say(f"[INFO] speech maanne ke liye {config.speech_start_chunks} lagatar "
+        f"loud chunks chahiye")
+    say("")
+    say("Ye wahi raasta chalayega jo voice_cli use karta hai.", "muted")
+    say("Pehle aadha second CHUP raho (calibration), phir BOL.", "warn")
+    say("")
+
+    try:
+        input("   Ready ho to Enter dabao (skip: Ctrl+C): ")
+    except (EOFError, KeyboardInterrupt):
+        say("")
+        result("Detector watch", None, "user ne skip kiya")
+        return
+
+    rows = []
+    try:
+        recorder = open_recorder()
+
+        def watch(status):
+            rows.append((status.state, status.loudness, status.threshold))
+
+        audio, final = recorder.record_until_silence(watch)
+    except Exception as exc:  # noqa: BLE001
+        result("record_until_silence", False, f"{type(exc).__name__}: {exc}")
+        return
+
+    if not rows:
+        result("Detector chala", False, "ek bhi chunk nahi mila — stream khali hai")
+        return
+
+    # Calibration ke baad ke chunks hi matter karte hain
+    after_calib = [(s, l, t) for s, l, t in rows if s != ListenState.CALIBRATING]
+    threshold = after_calib[0][2] if after_calib else rows[-1][2]
+    loudnesses = [l for _, l, _ in after_calib] or [l for _, l, _ in rows]
+
+    peak_rms = max(loudnesses) if loudnesses else 0.0
+    noise_chunks = [l for s, l, _ in rows if s == ListenState.CALIBRATING]
+    noise_floor = (sorted(noise_chunks)[len(noise_chunks) // 2]
+                   if noise_chunks else 0.0)
+
+    say("")
+    say(f"[INFO] chunks: {len(rows)}   calibration: {len(noise_chunks)}")
+    say(f"[INFO] noise_floor (median): {noise_floor:.0f}")
+    say(f"[INFO] threshold banaa      : {threshold:.0f}")
+    say(f"[INFO] tera sabse loud chunk: {peak_rms:.0f}")
+    say("")
+
+    # Sabse loud chunks dikhao — pattern samajhne ke liye
+    say("Sabse loud 8 chunks:", "muted")
+    for state, loud, thresh in sorted(after_calib or rows,
+                                      key=lambda r: r[1], reverse=True)[:8]:
+        mark = "LOUD" if loud > thresh else "kam "
+        say(f"   {mark}  rms {loud:>7.0f}  vs threshold {thresh:>6.0f}  [{state.value}]",
+            "muted")
+
+    say("")
+    got_speech = final.got_speech if hasattr(final, "got_speech") else False
+    result("Speech detect hui", bool(got_speech),
+           f"final state: {final.state.value}")
+
+    # --- Diagnosis ---
+    lines = []
+    if got_speech:
+        lines = [
+            "Detector theek kaam kar raha hai.",
+            f"Speech detect hui, peak rms {peak_rms:.0f} vs threshold {threshold:.0f}.",
+            "",
+            "voice_cli mein phir bhi problem ho to bata dena.",
+        ]
+    elif peak_rms < 50:
+        lines = [
+            "STREAM SE AUDIO HI NAHI AA RAHA.",
+            f"Sabse loud chunk sirf {peak_rms:.0f} tha.",
+            "",
+            "Matlab sd.InputStream (streaming) is device pe kaam nahi kar",
+            "raha, jabki sd.rec (record_fixed) kaam karta hai.",
+            "",
+            "Ye try kar — doosra device (--mic-scan se index dekh):",
+            "    SAARTHI_MIC_DEVICE=<doosra index ya naam>",
+            "",
+            "Aur ye poori output bhej dena — ye ek asli bug hai.",
+        ]
+    elif peak_rms <= threshold:
+        suggested = max(120.0, peak_rms * 0.5)
+        lines = [
+            "AUDIO AA RAHA HAI PAR THRESHOLD SE KAM HAI.",
+            f"Tera peak rms {peak_rms:.0f}, threshold {threshold:.0f}.",
+            "",
+            f"noise_floor {noise_floor:.0f} tha, aur threshold =",
+            f"max({noise_floor:.0f} x {config.noise_multiplier}, "
+            f"{config.min_threshold:.0f}) = {threshold:.0f}",
+            "",
+            ".env mein ye daal:",
+            f"    SAARTHI_MIC_MIN_THRESHOLD={suggested:.0f}",
+            "",
+            "Aur zor se bol, ya mic paas rakh.",
+        ]
+    else:
+        lines = [
+            "AUDIO THRESHOLD SE ZYADA THA PAR SPEECH CONFIRM NAHI HUI.",
+            f"peak rms {peak_rms:.0f} > threshold {threshold:.0f}, phir bhi nahi.",
+            "",
+            f"Wajah: {config.speech_start_chunks} LAGATAR loud chunks chahiye",
+            "hote hain. Teri awaaz mein gaps the (ya bahut chhoti thi).",
+            "",
+            "Lagatar bolke dekh, ya .env mein threshold kam kar:",
+            f"    SAARTHI_MIC_MIN_THRESHOLD={max(120.0, peak_rms * 0.5):.0f}",
+        ]
+
+    if HAS_UI:
+        ui.hint("\n".join(lines), title="diagnosis")
+    else:
+        for line in lines:
+            say(line)
+
+
 TUNE_PHRASE = "paytm kholo"
 
 
@@ -679,7 +859,14 @@ def scan_stt() -> None:
     # --- Ek baar record karo, sab variants pe wahi audio use karo ---
     try:
         recorder = open_recorder()
-        say(f'   Bol: "{TUNE_PHRASE}" ... (3 second)', "muted")
+        # Countdown — warna user message padhta rehta hai aur bolna
+        # bhool jaata hai. Phir Whisper ko aadha shabd milta hai.
+        import time as _time
+
+        for count in (3, 2, 1):
+            print(f"      {count}...", end="", flush=True)
+            _time.sleep(0.6)
+        print(f'  AB BOL: "{TUNE_PHRASE}"', flush=True)
         samples = record_seconds(recorder, 3.0)
     except Exception as exc:  # noqa: BLE001
         result("Recording", False, f"{type(exc).__name__}: {exc}")
@@ -756,17 +943,60 @@ def scan_stt() -> None:
             False,
             f"sabse accha bhi sirf {best_score:.0%} tha",
         )
-        lines = [
-            "Teeno language settings fail hui. Sabse mumkin wajah:",
-            f"MODEL CHHOTA HAI ('{config.model_size}').",
+        # Agla bada model kaunsa hai. Logic stt.py mein hai taaki test
+        # use seedha call kar sake (pehle yahan inline tha aur test
+        # sirf "ladder" shabd dhoondhta tha — bug pakad hi nahi paata).
+        from saarthi.voice.stt import next_bigger_model
+
+        bigger = next_bigger_model(config.model_size)
+        at_top = bigger == config.model_size
+
+        lines = ["Teeno language settings fail hui.", ""]
+
+        if config.biasing != "off":
+            lines += [
+                "PEHLA SHAK: BIASING PROMPT.",
+                "WHISPER_BIASING abhi 'vocab' hai. Wo prompt ke shabd",
+                "output mein ghusa deta hai. Ye kar:",
+                "    WHISPER_BIASING=off",
+                "",
+            ]
+        elif at_top:
+            # Sabse bada model already chal raha hai — "bada model lo"
+            # bolna jhooth hoga. Asli wajah audio/bolne ka tareeka hai.
+            lines += [
+                f"Tu sabse bade model ('{config.model_size}') pe hai aur "
+                "biasing OFF hai.",
+                "Model badalne se ab kuch nahi hoga. Ye try kar:",
+                "",
+                "1. Saaf aur zor se bol — countdown ke BAAD.",
+                "   Poora bol: \"bhai paytm kholo\" (2 shabd se zyada)",
+                "",
+                "2. Behtar mic dhoondh: python hardware_check.py --mic-scan",
+                "",
+                "3. Background noise band kar (fan, TV, AC).",
+                "",
+            ]
+        else:
+            lines += [
+                f"Tu already '{config.model_size}' pe hai aur biasing OFF hai.",
+                "",
+                "DO CHEEZEIN TRY KAR:",
+                "",
+                f"1. Bada model ({ram:.0f}GB RAM pe chalega):",
+                f"       WHISPER_MODEL={bigger}",
+                "",
+                "2. Saaf aur zor se bol — countdown ke BAAD.",
+                "   Chhota command (2 shabd) Whisper ke liye mushkil hota",
+                "   hai. Poora bol: \"bhai paytm kholo\"",
+                "",
+            ]
+
+        lines += [
+            "Phir dobara: python hardware_check.py --stt-tune",
             "",
-            f"'{suggested}' try kar (tere {ram:.0f}GB RAM pe chalega):",
-            f"    WHISPER_MODEL={suggested}",
-            "",
-            "Phir dobara chala: python hardware_check.py --stt-tune",
-            "",
-            "Dhyan: 'small' ~500MB download hoga, 'medium' ~1.5GB.",
-            "Ek hi baar download hota hai.",
+            "Voice mein 'kuch sunai nahi diya' aata ho to ye chala:",
+            "    python hardware_check.py --mic-live",
         ]
 
     if HAS_UI:
@@ -1019,7 +1249,7 @@ def main() -> int:
         return 0
 
     only = args & {"--mic", "--speaker", "--phone", "--browser", "--keys",
-                   "--mic-scan", "--stt-tune"}
+                   "--mic-scan", "--stt-tune", "--mic-live"}
     run_all = not only
 
     if HAS_UI:
@@ -1044,6 +1274,9 @@ def main() -> int:
 
     if "--stt-tune" in only:
         scan_stt()
+
+    if "--mic-live" in only:
+        watch_silence_detector()
 
     if run_all or "--mic" in only:
         check_mic(interactive=("--mic" in only) or run_all)
