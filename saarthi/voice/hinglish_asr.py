@@ -40,11 +40,14 @@ DESIGN RULE (bahut important):
 from __future__ import annotations
 
 import difflib
+import logging
 import re
 from dataclasses import dataclass, field
 
 from ..lang.lexicon import INDIAN_APPS, VERB_INTENTS
 from ..lang.normalize import has_devanagari, transliterate
+
+log = logging.getLogger("saarthi.voice.hinglish_asr")
 
 # ======================================================================
 #  1. BIASING — Whisper ko pehle se batao
@@ -551,9 +554,66 @@ def correct_transcript(text: str, use_fuzzy: bool = True) -> CorrectionResult:
 # ----------------------------------------------------------------------
 
 
+# Whisper ke known HALLUCINATION phrases.
+#
+# ⚠️ YE LIST EK ASLI BUG SE BANI HAI (BUG#23).
+#
+# Whisper YouTube captions pe train hua hai. Jab audio chhoti, dheemi ya
+# uski samajh se bahar ho, to wo TRAINING DATA se phrases nikaal deta
+# hai — audio se nahi. User ne "paytm kholo" bola aur mila:
+#
+#     "So, you know, it's a YouTube story."
+#
+# Biasing OFF thi, model 'small' tha, audio peak 16105 (theek) — matlab
+# ye hamare prompt ki galti nahi thi, Whisper ka apna behaviour hai.
+#
+# YE CHUP-CHAAP CHHOD DENA KHATARNAK HAI: us text mein "YouTube" hai,
+# to agent SACH MEIN YOUTUBE KHOL DETA. User ne paytm maanga tha.
+# Galat kaam karne se accha hai "dobara bol" kehna.
+#
+# Ye poore phrase hain, single shabd nahi — kyunki "youtube" akela
+# bilkul valid command hai ("youtube kholo").
+HALLUCINATION_MARKERS: tuple = (
+    "thanks for watching",
+    "thank you for watching",
+    "please subscribe",
+    "like and subscribe",
+    "subscribe to my channel",
+    "don t forget to subscribe",
+    "so you know",
+    "amara org",
+    "subtitles by",
+    "captions by",
+    "transcription by",
+)
+
+# ⚠️ Dhyan: HAR marker MULTI-WORD hona chahiye (test isko enforce karta
+# hai). Single shabd daalna BUG#1 (substring matching) dohrana hai —
+# "youtube" block kar diya to "youtube kholo" bhi mar jaayega.
+#
+# Maine khud ye galti ki thi: list mein "castingwords" daal diya tha.
+# Wo safe tha (Hinglish command mein nahi aata), par rule tod raha tha
+# aur agla banda dekh ke "subscribe" bhi daal deta. "transcription by"
+# usse pehle hi pakad leta hai.
+
+
+def _flatten_for_markers(text: str) -> str:
+    """
+    Marker match karne ke liye text ko simple banao.
+
+    Punctuation hata do aur spaces collapse karo, taaki
+    "So, you know, it's..." -> "so you know it s"
+    Whisper ka punctuation har baar same nahi hota, isliye uspe
+    depend karna galat hai.
+    """
+    lowered = (text or "").lower()
+    simple = "".join(ch if ch.isalnum() else " " for ch in lowered)
+    return " ".join(simple.split())
+
+
 def looks_like_garbage(text: str, min_length: int = 2) -> bool:
     """
-    Transcript bekaar hai? (background noise, khaali awaaz)
+    Transcript bekaar hai? (background noise, khaali awaaz, hallucination)
 
     Whisper silence pe bhi kuch na kuch nikaal deta hai — jaise
     "Thank you." ya "[BLANK_AUDIO]". Unko agent tak nahi bhejna,
@@ -573,6 +633,13 @@ def looks_like_garbage(text: str, min_length: int = 2) -> bool:
     }
     if cleaned.lower() in noise_outputs:
         return True
+
+    # YouTube-caption wale hallucination phrases (poora text kahin bhi)
+    flat = _flatten_for_markers(cleaned)
+    for marker in HALLUCINATION_MARKERS:
+        if marker in flat:
+            log.debug("Hallucination marker mila (%r) — reject: %r", marker, text)
+            return True
 
     # Sirf punctuation/numbers
     if not any(ch.isalpha() for ch in cleaned):

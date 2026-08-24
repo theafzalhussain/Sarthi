@@ -11,7 +11,7 @@
 >
 > **Ek line mein abhi ka haal:** 8 LLM providers, 39 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, aur **326 tests jo `python run_tests.py` se chalte hain.**
+> automation, aur **357 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -351,6 +351,9 @@ wapas nahi aata.
 | 19 | **Biasing prompt output KHARAAB karta tha** (BUG#14 ka bacha hua hissa) — sentences hataane ke BAAD bhi: "paytm kholo" → `'Open YouTube'` / `'Open, Growman'`. YouTube aur Groww dono PRIORITY_APPS mein hain, aur output mein comma bhi tha — Whisper ne prompt ki list hi ugal di. Audio PERFECT thi (peak 27506) | `WHISPER_BIASING` setting, **default OFF**. Pillar #1 ka asli kaam correction layer (65 rules) karta hai jo transcribe ke BAAD chalta hai — wo hallucinate nahi karata |
 | 20 | **`--stt-tune` UPGRADE ke liye WAHI model suggest karta tha** — user `small` pe tha, tool ne kaha "MODEL CHHOTA HAI ('small') ... 'small' try kar". Bekaar advice se user ka bharosa jaata hai | `next_bigger_model()` — alag function, taaki test SEEDHA call kar sake. Plus `at_top` case: `large-v3` pe already ho to "bada model lo" bolna band |
 | 21 | **RAM ka NUMBER chhupa hua tha** — output sirf "Tere RAM ke hisaab se Whisper model: base" dikhata tha. 7.3 GB machine pe `base` kyun chuna, ye samajh hi nahi aata tha | `RAM: 7.3 GB -> suggested: small`, plus `.env` ki `WHISPER_MODEL` se MISMATCH warning. Chupchap kamzor model chalana sabse bada silent bug hai |
+| 22 | **Mic stream DIGITAL SILENCE bhej raha tha** — `--mic-live` ne measure kiya: `sd.rec()` (callback) → peak 16105 ✅, par blocking `stream.read()` → **333 chunk, HAR EK rms 0**. Ek hi device, ek hi samplerate/channels/dtype. Stream chal bhi raha tha (333 chunks theek 10 second mein aaye) — bas audio zero thi. Upar se user ko "kuch sunai nahi diya" dikhta tha, to wo zor se bolta tha — bekaar, galti uski nahi thi | `record_until_silence` ab **callback-based** hai (`sd.rec` bhi andar se yahi karta hai) + `queue.Queue` + `indata.copy()`. Loop `_consume_chunks()` mein alag hua — **bina mic ke testable**. Naya `ListenState.NO_AUDIO` jo TIMEOUT se alag hai. Plus `--mic-stream` (8 config measure karta hai) aur `SAARTHI_MIC_BLOCKSIZE` / `SAARTHI_MIC_LATENCY` |
+| 23 | **Whisper ke YouTube-caption hallucinations agent tak pahunch rahe the** — biasing OFF, model `small`, audio peak 16105 (theek) — phir bhi "paytm kholo" → `"So, you know, it's a YouTube story."` Whisper YouTube captions pe train hai, mushkil audio pe training data se phrase nikaal deta hai. **KHATRA: us text mein "YouTube" tha, to agent SACH MEIN YOUTUBE KHOL DETA** jabki paytm maanga tha | `HALLUCINATION_MARKERS` — **poore phrase** match hote hain, single shabd NAHI (warna "youtube kholo" bhi mar jaata = BUG#1 dohrana). Punctuation-independent match. Test enforce karta hai ki har marker multi-word ho — usne meri hi list mein `castingwords` pakda |
+| 24 | **`--stt-tune` ki output se diagnosis ho hi nahi pa raha tha** — (a) biasing setting print nahi hoti thi, to pata nahi chalta ki hallucination BUG#19 hai ya BUG#23; (b) confidence (logprob/no_speech) nahi dikhta tha; (c) progress nahi dikhta tha — 3 variants × 5-15 second, user ne pehle ke baad **Ctrl+C daba diya** ("Rok diya."), `hi` aur `auto` kabhi try hi nahi hue | `[INFO] Biasing:` line, per-variant `logprob`/`no_speech`/`detected`, `[1/3]` counter jo transcribe se **PEHLE** print hota hai, "Ctrl+C mat dabana ~30 second lagega" warning, aur `REJECTED: <wajah>` |
 
 ### ⚠️ Jo galti MAINE (AI ne) ki thi — isse seekh
 
@@ -380,7 +383,7 @@ Ab rule #9 (`KAAM PURA KARO`) ulta hai — jab tak kaam ho na jaaye, rukna nahi.
 
 ## 11. TESTING STATUS — ye IMAANDAARI se padh
 
-### ✅ AB ASLI TEST SUITE HAI — 326 tests
+### ✅ AB ASLI TEST SUITE HAI — 357 tests
 
 ```bash
 python run_tests.py              # sab (0.1 second mein)
@@ -492,6 +495,34 @@ stream khali / audio threshold se kam / lagatar chunks nahi mile.
 
 **Jab code padh ke bug na mile, to measure karo — user ki machine pe
 jawab hota hai, tumhare paas nahi.**
+
+#### ✅ AUR YE APPROACH KAAM KAR GAYA
+
+`--mic-live` chalane pe pehli hi baar mein jawab mil gaya:
+
+```
+[INFO] chunks: 333   calibration: 15
+[INFO] noise_floor (median): 0
+[INFO] threshold banaa      : 300
+[INFO] tera sabse loud chunk: 0        <- YE
+```
+
+333 chunk aaye (matlab stream chal raha tha, timing bhi sahi thi —
+333 × 30ms = 10 second), par **har chunk ka rms EXACTLY 0**. Aur usi
+machine pe `sd.rec()` peak 16105 de raha tha.
+
+Ye BUG#22 tha: blocking `stream.read()` us PortAudio backend pe zeros
+deta hai. `sd.rec()` andar se **callback-based** InputStream use karta
+hai — wo chalta hai. Fix wahi tha: callback pe aa jao.
+
+Sabse zaroori baat: **maine 4 cheezein "check" ki thi aur chaaron sahi
+thi.** Agar main code padhta rehta to kabhi na milta, kyunki bug code
+mein nahi tha — wo PortAudio ke ek MODE mein tha jo sirf us machine pe
+dikhta hai. Sirf measurement isse pakad sakti thi.
+
+Isi pattern se BUG#23 bhi mila (uske baad `--stt-tune` chala aur usme
+Whisper ka hallucination dikha), aur BUG#24 (khud diagnostic ki output
+mein gaps).
 
 ### ⚠️ EK AUR SABAK: test SAHI WAJAH se pass ho
 
@@ -630,7 +661,7 @@ pip install -r requirements.txt
 cp .env.example .env          # Windows: Copy-Item .env.example .env
 # .env mein keys daal (model lines COMMENTED rehne do)
 
-python run_tests.py           # PEHLE YE — 326 tests, 5 second
+python run_tests.py           # PEHLE YE — 357 tests, 5 second
 python cli.py                 # text mode
 ```
 
@@ -746,7 +777,7 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 | **Indian apps** | 110 |
 | **LLM providers** | **8** (chaar ek hi NVIDIA key pe) |
 | **ASR corrections** | 65 rules |
-| **Tests** | **326 pass** — `python run_tests.py` |
+| **Tests** | **357 pass** — `python run_tests.py` |
 | **Interface** | English (professional) |
 | **Agent ki baat** | User ki bhasha — `SAARTHI_LANGUAGE=auto` |
 | **Max steps** | 25 |
@@ -758,7 +789,7 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 
 ### Naye AI ke liye 60-second summary
 
-1. `python run_tests.py` chala — 326 pass hone chahiye. Kuch fail ho to
+1. `python run_tests.py` chala — 357 pass hone chahiye. Kuch fail ho to
    **wahi pehle theek kar**, naya feature baad mein.
 2. Interface **English** hai, agent ki **baat user ki bhasha** mein. Ye do
    alag cheezein hain — confuse mat kar.

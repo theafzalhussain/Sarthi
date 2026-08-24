@@ -6,7 +6,7 @@ YE SCRIPT KIS LIYE HAI:
 
     Phase 1 aur 2 ka code sandbox mein bana tha jahan MIC NAHI THA,
     SPEAKER NAHI THA, PHONE NAHI THA. Logic sab verify ho chuka hai
-    (326 automated tests), par asli hardware pe kabhi chala nahi.
+    (357 automated tests), par asli hardware pe kabhi chala nahi.
 
     Ye script tere hardware ko check karti hai aur ek REPORT banati
     hai jo tu copy-paste karke dev/AI ko de sakta hai. Wo report se
@@ -19,6 +19,7 @@ CHALANE KA TAREEKA:
     python hardware_check.py --mic-scan # HAR mic try karo, best batao
     python hardware_check.py --stt-tune # galat suna? best Whisper setting dhoondho
     python hardware_check.py --mic-live # voice_cli "kuch sunai nahi diya" bole to
+    python hardware_check.py --mic-stream # mic se sirf 0 aaye to (stream config)
     python hardware_check.py --phone    # sirf phone (ADB)
     python hardware_check.py --speaker  # sirf awaaz
     python hardware_check.py --save     # report file mein bhi save karo
@@ -623,6 +624,263 @@ def scan_mics() -> None:
             say(f"   peak {peak:>5}  [{device['index']}] {device['name']}", "muted")
 
 
+#  Stream config matrix — BUG#22 se aaya
+# ----------------------------------------------------------------------
+
+PROBE_SECONDS = 1.2
+
+
+def _probe_peak(chunk, dtype: str) -> int:
+    """Chunk ka peak, hamesha int16 scale (0-32767) pe."""
+    if chunk is None:
+        return 0
+    try:
+        import numpy as np
+
+        if getattr(chunk, "size", 1) == 0:
+            return 0
+        value = float(abs(np.asarray(chunk)).max())
+    except Exception:  # noqa: BLE001
+        try:
+            value = float(max(abs(float(s)) for s in chunk))
+        except Exception:  # noqa: BLE001
+            return 0
+
+    # float32 stream -1..1 deta hai — compare karne ke liye scale karo
+    if dtype == "float32":
+        value *= 32768.0
+    return int(value)
+
+
+def _probe_stream(device, config, dtype="int16", blocksize=None,
+                  latency=None, callback_mode=True):
+    """
+    Ek stream config try karo. Return (peak, error).
+
+    peak int16 scale pe. error khali = chal gaya.
+    """
+    import queue as _queue
+
+    kwargs = {
+        "samplerate": config.sample_rate,
+        "channels": config.channels,
+        "dtype": dtype,
+        "device": device,
+    }
+    if blocksize is not None:
+        kwargs["blocksize"] = blocksize
+    if latency is not None:
+        kwargs["latency"] = latency
+
+    peak = 0
+
+    # Import bhi `try` ke ANDAR hai — jaan-boojh ke.
+    #
+    # Ye function ek-ek config try karta hai aur har fail ko REPORT
+    # karta hai, crash nahi karta. sounddevice hi na ho to wo bhi ek
+    # reportable failure hai, exception nahi. Isse ye sandbox mein
+    # (bina mic ke) test bhi ho jaata hai.
+    try:
+        import sounddevice as sd
+
+        if callback_mode:
+            received: "_queue.Queue" = _queue.Queue()
+
+            def on_audio(indata, frames, time_info, status_flags):  # noqa: ARG001
+                received.put(indata.copy())
+
+            kwargs["callback"] = on_audio
+            with sd.InputStream(**kwargs):
+                import time as _time
+
+                deadline = _time.time() + PROBE_SECONDS
+                while _time.time() < deadline:
+                    try:
+                        chunk = received.get(timeout=0.4)
+                    except _queue.Empty:
+                        break
+                    peak = max(peak, _probe_peak(chunk, dtype))
+        else:
+            with sd.InputStream(**kwargs) as stream:
+                import time as _time
+
+                frames = blocksize or config.chunk_samples
+                deadline = _time.time() + PROBE_SECONDS
+                while _time.time() < deadline:
+                    chunk, _overflow = stream.read(frames)
+                    peak = max(peak, _probe_peak(chunk, dtype))
+    except Exception as exc:  # noqa: BLE001
+        return peak, f"{type(exc).__name__}: {str(exc).splitlines()[0][:60]}"
+
+    return peak, ""
+
+
+def _probe_sd_rec(device, config):
+    """sd.rec() baseline — ye user ki machine pe chalta hai."""
+    try:
+        import sounddevice as sd
+
+        frames = int(PROBE_SECONDS * config.sample_rate)
+        audio = sd.rec(
+            frames,
+            samplerate=config.sample_rate,
+            channels=config.channels,
+            dtype="int16",
+            device=device,
+        )
+        sd.wait()
+        return _probe_peak(audio, "int16"), ""
+    except Exception as exc:  # noqa: BLE001
+        return 0, f"{type(exc).__name__}: {str(exc).splitlines()[0][:60]}"
+
+
+def scan_stream_configs() -> None:
+    """
+    ALAG-ALAG stream config try karke batao kaunsa AUDIO deta hai.
+
+    KYUN YE BANA (BUG#22):
+        User ki machine pe ye contradiction tha —
+            sd.rec()      (callback-based)  -> peak 16105  ✅
+            stream.read() (blocking)        -> 333 chunk, HAR EK rms 0
+
+        Ek hi device, ek hi samplerate/channels/dtype. Code padh ke ye
+        samajh nahi aata — PortAudio ka backend (MME / WASAPI / WDM-KS)
+        har machine pe alag behave karta hai.
+
+        Isliye guess karna band. Ye function 8 config try karta hai aur
+        NUMBER dikhata hai. Jo chale, uski exact .env line batata hai.
+    """
+    section("Stream config scan — kaunsa raasta audio deta hai")
+
+    try:
+        from saarthi.voice import AudioConfig, describe_device, is_audio_available
+    except Exception as exc:  # noqa: BLE001
+        result("Voice module import", False, str(exc))
+        return
+
+    if not is_audio_available():
+        result("Mic available", False, "sounddevice / PortAudio nahi hai")
+        return
+
+    config = AudioConfig.from_env()
+    device = config.device
+    say(f"[INFO] Device: {describe_device(device)}")
+    say(f"[INFO] samplerate {config.sample_rate}, channels {config.channels}, "
+        f"chunk {config.chunk_samples} samples")
+    say("")
+
+    probes = [
+        ("sd.rec (baseline)", dict(mode="rec")),
+        ("callback, blocksize=chunk", dict(blocksize=config.chunk_samples)),
+        ("callback, blocksize=0 (auto)", dict(blocksize=0)),
+        ("callback, blocksize=0, latency=high",
+         dict(blocksize=0, latency="high")),
+        ("callback, blocksize=1024", dict(blocksize=1024)),
+        ("callback, float32", dict(blocksize=config.chunk_samples,
+                                   dtype="float32")),
+        ("blocking read, blocksize=chunk",
+         dict(blocksize=config.chunk_samples, callback_mode=False)),
+        ("blocking read, blocksize=0",
+         dict(blocksize=0, callback_mode=False)),
+    ]
+
+    say(f"{len(probes)} config try karunga, har ek {PROBE_SECONDS:.1f} second.")
+    say("LAGATAR BOLTE RAHO poore scan ke dauraan — ginti bolo: "
+        "ek do teen chaar...", "warn")
+    say("Chup rahoge to sab 0 aayega aur kuch pata nahi chalega.", "warn")
+    say("")
+    try:
+        input("   Ready ho to Enter dabao (skip: Ctrl+C): ")
+    except (EOFError, KeyboardInterrupt):
+        say("")
+        result("Stream scan", None, "user ne skip kiya")
+        return
+
+    say("")
+    outcomes = []
+    for label, options in probes:
+        if options.get("mode") == "rec":
+            peak, error = _probe_sd_rec(device, config)
+        else:
+            peak, error = _probe_stream(device, config, **options)
+
+        outcomes.append((label, peak, error, options))
+        if error:
+            print(f"   {label:<38} chal nahi paya — {error}")
+        else:
+            print(f"   {label:<38} {level_bar(peak, width=20)}")
+
+    say("")
+
+    working = [(label, peak, opts) for label, peak, error, opts in outcomes
+               if not error and peak >= 300]
+    best_peak = max((peak for _, peak, _, _ in outcomes), default=0)
+
+    if not working:
+        result("Koi stream config chala", False,
+               f"sabse accha bhi sirf {best_peak} tha")
+        say("   Matlab problem stream config ka nahi hai — mic hi mute hai,", "warn")
+        say("   ya Windows ne permission nahi di, ya galat device hai.", "warn")
+        say("   Ye do chala:", "warn")
+        say("       python hardware_check.py --mic-scan", "warn")
+        say("   Aur: Settings > Privacy & security > Microphone > allow apps", "warn")
+        return
+
+    result("Chalne wale config", True, f"{len(working)} out of {len(probes)}")
+
+    # Hamara DEFAULT raasta chala ya nahi — yahi asli sawaal hai
+    default_label = "callback, blocksize=chunk"
+    default_ok = any(label == default_label for label, _, _ in working)
+
+    lines = []
+    if default_ok:
+        lines = [
+            "SAB THEEK HAI — hamara default raasta kaam kar raha hai.",
+            "",
+            "Bas voice chala ke dekh:",
+            "    python voice_cli.py",
+            "",
+            "Agar phir bhi 'kuch sunai nahi diya' aaye to bata dena.",
+        ]
+    else:
+        # Default fail hua par kuch aur chala — exact .env line do
+        best_label, best_working_peak, best_opts = max(
+            working, key=lambda item: item[1]
+        )
+        env_lines = []
+        if "blocksize" in best_opts:
+            env_lines.append(f"    SAARTHI_MIC_BLOCKSIZE={best_opts['blocksize']}")
+        if best_opts.get("latency"):
+            env_lines.append(f"    SAARTHI_MIC_LATENCY={best_opts['latency']}")
+
+        lines = [
+            "Hamara default raasta is machine pe kaam nahi karta,",
+            f"par ye karta hai:  {best_label}  (peak {best_working_peak})",
+            "",
+        ]
+        if env_lines:
+            lines += [".env mein ye line daal:"] + env_lines + [""]
+            lines += ["Phir chala: python voice_cli.py"]
+        else:
+            lines += [
+                "Iske liye .env knob nahi hai — ye poori output bhej de,",
+                "main code mein support add kar dunga.",
+            ]
+
+    if HAS_UI:
+        ui.hint("\n".join(lines), title="ab ye kar")
+    else:
+        for line in lines:
+            say(line)
+
+    say("")
+    say("Saare results:", "muted")
+    for label, peak, error, _ in outcomes:
+        detail = error if error else f"peak {peak}"
+        say(f"   {label:<38} {detail}", "muted")
+
+
+# ----------------------------------------------------------------------
 def watch_silence_detector() -> None:
     """
     `record_until_silence` ka LIVE andar dikhao.
@@ -832,6 +1090,22 @@ def scan_stt() -> None:
         f"Suggested: {suggested}")
     say(f"[INFO] Abhi ki language setting: {config.language or 'auto'}")
 
+    # BIASING dikhana ZAROORI hai.
+    #
+    # User ne output bheja jisme "So, you know, it's a YouTube story."
+    # tha. Main bata hi nahi paya ki wo biasing ki wajah se hai ya
+    # Whisper ka apna hallucination — kyunki ye line print hi nahi hoti
+    # thi. Ek missing INFO line ne diagnosis ek round lamba kar diya.
+    say(f"[INFO] Biasing: {config.biasing}"
+        + ("  (prompt bheja jaata hai)" if config.biasing != "off"
+           else "  (prompt band — recommended)"))
+    if config.biasing != "off":
+        say(
+            "   Dhyan: biasing ON hai. Wo prompt ke shabd output mein "
+            "ghusa deta hai (BUG#19). Pehle WHISPER_BIASING=off kar.",
+            "warn",
+        )
+
     if config.model_size != suggested:
         say("")
         say(
@@ -847,7 +1121,13 @@ def scan_stt() -> None:
 
     say("")
     say(f'Main tujhse bolwaunga: "{TUNE_PHRASE}"', "muted")
-    say("Phir har setting pe try karke score dunga.", "muted")
+    say("Recording EK BAAR hogi, phir usi audio pe 3 setting try karunga.", "muted")
+    # User ne pehli setting ke baad Ctrl+C daba diya tha — usko lagta
+    # tha atak gaya. Har transcribe 5-15 second leta hai, aur 3 hone
+    # hain. Ye pehle se batana zaroori hai.
+    say("Har setting mein 5-15 second lagte hain — 3 hone hain, "
+        "to ~30 second lagega.", "warn")
+    say("Ctrl+C mat dabana, warna aadha result milega.", "warn")
     say("")
     try:
         input(f'   Ready ho to Enter dabao, phir bol "{TUNE_PHRASE}" (skip: Ctrl+C): ')
@@ -905,11 +1185,19 @@ def scan_stt() -> None:
     say(f'   Expected: "{TUNE_PHRASE}"', "muted")
     say("")
 
-    for label, language in variants:
+    total = len(variants)
+    for index, (label, language) in enumerate(variants, start=1):
+        # Progress pehle print karo, transcribe ke BAAD nahi. Warna
+        # 15 second tak screen pe kuch nahi hota aur user Ctrl+C daba
+        # deta hai — exactly yahi hua tha.
+        print(f"      [{index}/{total}] language={label:<5} chal raha hai...",
+              end="", flush=True)
+
         try:
             transcript = stt.transcribe(samples, language=language)
         except Exception as exc:  # noqa: BLE001
-            print(f"      language={label:<5} chal nahi paya — {str(exc)[:40]}")
+            print(f"\r      [{index}/{total}] language={label:<5} "
+                  f"chal nahi paya — {str(exc)[:40]}")
             continue
 
         raw_score = similarity(transcript.raw_text, TUNE_PHRASE)
@@ -917,9 +1205,27 @@ def scan_stt() -> None:
         best = max(raw_score, fixed_score)
         scores.append((best, label, transcript))
 
-        print(f"      language={label:<5} score {best:.0%}   {transcript.text!r}")
+        # \r se "chal raha hai..." line pe hi result likh dete hain
+        print(f"\r      [{index}/{total}] language={label:<5} "
+              f"score {best:>4.0%}   {transcript.text!r}"
+              + " " * 12)
+
+        # CONFIDENCE dikhana zaroori hai — score kam ho to ye batata hai
+        # ki Whisper ko KHUD pata tha ya nahi. Hallucination pe logprob
+        # aksar theek dikhta hai par no_speech_prob high hota hai;
+        # asli galat sunai pe logprob gir jaata hai. Dono chahiye.
+        print(f"           confidence: logprob {transcript.avg_logprob:>6.2f}   "
+              f"no_speech {transcript.no_speech_prob:.2f}"
+              + (f"   detected={transcript.language}"
+                 if transcript.language else ""))
+
         if transcript.raw_text != transcript.text:
-            print(f"         (Whisper ne suna: {transcript.raw_text!r})")
+            print(f"           (Whisper ne suna: {transcript.raw_text!r})")
+
+        # Reject hua to wajah batao — warna user ko lagta hai tool ne
+        # kuch kiya hi nahi
+        if not transcript.is_usable and transcript.reject_reason:
+            print(f"           REJECTED: {transcript.reject_reason}")
 
     if not scores:
         result("STT tune", False, "koi variant chala hi nahi")
@@ -1249,7 +1555,7 @@ def main() -> int:
         return 0
 
     only = args & {"--mic", "--speaker", "--phone", "--browser", "--keys",
-                   "--mic-scan", "--stt-tune", "--mic-live"}
+                   "--mic-scan", "--stt-tune", "--mic-live", "--mic-stream"}
     run_all = not only
 
     if HAS_UI:
@@ -1274,6 +1580,9 @@ def main() -> int:
 
     if "--stt-tune" in only:
         scan_stt()
+
+    if "--mic-stream" in only:
+        scan_stream_configs()
 
     if "--mic-live" in only:
         watch_silence_detector()

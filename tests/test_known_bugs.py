@@ -1059,3 +1059,368 @@ class PowerTools(SaarthiTestCase):
         self.assertIn("file_kholo", prompt)
         self.assertIn("openpyxl", prompt, "concrete example hona chahiye")
         self.assertIn("TAAKATWAR", prompt)
+
+
+
+class Bug22StreamDigitalSilence(SaarthiTestCase):
+    """
+    BUG#22 — mic stream DIGITAL SILENCE bhej raha tha, aur hum galat
+    diagnosis de rahe the.
+
+    User ki machine pe `--mic-live` ne ye MEASURE kiya:
+
+        sd.rec()      (callback-based)  -> peak 16105   ✅ audio aaya
+        stream.read() (blocking)        -> 333 chunk, HAR EK rms 0
+
+    Ek hi device, ek hi samplerate (16000), channels (1), dtype (int16).
+    Stream chal bhi raha tha — 333 chunks theek 10 second mein aaye,
+    matlab timing sahi thi. Bas audio poori tarah ZERO thi.
+
+    DO CHEEZEIN GALAT THI:
+
+    1. Blocking `stream.read()` is machine pe zeros deta hai. `sd.rec()`
+       andar se CALLBACK-based InputStream use karta hai — wo chalta
+       hai. Isliye hum bhi callback pe aa gaye.
+
+    2. User ko "kuch sunai nahi diya" (TIMEOUT) dikhta tha. Wo GALAT
+       DIAGNOSIS thi — wo zor se bolta tha, mic paas laata tha, kuch
+       fayda nahi hota tha. Galti uski nahi thi. Ab `NO_AUDIO` alag
+       state hai jo sach batati hai.
+
+    Ye test bina microphone ke chalta hai, kyunki loop `_consume_chunks`
+    mein alag ho gaya hai aur chunks ek plain callable se aate hain.
+    """
+
+    def make_recorder(self):
+        from saarthi.voice.audio import AudioConfig, Recorder
+
+        # Chhoti calibration/timeout — test tez chale
+        config = AudioConfig()
+        config.calibration_chunks_override = None
+        return Recorder(config)
+
+    def chunk(self, value: int, size: int = 480):
+        """Ek chunk banao jisme har sample `value` ho (plain list)."""
+        return [value] * size
+
+    def drain(self, recorder, chunks):
+        """`chunks` list se ek-ek chunk do, khatam hone pe queue.Empty."""
+        import queue
+
+        iterator = iter(chunks)
+
+        def next_chunk():
+            try:
+                return next(iterator)
+            except StopIteration:
+                raise queue.Empty from None
+
+        return recorder._consume_chunks(next_chunk)
+
+    # ------------------------------------------------------------------
+
+    def test_bug22_sirf_zeros_pe_no_audio_milta_hai(self):
+        """YEHI ASLI BUG HAI — 333 zero chunks pe TIMEOUT nahi, NO_AUDIO."""
+        from saarthi.voice.audio import ListenState
+
+        recorder = self.make_recorder()
+        audio, status = self.drain(recorder, [self.chunk(0) for _ in range(400)])
+
+        self.assertIsNone(audio)
+        self.assertEqual(
+            status.state, ListenState.NO_AUDIO,
+            "Zero audio pe TIMEOUT bata raha hai — user ko lagega uski "
+            "awaaz ki galti hai, jabki stream tuti hai",
+        )
+        self.assertFalse(status.got_speech)
+
+    def test_bug22_zeros_pe_pura_timeout_wait_nahi_karta(self):
+        """
+        10 second bekaar wait karwana bekaar hai jab pehle 2 second mein
+        pata chal gaya ki stream zeros bhej rahi hai.
+        """
+        from saarthi.voice.audio import ListenState
+
+        recorder = self.make_recorder()
+        seen = []
+
+        import queue
+
+        def next_chunk():
+            if len(seen) > 5000:
+                raise queue.Empty from None
+            seen.append(1)
+            return self.chunk(0)
+
+        audio, status = recorder._consume_chunks(next_chunk)
+
+        self.assertEqual(status.state, ListenState.NO_AUDIO)
+        expected = recorder.config.calibration_chunks + int(
+            recorder.config.chunks_per_second * 1.5
+        )
+        self.assertLessEqual(
+            len(seen), expected + 2,
+            f"{len(seen)} chunks tak wait kiya — {expected} pe pata chal "
+            f"jaana chahiye tha",
+        )
+
+    def test_bug22_stream_bilkul_chup_ho_to_no_audio(self):
+        """Callback ek baar bhi na chale (queue.Empty turant) -> NO_AUDIO."""
+        from saarthi.voice.audio import ListenState
+
+        recorder = self.make_recorder()
+        audio, status = self.drain(recorder, [])
+
+        self.assertIsNone(audio)
+        self.assertEqual(status.state, ListenState.NO_AUDIO)
+
+    def test_chup_kamra_TIMEOUT_deta_hai_no_audio_NAHI(self):
+        """
+        ⚠️ YE TEST ULTI GALTI SE BACHATA HAI.
+
+        Chup kamre mein bhi mic thodi si noise deta hai (rms 0 nahi
+        hoti). Us case mein banda sach mein bola nahi — wo TIMEOUT hai,
+        NO_AUDIO nahi. Warna hum theek mic ko "tuta hua" bata denge.
+        """
+        from saarthi.voice.audio import ListenState
+
+        recorder = self.make_recorder()
+        # rms 5 — bahut dheemi noise, par ZERO nahi
+        audio, status = self.drain(recorder, [self.chunk(5) for _ in range(400)])
+
+        self.assertIsNone(audio)
+        self.assertEqual(
+            status.state, ListenState.TIMEOUT,
+            "Dheemi noise ko digital silence samajh liya — theek mic ko "
+            "tuta hua batayega",
+        )
+
+    def test_asli_bolna_pe_audio_milta_hai(self):
+        """
+        Sanity check: naya loop normal case bhi handle karta hai.
+        Calibration (chup) -> zor se bolna -> phir chup -> DONE.
+        """
+        from saarthi.voice.audio import ListenState
+
+        recorder = self.make_recorder()
+        config = recorder.config
+
+        chunks = []
+        chunks += [self.chunk(10) for _ in range(config.calibration_chunks)]
+        chunks += [self.chunk(5000) for _ in range(20)]          # bolna
+        chunks += [self.chunk(10) for _ in range(config.silence_chunks + 2)]
+
+        audio, status = self.drain(recorder, chunks)
+
+        self.assertEqual(status.state, ListenState.DONE)
+        self.assertTrue(status.got_speech)
+        self.assertIsNotNone(audio, "bolna detect hua par audio nahi mila")
+        self.assertGreater(len(audio), 0)
+
+    # ------------------------------------------------------------------
+    #  Fix ka DUSRA hissa — callback-based stream
+    # ------------------------------------------------------------------
+
+    def test_bug22_blocking_read_wapas_nahi_aayi(self):
+        """
+        `record_until_silence` CALLBACK use kare, blocking `.read()` nahi.
+
+        Ye source-level check hai kyunki asli stream sirf mic ke saath
+        banta hai. Par ye WAHI line hai jisne bug banaya tha, isliye
+        lock karna zaroori hai.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        from saarthi.voice.audio import Recorder
+
+        source = inspect.getsource(Recorder.record_until_silence)
+
+        # AST se check karte hain, plain text se NAHI. Warna is method ke
+        # COMMENT (jisme bug ka explanation hai, "stream.read()" likha
+        # hai) test ko fail kar deta hai. Comment code nahi hota.
+        tree = ast.parse(textwrap.dedent(source))
+
+        reads = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "read"
+        ]
+        self.assertEqual(
+            reads, [],
+            "blocking .read() wapas aa gayi — user ki machine pe ye zeros "
+            "deti hai (BUG#22)",
+        )
+
+        streams = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "InputStream"
+        ]
+        self.assertEqual(len(streams), 1, "InputStream banta hi nahi")
+
+        # Stream ko `callback` milna chahiye. Wo do tarah se ja sakta
+        # hai — seedha keyword (`callback=on_audio`) ya kwargs dict
+        # (`{"callback": on_audio}`). Test dono samjhe, warna refactor
+        # pe bina bug ke fail ho jaayega.
+        wired = {kw.arg for kw in streams[0].keywords if kw.arg}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                wired.add(node.value)
+
+        self.assertIn(
+            "callback", wired,
+            "InputStream ko callback nahi mila — blocking mode pe wapas "
+            "chala gaya (BUG#22)",
+        )
+
+    def test_bug22_callback_buffer_copy_karta_hai(self):
+        """
+        PortAudio callback ka `indata` buffer REUSE hota hai. Bina
+        `.copy()` agla chunk usi memory pe likhta hai aur hum purana
+        audio kho dete hain — aisa bug reproduce karna bahut mushkil
+        hota hai (kabhi kabhi hi dikhta hai).
+        """
+        import inspect
+
+        from saarthi.voice.audio import Recorder
+
+        source = inspect.getsource(Recorder.record_until_silence)
+        self.assertIn("indata.copy()", source, "buffer copy nahi ho raha")
+
+    def test_no_audio_finished_hai_par_speech_nahi(self):
+        from saarthi.voice.audio import DetectorStatus, ListenState
+
+        status = DetectorStatus(state=ListenState.NO_AUDIO)
+        self.assertTrue(status.is_finished, "NO_AUDIO pe loop rukega nahi")
+        self.assertFalse(status.got_speech)
+
+
+
+class Bug23WhisperHallucinationPhrases(SaarthiTestCase):
+    """
+    BUG#23 — Whisper YouTube-caption phrases nikalta tha aur wo AGENT
+    TAK PAHUNCH JAATE THE.
+
+    User ne "paytm kholo" bola. Biasing OFF thi (BUG#19 fix ke baad),
+    model 'small' tha, audio peak 16105 (theek thi). Phir bhi mila:
+
+        "So, you know, it's a YouTube story."
+
+    Matlab ye hamare prompt ki galti NAHI thi — Whisper YouTube captions
+    pe train hua hai aur mushkil audio pe training data se phrases
+    nikaal deta hai.
+
+    KHATRA: us text mein "YouTube" hai. `looks_like_garbage()` ise pass
+    kar deta tha, to agent SACH MEIN YOUTUBE KHOL DETA — jabki user ne
+    paytm maanga tha. Galat kaam karne se accha hai "dobara bol" kehna.
+
+    FIX: `HALLUCINATION_MARKERS` — poore phrase match hote hain, single
+    shabd nahi. Kyunki "youtube" akela bilkul valid command hai.
+    """
+
+    def test_bug23_asli_case_reject_hota_hai(self):
+        from saarthi.voice.hinglish_asr import looks_like_garbage
+
+        self.assertTrue(
+            looks_like_garbage("So, you know, it's a YouTube story."),
+            "Ye hallucination agent tak pahunchega aur YouTube khol dega",
+        )
+
+    def test_bug23_youtube_caption_phrases_reject_hote_hain(self):
+        from saarthi.voice.hinglish_asr import looks_like_garbage
+
+        for text in (
+            "Thanks for watching!",
+            "Thank you for watching.",
+            "Please subscribe to the channel",
+            "Like and subscribe",
+            "Subtitles by the Amara.org community",
+            "Transcription by CastingWords",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(looks_like_garbage(text), f"{text!r} pass ho gaya")
+
+    def test_bug23_punctuation_badalne_pe_bhi_pakadta_hai(self):
+        """
+        Whisper ka punctuation har baar same nahi hota. Marker match
+        punctuation pe depend nahi karna chahiye.
+        """
+        from saarthi.voice.hinglish_asr import looks_like_garbage
+
+        for text in (
+            "So, you know, it's a YouTube story.",
+            "So you know it's a YouTube story",
+            "so   you    know - it is a youtube story",
+            "SO, YOU KNOW! IT'S A YOUTUBE STORY",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(looks_like_garbage(text))
+
+    # ------------------------------------------------------------------
+    #  ⚠️ ULTA KHATRA — valid command reject nahi hona chahiye
+    # ------------------------------------------------------------------
+
+    def test_bug23_valid_hinglish_command_reject_NAHI_hote(self):
+        """
+        Ye test us galti se bachata hai jo is fix ko ULTA kar deti.
+
+        Agar hum "youtube" ya "subscribe" jaise SINGLE SHABD block kar
+        dete, to "youtube kholo" jaisa bilkul valid command bhi reject
+        ho jaata. Wo BUG#1 (substring matching) ka same class hai.
+        """
+        from saarthi.voice.hinglish_asr import looks_like_garbage
+
+        for text in (
+            "paytm kholo",
+            "youtube kholo",
+            "youtube par gaana chalao",
+            "iss channel ko subscribe kar do",
+            "mummy ko 500 rupay bhej do",
+            "chrome kholo aur youtube khol do",
+            "bijli ka bill bhar do",
+            "so tu kya kar raha hai",
+            "watching kya hai",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(
+                    looks_like_garbage(text),
+                    f"{text!r} valid command hai par reject ho gaya",
+                )
+
+    def test_bug23_marker_poore_phrase_hain_single_shabd_nahi(self):
+        """
+        Har marker mein space hona chahiye (multi-word). Ek bhi single
+        shabd ghus jaaye to valid commands reject hone lagenge.
+        """
+        from saarthi.voice.hinglish_asr import HALLUCINATION_MARKERS
+
+        self.assertTrue(HALLUCINATION_MARKERS, "list khali hai")
+        for marker in HALLUCINATION_MARKERS:
+            with self.subTest(marker=marker):
+                self.assertIn(
+                    " ", marker,
+                    f"'{marker}' single shabd hai — valid command block karega",
+                )
+                self.assertEqual(
+                    marker, marker.lower(),
+                    "marker lowercase hona chahiye, match lowercase pe hota hai",
+                )
+
+    def test_bug23_stt_hallucination_ko_unusable_batati_hai(self):
+        """
+        `looks_like_garbage` theek ho par STT usko use na kare to fix
+        bekaar hai. (BUG#11 ka class — logic tha, wire nahi tha.)
+        """
+        import inspect
+
+        from saarthi.voice.stt import WhisperSTT
+
+        source = inspect.getsource(WhisperSTT.transcribe)
+        self.assertIn("looks_like_garbage(raw_text)", source)
+        self.assertIn("is_usable = False", source)

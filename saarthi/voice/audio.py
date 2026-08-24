@@ -24,6 +24,7 @@ False batayega aur clear error milega. Crash nahi hoga.
 from __future__ import annotations
 
 import logging
+import queue
 import shutil
 import subprocess
 import sys
@@ -87,6 +88,22 @@ class AudioConfig:
     # SAARTHI_MIC_DEVICE se asli mic chun lo.
     # Kaunsa chunna hai wo pata karne ke liye: python hardware_check.py --mic-scan
     device: int | None = None
+
+    # --- Stream tuning (BUG#22 se aaya) ---
+    #
+    # Ye do knob isliye hain ki user ki machine pe stream ZEROS de rahi
+    # thi. Har PortAudio backend (MME / WASAPI / WDM-KS) alag behave
+    # karta hai, aur kaunsa combination chalega ye pehle se pata nahi —
+    # MEASURE karna padta hai: python hardware_check.py --mic-stream
+    #
+    # blocksize: 0 = PortAudio khud decide kare (kabhi kabhi yahi
+    #            chalta hai jab fixed size fail hota hai)
+    #            None = hamara chunk_samples (default)
+    blocksize: int | None = None
+
+    # latency: None = default, ya "low" / "high".
+    #          "high" bade buffer deta hai — dheema par reliable.
+    latency: str | None = None
 
     # --- Silence detection tuning ---
 
@@ -162,7 +179,32 @@ class AudioConfig:
             except ValueError:
                 pass
 
+        # BUG#22 — stream config. `--mic-stream` ye measure karke exact
+        # line batata hai jo yahan daalni hai.
+        raw_block = os.getenv("SAARTHI_MIC_BLOCKSIZE", "").strip()
+        if raw_block:
+            try:
+                config.blocksize = max(0, int(raw_block))
+            except ValueError:
+                pass
+
+        raw_latency = os.getenv("SAARTHI_MIC_LATENCY", "").strip().lower()
+        if raw_latency in ("low", "high"):
+            config.latency = raw_latency
+
         return config
+
+    @property
+    def stream_blocksize(self) -> int:
+        """
+        InputStream ko dene ke liye blocksize.
+
+        `blocksize=None` (default) matlab hamara chunk size use karo.
+        `blocksize=0` matlab PortAudio khud decide kare.
+        """
+        if self.blocksize is None:
+            return self.chunk_samples
+        return self.blocksize
 
 
 # ----------------------------------------------------------------------
@@ -210,6 +252,17 @@ class ListenState(str, Enum):
     TIMEOUT = "timeout"            # Koi bola hi nahi
     TOO_LONG = "too_long"          # max_duration cross
 
+    # Mic se BILKUL 0 aaya — har sample exactly zero (digital silence).
+    #
+    # Ye TIMEOUT se ALAG hai aur ye farq bahut zaroori hai:
+    #     TIMEOUT  = mic kaam kar raha hai, banda bola nahi
+    #     NO_AUDIO = banda bola, par stream ne zeros bheje
+    #
+    # User ki machine pe yahi hua tha. Usse "kuch sunai nahi diya"
+    # message milta tha, to wo zor se bolta tha, mic paas laata tha —
+    # kuch fayda nahi hota tha, kyunki galti uski nahi thi.
+    NO_AUDIO = "no_audio"
+
 
 @dataclass
 class DetectorStatus:
@@ -226,6 +279,7 @@ class DetectorStatus:
             ListenState.DONE,
             ListenState.TIMEOUT,
             ListenState.TOO_LONG,
+            ListenState.NO_AUDIO,
         )
 
     @property
@@ -679,51 +733,155 @@ class Recorder:
         collected: list = []
         final_status = DetectorStatus(state=ListenState.WAITING)
 
-        stream = sd.InputStream(
-            samplerate=self.config.sample_rate,
-            channels=self.config.channels,
-            dtype="int16",
-            blocksize=self.config.chunk_samples,
-            device=self.device,
-        )
+        # --- Chunks CALLBACK se aate hain, blocking read() se nahi ---
+        #
+        # ⚠️ BUG#22 — YE LINE EK ASLI BUG SE BADLI HAI.
+        #
+        # Pehle yahan `stream.read()` (blocking) tha. User ki machine pe
+        # `--mic-live` ne ye measure kiya:
+        #
+        #     sd.rec()      (callback-based)  -> peak 16105  ✅
+        #     stream.read() (blocking)        -> 333 chunk, HAR EK rms 0
+        #
+        # Ek hi device, ek hi samplerate (16000), channels (1), dtype
+        # (int16). Stream chal raha tha bhi — 333 chunks 10 second mein
+        # aaye, matlab timing sahi thi. Bas audio DIGITAL SILENCE thi.
+        #
+        # `sd.rec()` andar se callback-based InputStream hi use karta
+        # hai. Wo chalta hai, blocking read nahi chalti — to hum bhi
+        # callback pe aa gaye. Ye Windows/PortAudio pe zyada reliable
+        # raasta hai.
+        queued: "queue.Queue" = queue.Queue()
+
+        def on_audio(indata, frames, time_info, status_flags):  # noqa: ARG001
+            if status_flags:
+                log.debug("stream status: %s", status_flags)
+            # `indata` PortAudio ka buffer hai — wo REUSE hota hai,
+            # isliye copy() zaroori hai. Bina copy agla chunk isi
+            # memory pe likh dega aur hum purana audio kho denge.
+            queued.put(indata.copy())
+
+        stream_kwargs: dict = {
+            "samplerate": self.config.sample_rate,
+            "channels": self.config.channels,
+            "dtype": "int16",
+            "blocksize": self.config.stream_blocksize,
+            "device": self.device,
+            "callback": on_audio,
+        }
+        # latency sirf tab bhejo jab user ne set kiya ho — warna
+        # PortAudio ka apna default behtar hota hai
+        if self.config.latency:
+            stream_kwargs["latency"] = self.config.latency
+
+        stream = sd.InputStream(**stream_kwargs)
+
+        # Callback bilkul na chale to hamesha ke liye atakna nahi hai
+        queue_timeout = max(1.0, (self.config.chunk_ms / 1000.0) * 20)
 
         with stream:
-            total_chunks = 0
-            hard_limit = (
-                self.config.max_chunks
-                + self.config.start_timeout_chunks
-                + self.config.calibration_chunks
-                + 10
+            return self._consume_chunks(
+                lambda: queued.get(timeout=queue_timeout),
+                on_status=on_status,
+                detector=detector,
             )
 
-            while total_chunks < hard_limit:
-                total_chunks += 1
+    # ------------------------------------------------------------------
 
-                chunk, overflowed = stream.read(self.config.chunk_samples)
-                if overflowed:
-                    log.debug("Audio overflow — chunk gir gaya")
+    def _consume_chunks(self, next_chunk, on_status=None, detector=None):
+        """
+        Chunks consume karke (audio, DetectorStatus) banao.
 
-                flat = chunk.ravel() if hasattr(chunk, "ravel") else chunk
-                status = detector.feed(flat)
-                final_status = status
+        ⚠️ YE ALAG FUNCTION KYUN HAI — YE JAAN-BOOJH KE HAI.
 
-                if on_status is not None:
-                    on_status(status)
+        Is module ka design decision hai: "silence detection ka LOGIC
+        hardware se alag rakha hai" (upar module docstring padh). Par
+        `record_until_silence` ka LOOP us rule se chhoot gaya tha — usme
+        stream setup aur chunk logic mile hue the. Nateeja: BUG#22
+        (digital silence) sandbox mein pakda hi nahi ja sakta tha,
+        kyunki wahan mic nahi hai.
 
-                # Calibration ka audio nahi rakhna. Bolna shuru hone se
-                # pehle ka thoda audio rakhte hain (pehla shabd na kate).
-                if detector.state in (ListenState.WAITING, ListenState.SPEAKING):
-                    collected.append(flat)
-                    # WAITING mein buffer chhota rakho
-                    if detector.state == ListenState.WAITING:
-                        keep = self.config.speech_start_chunks + 3
-                        if len(collected) > keep:
-                            collected = collected[-keep:]
+        Ab loop yahan hai aur `next_chunk` ek plain callable hai. Test
+        fake chunks de kar poora behaviour verify kar sakta hai — zero
+        audio, dead stream, normal speech — bina kisi microphone ke.
 
-                if status.is_finished:
-                    break
+        Args:
+            next_chunk: callable jo agla chunk de, ya `queue.Empty`
+                        raise kare jab mic se kuch na aaye
+        """
+        detector = detector or SilenceDetector(self.config)
+        collected: list = []
+        final_status = DetectorStatus(state=ListenState.WAITING)
 
-        if not status.got_speech or not collected:
+        def finish_no_audio(reason: str, count: int):
+            log.error(
+                "Mic stream se audio nahi aa raha (%s, %d chunks, device=%s) "
+                "— pipeline tuti hai, bolne ki galti nahi",
+                reason, count, self.device,
+            )
+            status = DetectorStatus(state=ListenState.NO_AUDIO)
+            if on_status is not None:
+                on_status(status)
+            return None, status
+
+        # Digital-silence detection
+        saw_any_audio = False
+        zero_chunks = 0
+        zero_limit = self.config.calibration_chunks + int(
+            self.config.chunks_per_second * 1.5
+        )
+
+        total_chunks = 0
+        hard_limit = (
+            self.config.max_chunks
+            + self.config.start_timeout_chunks
+            + self.config.calibration_chunks
+            + 10
+        )
+
+        while total_chunks < hard_limit:
+            total_chunks += 1
+
+            try:
+                chunk = next_chunk()
+            except queue.Empty:
+                # Callback ek baar bhi nahi chala — stream murda hai
+                return finish_no_audio("ek bhi chunk nahi aaya", total_chunks)
+
+            flat = chunk.ravel() if hasattr(chunk, "ravel") else chunk
+            status = detector.feed(flat)
+            final_status = status
+
+            # rms EXACTLY 0.0 matlab har sample zero tha. Chup kamre mein
+            # bhi aisa nahi hota — wahan thodi si noise hoti hai. Exact
+            # zero = stream se kuch aa hi nahi raha.
+            if status.loudness == 0.0:
+                zero_chunks += 1
+            else:
+                saw_any_audio = True
+
+            if on_status is not None:
+                on_status(status)
+
+            # Calibration ka audio nahi rakhna. Bolna shuru hone se
+            # pehle ka thoda audio rakhte hain (pehla shabd na kate).
+            if detector.state in (ListenState.WAITING, ListenState.SPEAKING):
+                collected.append(flat)
+                # WAITING mein buffer chhota rakho
+                if detector.state == ListenState.WAITING:
+                    keep = self.config.speech_start_chunks + 3
+                    if len(collected) > keep:
+                        collected = collected[-keep:]
+
+            # Bekaar 10 second wait karwane ka matlab nahi jab pata hai
+            # ki stream sirf zeros bhej raha hai.
+            if not saw_any_audio and zero_chunks >= zero_limit:
+                return finish_no_audio("sirf zeros aaye", zero_chunks)
+
+            if status.is_finished:
+                break
+
+        if not final_status.got_speech or not collected:
             return None, final_status
 
         if HAS_NUMPY:

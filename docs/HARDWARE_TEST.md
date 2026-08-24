@@ -13,7 +13,7 @@ Iska matlab:
 
 | Cheez | Status |
 |---|---|
-| Logic, parsing, safety, tools, browser | ✅ **326 automated tests** se verified |
+| Logic, parsing, safety, tools, browser | ✅ **357 automated tests** se verified |
 | Whisper ka int16→float32 conversion | ⚠️ Code sahi hai, par asli mic pe kabhi chala nahi |
 | Porcupine ka 512-sample frame buffer | ⚠️ Same |
 | TTS ki awaaz sach mein aati hai | ⚠️ Same |
@@ -49,9 +49,11 @@ Bas. Ye script:
 ### Sirf ek cheez test karni ho
 
 ```bash
-python hardware_check.py --mic       # sirf microphone
+python hardware_check.py --mic        # sirf microphone
 python hardware_check.py --mic-scan  # HAR mic try karo, best batao
 python hardware_check.py --stt-tune  # galat suna? best Whisper setting dhoondho
+python hardware_check.py --mic-live  # voice "kuch sunai nahi diya" bole to
+python hardware_check.py --mic-stream # mic se sirf 0 aa raha ho to
 python hardware_check.py --speaker   # sirf awaaz
 python hardware_check.py --phone     # sirf phone (ADB)
 python hardware_check.py --browser   # sirf browser
@@ -208,6 +210,79 @@ Mic bahut dheema hi rahe to threshold bhi kam kar sakta hai:
 ```env
 SAARTHI_MIC_MIN_THRESHOLD=150
 ```
+
+#### 🔇 Voice bole "Mic se audio nahi aa raha (sirf zeros)" — `--mic-stream`
+
+Ye **BUG#22** hai aur ye sabse dhokebaaz bug tha. Symptom:
+
+```
+python hardware_check.py --mic       ->  peak 24087   ✅ audio aa raha hai
+python voice_cli.py                 ->  "kuch sunai nahi diya"  ❌
+```
+
+Ek hi mic, ek hi awaaz, do alag jawab. `--mic-live` ne wajah pakdi:
+
+```
+[INFO] chunks: 333                    <- stream chal raha tha
+[INFO] tera sabse loud chunk: 0       <- par HAR chunk zero tha
+```
+
+Wajah: PortAudio ka backend (MME / WASAPI / WDM-KS) har machine pe alag
+behave karta hai. Us machine pe **blocking `stream.read()` zeros deta
+tha, par callback-based stream chalta tha.** Ab code callback use karta
+hai, to ye apne aap theek hona chahiye.
+
+Phir bhi aaye to **guess mat kar — measure kar:**
+
+```bash
+python hardware_check.py --mic-stream
+```
+
+Ye **8 alag stream config** try karta hai aur peak dikhata hai:
+
+```
+   sd.rec (baseline)                      [########............]  4200  accha
+   callback, blocksize=chunk              [########............]  4100  accha
+   blocking read, blocksize=chunk         [....................]     0  kuch nahi
+```
+
+Jo chale, uski **exact `.env` line** bata deta hai:
+
+```env
+SAARTHI_MIC_BLOCKSIZE=0
+SAARTHI_MIC_LATENCY=high
+```
+
+> **Ek zaroori farq:** voice ab `TIMEOUT` aur `NO_AUDIO` alag batata hai.
+> `kuch sunai nahi diya` = mic theek hai, tu bola nahi.
+> `Mic se audio nahi aa raha (sirf zeros)` = **teri galti nahi hai**,
+> audio pipeline ka issue hai. Zor se bolne se kuch nahi hoga.
+
+#### 🤖 Whisper ne kuch aisa suna jo tune bola hi nahi?
+
+Whisper YouTube captions pe train hai. Mushkil audio pe wo apni
+**training data se phrases nikaal deta hai** — audio se nahi:
+
+```
+tu bola : "paytm kholo"
+suna    : "So, you know, it's a YouTube story."
+```
+
+Ye **BUG#23** tha. Khatra samajh: us text mein "YouTube" hai, to agent
+**sach mein YouTube khol deta** — jabki tune paytm maanga tha.
+
+Ab aise phrases reject ho jaate hain aur "dobara bol" aata hai. Galat
+kaam karne se accha hai.
+
+`--stt-tune` chala ke dekh ki teri awaaz pe kaunsi setting best hai —
+wo `logprob` aur `no_speech` bhi dikhata hai (Whisper ko khud kitna
+bharosa tha):
+
+```bash
+python hardware_check.py --stt-tune
+```
+
+**Ctrl+C mat dabana** — 3 setting try hoti hain, ~30 second lagta hai.
 
 > **Wo aakhri wala khaas hai.** Whisper `[-1, 1]` range maangta hai, mic
 > `int16` (0-32767) deta hai. Divide by 32768 zaroori hai. Code mein hai,

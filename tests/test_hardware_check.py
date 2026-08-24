@@ -1058,3 +1058,269 @@ class NextBiggerModel(SaarthiTestCase):
         with captured_stdout():
             spec.loader.exec_module(module)
         return module
+
+
+
+class StreamConfigScan(SaarthiTestCase):
+    """
+    `--mic-stream` — BUG#22 ka diagnostic.
+
+    User ki machine pe sd.rec chalta tha par blocking stream.read()
+    sirf zeros deta tha. Kaunsa raasta chalega ye code padh ke pata
+    nahi chalta — PortAudio ka backend (MME / WASAPI / WDM-KS) har
+    machine pe alag behave karta hai. Isliye MEASURE karte hain.
+    """
+
+    def load_module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "hardware_check", ROOT / "hardware_check.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        with captured_stdout():
+            spec.loader.exec_module(module)
+        return module
+
+    # ------------------------------------------------------------------
+
+    def test_mic_stream_flag_wire_hua_hai(self):
+        source = (ROOT / "hardware_check.py").read_text(encoding="utf-8")
+        self.assertIn('"--mic-stream"', source)
+        self.assertIn("scan_stream_configs()", source)
+        self.assertTrue(hasattr(self.load_module(), "scan_stream_configs"))
+
+    def test_peak_int16_scale_pe_aata_hai(self):
+        module = self.load_module()
+        self.assertEqual(module._probe_peak([100, -5000, 20], "int16"), 5000)
+
+    def test_float32_peak_int16_scale_pe_convert_hota_hai(self):
+        """
+        ⚠️ YE EK ASLI TRAP HAI.
+
+        float32 stream -1.0..1.0 deta hai, int16 stream 0..32767. Bina
+        scale kiye float32 ka peak hamesha 1 se kam aata — aur hamara
+        "300 se kam = silence" check usse SILENT bata deta. Ek chalne
+        wala config "fail" dikhta.
+        """
+        module = self.load_module()
+
+        # 0.5 float32 == 16384 int16
+        self.assertEqual(module._probe_peak([0.1, -0.5, 0.02], "float32"), 16384)
+
+        # Aur ye 300 ke threshold ke UPAR hona chahiye (silence nahi)
+        loud = module._probe_peak([0.4], "float32")
+        self.assertGreater(loud, 300, "chalta hua float32 config silent dikhega")
+
+    def test_khali_aur_none_pe_zero(self):
+        module = self.load_module()
+        for value in (None, [], ()):
+            self.assertEqual(module._probe_peak(value, "int16"), 0)
+
+    def test_probe_sounddevice_ke_bina_crash_nahi_karta(self):
+        """
+        Har probe ka fail hona NORMAL hai — yahi to measure kar rahe
+        hain. Ek probe crash kar de to poora scan ruk jaayega aur baaki
+        config kabhi try nahi honge.
+        """
+        from saarthi.voice import AudioConfig
+
+        module = self.load_module()
+        config = AudioConfig()
+
+        for probe in (module._probe_stream, module._probe_sd_rec):
+            peak, error = probe(None, config)
+            self.assertEqual(peak, 0)
+            self.assertIsInstance(error, str)
+
+    def test_scan_default_raaste_ko_alag_se_check_karta_hai(self):
+        """
+        Asli sawaal ye hai: HAMARA default raasta chala ya nahi. Sirf
+        "kuch chal gaya" kaafi nahi.
+        """
+        import inspect
+
+        module = self.load_module()
+        source = inspect.getsource(module.scan_stream_configs)
+
+        self.assertIn("default_ok", source)
+        self.assertIn("SAARTHI_MIC_BLOCKSIZE", source, "exact .env line nahi deta")
+        self.assertIn("SAARTHI_MIC_LATENCY", source)
+        # Blocking read bhi test hona chahiye — wahi bug wala raasta hai
+        self.assertIn("callback_mode=False", source)
+
+
+class StreamTuningConfig(SaarthiTestCase):
+    """
+    `SAARTHI_MIC_BLOCKSIZE` / `SAARTHI_MIC_LATENCY` — BUG#22 ke knob.
+
+    `--mic-stream` measure karke exact line batata hai; ye knob usse
+    apply karne ke liye hain. Knob ke bina diagnostic bekaar hai —
+    user ko pata chal jaayega kya chalega par lagaa nahi payega.
+    """
+
+    def test_blocksize_env_se_aata_hai(self):
+        from saarthi.voice import AudioConfig
+
+        with clean_env(SAARTHI_MIC_BLOCKSIZE="0"):
+            self.assertEqual(AudioConfig.from_env().blocksize, 0)
+        with clean_env(SAARTHI_MIC_BLOCKSIZE="1024"):
+            self.assertEqual(AudioConfig.from_env().blocksize, 1024)
+
+    def test_latency_env_se_aata_hai(self):
+        from saarthi.voice import AudioConfig
+
+        with clean_env(SAARTHI_MIC_LATENCY="high"):
+            self.assertEqual(AudioConfig.from_env().latency, "high")
+        with clean_env(SAARTHI_MIC_LATENCY="LOW"):
+            self.assertEqual(AudioConfig.from_env().latency, "low")
+
+    def test_bakwaas_value_ignore_hoti_hai(self):
+        """Galat value pe crash nahi — default pe raho (BUG#12 ka sabak)."""
+        from saarthi.voice import AudioConfig
+
+        for junk in ("bakwaas", "-5", "", "3.5"):
+            with clean_env(SAARTHI_MIC_BLOCKSIZE=junk):
+                blocksize = AudioConfig.from_env().blocksize
+                self.assertTrue(
+                    blocksize is None or blocksize >= 0,
+                    f"'{junk}' se galat blocksize bana: {blocksize}",
+                )
+        for junk in ("bakwaas", "medium", "0"):
+            with clean_env(SAARTHI_MIC_LATENCY=junk):
+                self.assertIsNone(AudioConfig.from_env().latency)
+
+    def test_stream_blocksize_property(self):
+        from saarthi.voice import AudioConfig
+
+        config = AudioConfig()
+        self.assertEqual(
+            config.stream_blocksize, config.chunk_samples,
+            "default pe hamara chunk size use hona chahiye",
+        )
+
+        config.blocksize = 0
+        self.assertEqual(config.stream_blocksize, 0, "0 = PortAudio decide kare")
+
+        config.blocksize = 1024
+        self.assertEqual(config.stream_blocksize, 1024)
+
+    def test_record_until_silence_config_use_karta_hai(self):
+        """
+        Knob ka asar HONA chahiye. `.env` mein set ho par stream tak na
+        pahunche — ye BUG#11 ka class hai (setting thi, code mein nahi).
+        """
+        import inspect
+
+        from saarthi.voice.audio import Recorder
+
+        source = inspect.getsource(Recorder.record_until_silence)
+        self.assertIn("stream_blocksize", source, "blocksize knob wire nahi hua")
+        self.assertIn("latency", source, "latency knob wire nahi hua")
+
+    def test_latency_sirf_set_hone_pe_bheja_jaata_hai(self):
+        """
+        `latency=None` bhejna PortAudio ke default se ALAG hota hai.
+        Isliye set na ho to key hi nahi jaani chahiye.
+        """
+        import inspect
+
+        from saarthi.voice.audio import Recorder
+
+        source = inspect.getsource(Recorder.record_until_silence)
+        self.assertIn("if self.config.latency:", source)
+
+
+
+class SttTuneDiagnosticGaps(SaarthiTestCase):
+    """
+    BUG#24 — `--stt-tune` ki output se diagnosis nahi ho pa raha tha.
+
+    User ne output bheja:
+
+        [INFO] Abhi ki language setting: en
+        language=en    score 23%   "So, you know, it's a YouTube story."
+        Rok diya.
+
+    TEEN cheezein missing thi, aur teeno ne diagnosis slow kar diya:
+
+    1. BIASING setting print hi nahi hoti thi. Main bata nahi paya ki
+       ye hallucination biasing ki wajah se hai (BUG#19) ya Whisper ka
+       apna behaviour (BUG#23). Ek missing INFO line = ek pura round.
+
+    2. CONFIDENCE (logprob / no_speech_prob) nahi dikhta tha. Score 23%
+       to dikha, par Whisper ko KHUD pata tha ya nahi — ye nahi.
+
+    3. PROGRESS nahi dikhta tha. 3 variants hote hain, har ek 5-15
+       second. User ne pehle ke baad Ctrl+C daba diya ("Rok diya.") —
+       usko laga atak gaya. `hi` aur `auto` kabhi try hi nahi hue,
+       jabki asli jawab wahan ho sakta tha.
+    """
+
+    def load_module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "hardware_check", ROOT / "hardware_check.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        with captured_stdout():
+            spec.loader.exec_module(module)
+        return module
+
+    def scan_stt_source(self):
+        import inspect
+
+        return inspect.getsource(self.load_module().scan_stt)
+
+    def test_bug24_biasing_setting_print_hoti_hai(self):
+        """
+        ⚠️ Pehle ye test sirf `"config.biasing" in source` check karta
+        tha. Maine print line hata ke verify kiya — test PASS HO GAYA,
+        kyunki `if config.biasing != "off":` wali doosri line bachi thi.
+        Galat wajah se pass hone wala test bekaar hai.
+
+        Ab wo EXACT label check karte hain jo user ki output mein aana
+        chahiye.
+        """
+        source = self.scan_stt_source()
+        self.assertIn(
+            "[INFO] Biasing:", source,
+            "biasing print nahi hoti — hallucination ki wajah pata nahi chalegi",
+        )
+
+    def test_bug24_per_variant_confidence_dikhti_hai(self):
+        source = self.scan_stt_source()
+        self.assertIn("avg_logprob", source, "logprob nahi dikhta")
+        self.assertIn("no_speech_prob", source, "no_speech_prob nahi dikhta")
+
+    def test_bug24_progress_counter_hai(self):
+        """
+        `[1/3]` transcribe se PEHLE print hona chahiye, baad mein nahi.
+        Warna 15 second screen khali rehti hai aur user Ctrl+C dabata hai.
+        """
+        source = self.scan_stt_source()
+
+        self.assertIn("index}/{total", source, "progress counter nahi hai")
+        self.assertIn("chal raha hai...", source, "pehle se message nahi deta")
+
+        # Counter wali line `transcribe` call se PEHLE aani chahiye
+        progress_at = source.index("chal raha hai...")
+        transcribe_at = source.index("stt.transcribe(samples")
+        self.assertLess(
+            progress_at, transcribe_at,
+            "progress transcribe ke BAAD print ho raha hai — us 15 second "
+            "mein screen khali rahegi",
+        )
+
+    def test_bug24_kitna_time_lagega_pehle_batata_hai(self):
+        source = self.scan_stt_source()
+        self.assertIn("Ctrl+C mat dabana", source)
+
+    def test_bug24_reject_reason_dikhta_hai(self):
+        """
+        Hallucination reject ho (BUG#23) to WAJAH dikhni chahiye, warna
+        user ko lagta hai tool ne kuch kiya hi nahi.
+        """
+        source = self.scan_stt_source()
+        self.assertIn("reject_reason", source)

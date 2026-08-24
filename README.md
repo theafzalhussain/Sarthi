@@ -74,7 +74,7 @@ cp .env.example .env
 python run_tests.py
 ```
 
-326 tests, koi extra install nahi chahiye. Sab pass hone chahiye.
+357 tests, koi extra install nahi chahiye. Sab pass hone chahiye.
 Kuch fail ho to **pehle wahi theek kar**.
 
 ### 4. Chala
@@ -226,7 +226,7 @@ Risky kaam pe bolke confirmation maangta hai:
   hat jaata hai, rate-limit wala cooldown pe
 - **Professional English interface, par baat teri bhasha mein** — English
   mein pucho English mein jawab, Hinglish mein pucho Hinglish mein
-- **326 tests** — `python run_tests.py`
+- **357 tests** — `python run_tests.py`
 
 ### 🚧 Abhi nahi (roadmap pe hai)
 - **Standalone Android app** — abhi laptop ki zarurat hai (Phase 4)
@@ -273,7 +273,7 @@ saarthi/
 └── agent.py    Main loop
 cli.py              Text interface
 voice_cli.py        Voice interface
-run_tests.py        326 tests — koi install nahi chahiye
+run_tests.py        357 tests — koi install nahi chahiye
 hardware_check.py   Mic/speaker/phone diagnostic
 tests/              Test suite (8 bugs ka regression guard)
 ```
@@ -283,7 +283,7 @@ tests/              Test suite (8 bugs ka regression guard)
 ## Testing
 
 ```bash
-python run_tests.py              # sab — 326 tests, 0.1 second
+python run_tests.py              # sab — 357 tests, 0.1 second
 python run_tests.py known_bugs   # sirf bug regression tests
 ```
 
@@ -303,8 +303,15 @@ Fail hone pe seedha samajh aata hai ki kya toota.
 
 **Hardware test** (ye sirf tu kar sakta hai):
 ```bash
-python hardware_check.py
+python hardware_check.py                # sab kuch
+
+# Voice mein problem ho to — GUESS mat kar, MEASURE kar:
+python hardware_check.py --mic-scan     # kaunsa mic sach mein sunta hai
+python hardware_check.py --stt-tune     # galat suna? best Whisper setting
+python hardware_check.py --mic-live     # "kuch sunai nahi diya" aata ho to
+python hardware_check.py --mic-stream   # mic se sirf 0 aa raha ho to
 ```
+Detail: **[HARDWARE_TEST.md](docs/HARDWARE_TEST.md)**
 
 **Docs:**
 **[UPDATE.md](docs/UPDATE.md) — 👈 `git pull` kaam nahi kar raha? YE padho** ·

@@ -278,6 +278,21 @@ class VoiceSession:
         if audio is None:
             if status.state == ListenState.TIMEOUT:
                 self.on_event("quiet", "kuch sunai nahi diya")
+
+            # BUG#22 — ye TIMEOUT se ALAG hai aur farq batana zaroori hai.
+            #
+            # NO_AUDIO matlab mic stream ne sirf zeros bheje. User ki
+            # awaaz ki koi galti nahi hai. Pehle usko bhi "kuch sunai
+            # nahi diya" milta tha, to wo zor se bolta tha aur mic paas
+            # laata tha — bekaar, kyunki problem uske bolne mein nahi
+            # thi. Galat diagnosis dene se accha hai sach batao.
+            elif status.state == ListenState.NO_AUDIO:
+                self.on_event(
+                    "error",
+                    "Mic se audio nahi aa raha (sirf zeros) — teri awaaz "
+                    "ki galti nahi hai, audio pipeline ka issue hai.\n"
+                    "    Ye chala: python hardware_check.py --mic-stream",
+                )
             return None
 
         if status.state == ListenState.TOO_LONG:
