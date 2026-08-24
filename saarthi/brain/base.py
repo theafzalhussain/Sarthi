@@ -31,6 +31,21 @@ class LLMProvider(ABC):
     def supports_vision(self) -> bool:
         return self.config.supports_vision
 
+    @property
+    def supports_tools(self) -> bool:
+        """
+        Tool calling kar sakta hai?
+
+        SAARTHI ke liye ye sabse zaroori capability hai — bina tools
+        ke agent baat kar sakta hai par KAAM nahi kar sakta.
+        """
+        return getattr(self.config, "supports_tools", True)
+
+    @property
+    def extra_body(self) -> dict:
+        """Provider-specific extra payload (reasoning on/off waghairah)."""
+        return getattr(self.config, "extra_body", None) or {}
+
     async def list_models(self) -> list[str]:
         """
         Is provider pe kaunse models available hain — LIVE pata karo.

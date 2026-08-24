@@ -84,6 +84,16 @@ class Brain:
         """Screenshot samajh sakta hai?"""
         return any(p.supports_vision for p in self.providers)
 
+    @property
+    def has_tools(self) -> bool:
+        """
+        Koi provider tools chala sakta hai?
+
+        Ye check zaroori hai — bina tool calling ke SAARTHI sirf
+        chatbot hai, agent nahi.
+        """
+        return any(p.supports_tools for p in self.providers)
+
     def status(self) -> str:
         """Human-readable status — CLI mein dikhane ke liye."""
         if not self.providers:
@@ -92,8 +102,13 @@ class Brain:
         lines = []
         for i, p in enumerate(self.providers):
             tag = "primary" if i == 0 else "fallback"
-            eye = " [aankh: screenshot dekh sakta hai]" if p.supports_vision else ""
-            lines.append(f"  {p.name:<12} {p.model:<40} ({tag}){eye}")
+            marks = []
+            if p.supports_vision:
+                marks.append("aankh: screenshot dekh sakta hai")
+            if not p.supports_tools:
+                marks.append("tools NAHI — sirf baat kar sakta hai")
+            extra = f" [{'; '.join(marks)}]" if marks else ""
+            lines.append(f"  {p.name:<12} {p.model:<40} ({tag}){extra}")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -141,6 +156,23 @@ class Brain:
             vision_only = [p for p in candidates if p.supports_vision]
             if vision_only:
                 candidates = vision_only
+
+        # Tools chahiye? To pehle un providers ko try karo jo tools
+        # SUPPORT karte hain.
+        #
+        # Kyun ye zaroori hai: kuch models (jaise diffusion wale) tools
+        # ko chup-chaap IGNORE kar dete hain. Phir wo bas text bhej dete
+        # hain, agent ka loop khatam ho jaata hai, aur user ko lagta hai
+        # "agent ne kaam kiya hi nahi". Silent failure sabse buri cheez
+        # hai — isliye aise providers ko peeche dhakel dete hain.
+        #
+        # Poora HATA nahi rahe — agar tool wale saare fail ho jaayein to
+        # kuch jawab dena chup rehne se behtar hai.
+        if tools:
+            with_tools = [p for p in candidates if p.supports_tools]
+            without_tools = [p for p in candidates if not p.supports_tools]
+            if with_tools:
+                candidates = with_tools + without_tools
 
         errors: list[str] = []
 

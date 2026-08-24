@@ -57,7 +57,38 @@ DEFAULT_MODELS: dict[str, str] = {
     # GLM-5.2 sab chal jaate hain. Model select karna chahiye to
     # .env mein BLUESMINDS_MODEL set kar.
     "bluesminds": "gpt-4o",
+
+    # ------------------------------------------------------------------
+    #  Neeche ke teeno bhi NVIDIA ke SAME endpoint pe chalte hain
+    #  (integrate.api.nvidia.com) aur SAME NVIDIA_API_KEY use karte
+    #  hain. Alag "provider" isliye banaye hain taaki:
+    #    - ek model 404 de to agla automatic try ho
+    #    - user SAARTHI_PROVIDER_ORDER se apna pasandeeda model
+    #      pehle rakh sake
+    #    - /models sabke liye alag se kaam kare
+    # ------------------------------------------------------------------
+
+    # DeepSeek V4 Pro — 1.6T total / 49B active MoE, 1M token context.
+    # Reasoning + coding + AGENTIC kaam ke liye banaya gaya hai, tool
+    # calling support karta hai. Sabse smart option.
+    "deepseek": "deepseek-ai/deepseek-v4-pro",
+
+    # Meta Muse Glimmer 30B — multimodal (text + IMAGE), NATIVE tool
+    # calling, reasoning alag field mein aata hai. 131K context.
+    # Ye SAARTHI ke liye khaas accha hai: screenshot DEKH sakta hai
+    # AUR tools bhi chala sakta hai — Gemini ka behtar backup.
+    "muse": "meta/muse-glimmer-30b",
+
+    # Google DiffusionGemma 26B — block-diffusion model, 262K context,
+    # text + image + video input.
+    # DHYAN: ye diffusion model hai, iska tool calling bharosemand
+    # nahi hai. Isliye default mein tools OFF hain (neeche dekh).
+    "gemma": "google/diffusiongemma-26b-a4b-it",
 }
+
+
+# Kaunse providers NVIDIA ke endpoint + NVIDIA_API_KEY share karte hain
+NVIDIA_HOSTED: tuple = ("nvidia", "deepseek", "muse", "gemma")
 
 
 # ======================================================================
@@ -75,8 +106,19 @@ DEFAULT_MODELS: dict[str, str] = {
 #  Badalna hai? .env mein: SAARTHI_PROVIDER_ORDER=nvidia,groq,gemini
 # ======================================================================
 
+#  Naye models kahan fit hote hain:
+#    deepseek -> nemotron ke baad. Sabse smart hai par bada/dheema hai.
+#    muse     -> vision + tools dono, isliye gemini se PEHLE. Screenshot
+#                wala kaam isko milega, aur ye tools bhi chala sakta hai
+#                (Gemini se ek step bachta hai).
+#    gemma    -> SABSE AAKHIR, kyunki tool calling bharosemand nahi hai.
+#                Vision aur simple sawaal ke liye theek hai.
+#
+#  Dhyan: nvidia/deepseek/muse/gemma SAARE ek hi NVIDIA key pe chalte
+#  hain. Isliye groq (alag key) pehle rakha hai — load bant jaata hai.
 DEFAULT_PROVIDER_ORDER: list[str] = [
-    "groq", "nvidia", "bluesminds", "openrouter", "gemini",
+    "groq", "nvidia", "deepseek", "muse",
+    "bluesminds", "openrouter", "gemini", "gemma",
 ]
 
 
@@ -125,7 +167,26 @@ class ProviderConfig:
     name: str
     api_key: str | None
     model: str
+
+    # Screenshot dekh sakta hai?
     supports_vision: bool = False
+
+    # TOOL CALLING kar sakta hai?
+    #
+    # Ye SAARTHI ke liye sabse zaroori capability hai — agent ka pura
+    # kaam tools se hota hai (app kholo, tap karo, search karo).
+    # Jo model tools support nahi karta wo sirf baat kar sakta hai,
+    # KAAM nahi kar sakta.
+    #
+    # Isliye Brain aise providers ko tool wale kaam ke liye SKIP kar
+    # deta hai. Wo phir bhi kaam ke hain — vision aur simple sawaal
+    # ke liye.
+    supports_tools: bool = True
+
+    # Provider-specific extra payload (NVIDIA ke reasoning models ko
+    # `chat_template_kwargs` chahiye hota hai thinking on/off karne ke
+    # liye). Khali dict = kuch extra nahi bhejna.
+    extra_body: dict = field(default_factory=dict)
 
     @property
     def is_available(self) -> bool:
@@ -187,6 +248,11 @@ class Settings:
     @classmethod
     def load(cls) -> "Settings":
         """Environment se settings banao."""
+        # NVIDIA ki ek key se 4 models chalte hain. NVIDIA_API_KEY
+        # standard hai, par NVIDIA_NIM_API_KEY bhi kai jagah use hoti
+        # hai — dono support kar lete hain.
+        nvidia_key = os.getenv("NVIDIA_API_KEY") or os.getenv("NVIDIA_NIM_API_KEY")
+
         providers = [
             ProviderConfig(
                 name="groq",
@@ -210,12 +276,43 @@ class Settings:
             ),
             ProviderConfig(
                 name="nvidia",
-                # NVIDIA_API_KEY standard hai, par NVIDIA_NIM_API_KEY
-                # bhi kai jagah use hoti hai — dono support kar lete hain
-                api_key=os.getenv("NVIDIA_API_KEY")
-                or os.getenv("NVIDIA_NIM_API_KEY"),
+                api_key=nvidia_key,
                 model=os.getenv("NVIDIA_MODEL", DEFAULT_MODELS["nvidia"]),
                 supports_vision=False,
+            ),
+            # --- NVIDIA ke same endpoint pe teen aur models ---
+            ProviderConfig(
+                name="deepseek",
+                # Apni alag key mil jaaye to DEEPSEEK_API_KEY set kar de,
+                # warna NVIDIA wali hi chalegi
+                api_key=os.getenv("DEEPSEEK_API_KEY") or nvidia_key,
+                model=os.getenv("DEEPSEEK_MODEL", DEFAULT_MODELS["deepseek"]),
+                supports_vision=False,
+                supports_tools=_env_bool("DEEPSEEK_TOOLS", True),
+                # Thinking OFF — warna reasoning ka pura chain reply mein
+                # aa jaata hai. Free tier pe wo tokens barbaad hain, aur
+                # user ko saaf jawab chahiye, model ki bakbak nahi.
+                extra_body={"chat_template_kwargs": {"thinking": False}},
+            ),
+            ProviderConfig(
+                name="muse",
+                api_key=os.getenv("MUSE_API_KEY") or nvidia_key,
+                model=os.getenv("MUSE_MODEL", DEFAULT_MODELS["muse"]),
+                # Multimodal — screenshot dekh sakta hai
+                supports_vision=_env_bool("MUSE_VISION", True),
+                # Native tool calling
+                supports_tools=_env_bool("MUSE_TOOLS", True),
+            ),
+            ProviderConfig(
+                name="gemma",
+                api_key=os.getenv("GEMMA_API_KEY") or nvidia_key,
+                model=os.getenv("GEMMA_MODEL", DEFAULT_MODELS["gemma"]),
+                # Text + image + video input leta hai
+                supports_vision=_env_bool("GEMMA_VISION", True),
+                # DEFAULT OFF — diffusion model hai, tool calling verify
+                # nahi hua. Tere paas chal jaaye to .env mein
+                # GEMMA_TOOLS=true kar de.
+                supports_tools=_env_bool("GEMMA_TOOLS", False),
             ),
             ProviderConfig(
                 name="bluesminds",
@@ -283,11 +380,15 @@ class Settings:
             "Koi API key nahi mili bhai!\n\n"
             "  1. cp .env.example .env       (Windows: Copy-Item .env.example .env)\n"
             "  2. Kam se kam EK free key le:\n"
-            "       GROQ    -> https://console.groq.com          (sabse tez)\n"
-            "       NVIDIA  -> https://build.nvidia.com          (Nemotron Ultra)\n"
+            "       NVIDIA  -> https://build.nvidia.com           (BEST DEAL —\n"
+            "                  ek key se 4 models: nemotron, deepseek v4 pro,\n"
+            "                  muse glimmer, diffusiongemma)\n"
+            "       GROQ    -> https://console.groq.com           (sabse tez)\n"
             "       GEMINI  -> https://aistudio.google.com/apikey (screenshot ke liye)\n"
             "  3. .env file mein paste kar de\n\n"
-            "Sab free hain, credit card ki zarurat nahi."
+            "Sab free hain, credit card ki zarurat nahi.\n"
+            "Salah: NVIDIA + GROQ dono le le — alag-alag limits hain,\n"
+            "ek khatam ho to doosra chalta rahega."
         )
 
 

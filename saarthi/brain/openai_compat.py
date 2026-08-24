@@ -26,13 +26,25 @@ from .types import BrainError, LLMResponse, Message, Role, ToolCall, ToolSchema
 #
 # Naya OpenAI-compatible provider add karna hai? Bas yahan ek line.
 # Koi naya class likhne ki zarurat nahi.
+# NVIDIA NIM ka endpoint — free tier, key build.nvidia.com se
+# (nvapi- se shuru hoti hai). Ek hi endpoint pe NVIDIA ke saare
+# hosted models chalte hain, sirf `model` field badalta hai.
+_NVIDIA_NIM = "https://integrate.api.nvidia.com/v1"
+
 BASE_URLS: dict[str, str] = {
     "groq": "https://api.groq.com/openai/v1",
     "openrouter": "https://openrouter.ai/api/v1",
-    # NVIDIA NIM — free tier, key build.nvidia.com se (nvapi- se shuru hoti hai)
-    "nvidia": "https://integrate.api.nvidia.com/v1",
     # Bluesminds — multi-model gateway, 200+ models, OpenAI-compatible
     "bluesminds": "https://api.bluesminds.com/v1",
+
+    # --- NVIDIA NIM pe hosted models ---
+    # Ye chaar "providers" ek hi URL aur ek hi NVIDIA_API_KEY use karte
+    # hain. Alag entry isliye hai ki har model ka apna fallback slot
+    # mile aur user order badal sake.
+    "nvidia": _NVIDIA_NIM,     # nemotron       — smart, agentic
+    "deepseek": _NVIDIA_NIM,   # deepseek v4 pro — sabse smart, 1M ctx
+    "muse": _NVIDIA_NIM,       # meta muse glimmer — vision + tools
+    "gemma": _NVIDIA_NIM,      # google diffusiongemma — vision
 }
 
 
@@ -187,6 +199,17 @@ class OpenAICompatProvider(LLMProvider):
             payload["tools"] = [t.to_openai_format() for t in tools]
             payload["tool_choice"] = "auto"
 
+        # Provider-specific extra fields.
+        #
+        # NVIDIA ke reasoning models (deepseek v4) `chat_template_kwargs`
+        # se thinking on/off karte hain. Iske bina pura chain-of-thought
+        # reply mein aa jaata hai — free tier pe tokens barbaad, aur user
+        # ko model ki bakbak dikhti hai.
+        #
+        # `payload` ke apne fields override nahi karte — safety.
+        for key, value in self.extra_body.items():
+            payload.setdefault(key, value)
+
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
@@ -242,8 +265,22 @@ class OpenAICompatProvider(LLMProvider):
         message = choices[0].get("message", {})
         usage = data.get("usage", {})
 
+        # Reasoning models (deepseek v4, muse glimmer) apna soch-vichaar
+        # ALAG field mein bhejte hain. Kabhi-kabhi `content` khali aata
+        # hai aur asli jawab `reasoning_content` mein hota hai.
+        #
+        # Iske bina user ko "(kuch jawab nahi aaya)" dikhta hai jabki
+        # model ne jawab diya tha.
+        text = (message.get("content") or "").strip()
+        if not text and not message.get("tool_calls"):
+            for fallback_key in ("reasoning_content", "reasoning"):
+                fallback = message.get(fallback_key)
+                if fallback and str(fallback).strip():
+                    text = str(fallback).strip()
+                    break
+
         return LLMResponse(
-            text=(message.get("content") or "").strip(),
+            text=text,
             tool_calls=self._parse_tool_calls(message.get("tool_calls") or []),
             provider=self.name,
             model=self.model,

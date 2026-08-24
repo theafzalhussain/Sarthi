@@ -539,16 +539,33 @@ class Ui:
         `brain.providers` mein sirf wahi hote hain jinke paas key hai,
         isliye sab "available" hain. Pehla primary, baaki fallback.
         """
+        yes = self.sym["ok"]
+        no = self.sym["fail"]
+        dash = "—" if self.unicode else "-"
+
         rows = []
         for index, provider in enumerate(brain.providers):
             primary = index == 0
+            has_tools = getattr(provider, "supports_tools", True)
+
+            # Tools SAARTHI ke liye zaroori hain — jo model support nahi
+            # karta usko saaf highlight karo, warna user sochta rahega
+            # "kaam kyun nahi ho raha"
+            tools_cell = (
+                f"[{OK}]{yes}[/]" if has_tools else f"[{WARN}]{no}[/]"
+            )
+            vision_cell = (
+                f"[{OK}]{yes}[/]" if provider.supports_vision else f"[{MUTED}]{dash}[/]"
+            )
+
             rows.append(
                 [
                     self.badge(primary),
                     provider.name,
                     provider.model,
                     "primary" if primary else "fallback",
-                    "screenshot" if provider.supports_vision else "text",
+                    tools_cell,
+                    vision_cell,
                 ]
             )
 
@@ -556,7 +573,7 @@ class Ui:
             self.muted("Koi provider nahi — .env mein API key daal.")
             return
 
-        self.table(["", "provider", "model", "role", "input"], rows)
+        self.table(["", "provider", "model", "role", "tools", "aankh"], rows)
 
     def devices_table(self, manager, status: dict, detailed: bool = False) -> list:
         """
