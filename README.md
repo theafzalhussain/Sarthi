@@ -307,7 +307,8 @@ python hardware_check.py
 ```
 
 **Docs:**
-**[HANDOFF.md](docs/HANDOFF.md) — 👈 naya developer/AI ho to YE pehle padho (pura context)** ·
+**[UPDATE.md](docs/UPDATE.md) — 👈 `git pull` kaam nahi kar raha? YE padho** ·
+**[HANDOFF.md](docs/HANDOFF.md) — naya developer/AI ho to YE pehle padho (pura context)** ·
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) — code kaise organize hai ·
 [HARDWARE_TEST.md](docs/HARDWARE_TEST.md) — mic/speaker/phone test ·
 [VOICE.md](docs/VOICE.md) — voice setup + Hinglish tuning ·
