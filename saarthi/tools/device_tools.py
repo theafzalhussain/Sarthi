@@ -476,6 +476,99 @@ class ShellTool(Tool):
         return await dev.run_shell(command)
 
 
+class ConnectPhoneWifiTool(Tool):
+    name = "phone_wifi_se_jodo"
+    description = (
+        "Phone ko WiFi se connect karo (USB cable ke bina). "
+        "PEHLE EK BAAR USB cable lagana zaroori hai — uske baad cable "
+        "nikaal sakte hain. Phone aur laptop same WiFi pe hone chahiye. "
+        "Phone ka IP chahiye (phone ke Settings > About > Status mein milta hai), "
+        "ya khali chhod de to khud dhoondhne ki koshish karunga."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "ip": {
+                "type": "string",
+                "description": "Phone ka IP, jaise '192.168.1.5'. Na pata ho to khali chhod",
+            },
+            "port": {
+                "type": "integer",
+                "description": "Port (default 5555)",
+            },
+        },
+    }
+    risky = True  # Network connection bana raha hai
+
+    async def run(
+        self,
+        ctx: ToolContext,
+        ip: str | None = None,
+        port: int = 5555,
+    ) -> ActionResult:
+        android = ctx.devices.get("android")
+        if android is None:
+            return ActionResult.failure("Android device register nahi hai")
+
+        adb = getattr(android, "_adb", None)
+        if adb is None:
+            return ActionResult.failure("Ye tool sirf ADB wale device pe chalta hai")
+
+        steps: list[str] = []
+
+        # IP na diya ho to phone se hi pucho (USB connected hona chahiye)
+        if not ip:
+            probe = await adb(
+                ["shell", "ip", "-f", "inet", "addr", "show", "wlan0"], timeout=15.0
+            )
+            if probe.ok and probe.output:
+                import re
+
+                match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", probe.output)
+                if match:
+                    ip = match.group(1)
+                    steps.append(f"Phone ka IP mila: {ip}")
+
+        if not ip:
+            return ActionResult.failure(
+                "Phone ka IP nahi mila.\n"
+                "  1. Pehle USB cable laga (ek baar zaroori hai)\n"
+                "  2. Ya phone mein dekh: Settings > About phone > Status > IP address\n"
+                "  3. Phir dobara bol: 'phone ko wifi se jodo, IP 192.168.1.5'"
+            )
+
+        # TCP mode ON karo (iske liye USB connection chahiye)
+        tcp = await adb(["tcpip", str(port)], timeout=20.0)
+        if not tcp.ok:
+            return ActionResult.failure(
+                f"TCP mode ON nahi hua: {tcp.error}\n"
+                f"  USB cable laga hua hai? 'adb devices' se check kar."
+            )
+        steps.append(f"TCP mode ON (port {port})")
+
+        # Connect karo
+        import asyncio as _asyncio
+
+        await _asyncio.sleep(1.5)
+        connect = await adb(["connect", f"{ip}:{port}"], timeout=25.0)
+
+        if not connect.ok or "unable" in (connect.output or "").lower():
+            return ActionResult.failure(
+                f"Connect nahi hua: {connect.output or connect.error}\n"
+                f"  Phone aur laptop SAME WiFi pe hain? Check kar."
+            )
+
+        steps.append(f"Connected: {ip}:{port}")
+        ctx.devices.invalidate_cache()
+
+        return ActionResult.success(
+            "Phone WiFi se jud gaya!\n  "
+            + "\n  ".join(steps)
+            + "\n\n  Ab USB cable nikaal sakta hai. "
+            "Phone restart hone pe dobara jodna padega."
+        )
+
+
 class NotificationsTool(Tool):
     name = "notifications_padho"
     description = "Phone ke notifications padho — kya aaya hai wo batao."
@@ -585,6 +678,7 @@ def device_tools() -> list[Tool]:
         ReadPageTool(),
         DeviceInfoTool(),
         NotificationsTool(),
+        ConnectPhoneWifiTool(),
         # Interaction
         TapTextTool(),
         TapTool(),
