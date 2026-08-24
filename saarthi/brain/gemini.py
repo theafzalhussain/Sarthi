@@ -206,7 +206,7 @@ class GeminiProvider(LLMProvider):
             "contents": contents,
             "generationConfig": {
                 "temperature": temperature,
-                "maxOutputTokens": max_tokens,
+                "maxOutputTokens": self.resolve_max_tokens(max_tokens),
             },
         }
 

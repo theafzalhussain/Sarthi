@@ -205,3 +205,126 @@ class BehaviourSettings(SaarthiTestCase):
     def test_koi_key_na_ho_to_has_any_provider_false(self):
         with clean_env():
             self.assertFalse(Settings.load().has_any_provider)
+
+
+
+class GenerationTuning(SaarthiTestCase):
+    """
+    BUG#11 — .env ki generation settings KUCH NAHI KARTI THI.
+
+    User ki .env mein ye tha:
+        NVIDIA_ENABLE_THINKING=true
+        NVIDIA_MAX_TOKENS=16384
+        NVIDIA_TOP_P=0.95
+
+    Teeno env vars CODE MEIN HI NAHI THE. User ko lagta raha ki setting
+    kaam kar rahi hai, jabki kuch nahi ho raha tha.
+
+    Aur `max_tokens` har jagah 2048 hardcoded tha — reasoning model ke
+    saath thinking ON ho to jawab BEECH MEIN KAT jaata hai, kyunki
+    reasoning tokens bhi usi budget se khaate hain.
+    """
+
+    def test_global_max_tokens_default_4096_hai(self):
+        with clean_env():
+            self.assertEqual(Settings.load().max_tokens, 4096)
+
+    def test_global_max_tokens_env_se_badalta_hai(self):
+        with clean_env(SAARTHI_MAX_TOKENS="8192"):
+            self.assertEqual(Settings.load().max_tokens, 8192)
+
+    def test_per_provider_max_tokens_chalta_hai(self):
+        with clean_env(NVIDIA_API_KEY="x", NVIDIA_MAX_TOKENS="16384"):
+            providers = {p.name: p for p in Settings.load().available_providers}
+        self.assertEqual(providers["nvidia"].max_tokens, 16384)
+        self.assertIsNone(providers["muse"].max_tokens, "muse ko nahi lagna chahiye")
+
+    def test_per_provider_top_p_chalta_hai(self):
+        with clean_env(NVIDIA_API_KEY="x", NVIDIA_TOP_P="0.95"):
+            providers = {p.name: p for p in Settings.load().available_providers}
+        self.assertEqual(providers["nvidia"].top_p, 0.95)
+        self.assertIsNone(providers["gemma"].top_p)
+
+    def test_enable_thinking_true_extra_body_mein_jaata_hai(self):
+        with clean_env(NVIDIA_API_KEY="x", NVIDIA_ENABLE_THINKING="true"):
+            providers = {p.name: p for p in Settings.load().available_providers}
+        self.assertEqual(
+            providers["nvidia"].extra_body,
+            {"chat_template_kwargs": {"thinking": True}},
+        )
+
+    def test_enable_thinking_deepseek_ka_default_override_kar_sakta_hai(self):
+        """DeepSeek ka default thinking=False hai — user on kar sake."""
+        with clean_env(NVIDIA_API_KEY="x"):
+            providers = {p.name: p for p in Settings.load().available_providers}
+        self.assertFalse(providers["deepseek"].extra_body["chat_template_kwargs"]["thinking"])
+
+        with clean_env(NVIDIA_API_KEY="x", DEEPSEEK_ENABLE_THINKING="true"):
+            providers = {p.name: p for p in Settings.load().available_providers}
+        self.assertTrue(providers["deepseek"].extra_body["chat_template_kwargs"]["thinking"])
+
+    def test_galat_value_pe_setting_ignore_hoti_hai_crash_nahi(self):
+        with clean_env(
+            NVIDIA_API_KEY="x", NVIDIA_MAX_TOKENS="bakwaas", NVIDIA_TOP_P="bakwaas"
+        ):
+            providers = {p.name: p for p in Settings.load().available_providers}
+        self.assertIsNone(providers["nvidia"].max_tokens)
+        self.assertIsNone(providers["nvidia"].top_p)
+
+    def test_set_na_ho_to_none_rehta_hai(self):
+        """None = provider ka apna default. Payload mein bhejte hi nahi."""
+        with clean_env(NVIDIA_API_KEY="x"):
+            providers = {p.name: p for p in Settings.load().available_providers}
+        self.assertIsNone(providers["nvidia"].max_tokens)
+        self.assertIsNone(providers["nvidia"].top_p)
+
+
+class DefaultDeviceValidation(SaarthiTestCase):
+    """
+    BUG#12 — SAARTHI_DEFAULT_DEVICE pe koi validation nahi thi.
+
+    User ne galti se `SAARTHI_DEFAULT_DEVICE=Realtek` likh diya tha
+    (mic ki setting samajh ke — asli setting SAARTHI_MIC_DEVICE hai).
+
+    Bina validation wo chup-chaap accept ho gaya. Ittefaq se desktop pe
+    gir jaata tha (kyunki DeviceManager.get() None pe pehla device leta
+    hai), par wo LUCK thi, design nahi.
+    """
+
+    def test_valid_device_chalta_hai(self):
+        for value in ("desktop", "android", "browser"):
+            with clean_env(SAARTHI_DEFAULT_DEVICE=value):
+                self.assertEqual(Settings.load().default_device, value)
+
+    def test_galat_value_desktop_pe_girti_hai(self):
+        for value in ("Realtek", "Microphone Array", "bakwaas", ""):
+            with clean_env(SAARTHI_DEFAULT_DEVICE=value):
+                self.assertEqual(
+                    Settings.load().default_device,
+                    "desktop",
+                    f"{value!r} pe desktop nahi mila",
+                )
+
+    def test_case_insensitive_hai(self):
+        with clean_env(SAARTHI_DEFAULT_DEVICE="ANDROID"):
+            self.assertEqual(Settings.load().default_device, "android")
+
+
+class InlineComments(SaarthiTestCase):
+    """
+    User ki .env mein inline comment tha:
+        SAARTHI_BROWSER_MODE=auto        # auto | agent | system
+
+    python-dotenv ise strip kar deta hai, par bharosa nahi karna
+    chahiye. `_env_choice` ki validation isliye bhi bachati hai — comment
+    strip na ho to value invalid ban jaayegi aur default pe gir jaayegi,
+    crash nahi hoga.
+    """
+
+    def test_comment_strip_na_ho_to_bhi_safe_default_milta_hai(self):
+        with clean_env(SAARTHI_BROWSER_MODE="auto        # auto | agent | system"):
+            self.assertEqual(Settings.load().browser_mode, "auto")
+
+    def test_valid_value_ke_saath_comment_bhi_chalta_hai(self):
+        with clean_env(SAARTHI_BROWSER_MODE="agent"):
+            self.assertEqual(Settings.load().browser_mode, "agent")

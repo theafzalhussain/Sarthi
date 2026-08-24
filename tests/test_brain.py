@@ -333,3 +333,69 @@ class ReasoningModels(SaarthiTestCase):
             response = run(brain.think([Message.user("hi")]))
 
         self.assertEqual(response.text, "jawab yahan hai")
+
+
+
+class GenerationSettingsInPayload(SaarthiTestCase):
+    """
+    BUG#11 ka doosra hissa — settings config mein pahunchna KAAFI NAHI,
+    unhe PAYLOAD mein bhi jaana chahiye.
+
+    Config test pass ho jaaye par payload mein na jaaye, to bug zinda
+    rehta hai. Isliye ye tests asli HTTP payload check karte hain.
+    """
+
+    def payload_for(self, **env):
+        env.setdefault("NVIDIA_API_KEY", "nvapi-fake")
+        with clean_env(**env):
+            brain = Brain(Settings.load())
+
+        fake = FakeHTTP(ok_response)
+        with fake.patch():
+            run(brain.think([Message.user("hi")]))
+        return fake.calls[0][1]
+
+    def test_max_tokens_payload_mein_jaata_hai(self):
+        payload = self.payload_for(
+            SAARTHI_PROVIDER_ORDER="nvidia", NVIDIA_MAX_TOKENS="16384"
+        )
+        self.assertEqual(payload["max_tokens"], 16384)
+
+    def test_top_p_payload_mein_jaata_hai(self):
+        payload = self.payload_for(
+            SAARTHI_PROVIDER_ORDER="nvidia", NVIDIA_TOP_P="0.95"
+        )
+        self.assertEqual(payload["top_p"], 0.95)
+
+    def test_top_p_set_na_ho_to_payload_mein_nahi_jaata(self):
+        """Provider ka apna default chalne do."""
+        payload = self.payload_for(SAARTHI_PROVIDER_ORDER="nvidia")
+        self.assertNotIn("top_p", payload)
+
+    def test_enable_thinking_payload_mein_jaata_hai(self):
+        payload = self.payload_for(
+            SAARTHI_PROVIDER_ORDER="nvidia", NVIDIA_ENABLE_THINKING="true"
+        )
+        self.assertEqual(payload.get("chat_template_kwargs"), {"thinking": True})
+
+    def test_global_max_tokens_default_ban_jaata_hai(self):
+        payload = self.payload_for(
+            SAARTHI_PROVIDER_ORDER="muse", SAARTHI_MAX_TOKENS="8192"
+        )
+        self.assertEqual(payload["max_tokens"], 8192)
+
+    def test_per_provider_global_ko_override_karta_hai(self):
+        payload = self.payload_for(
+            SAARTHI_PROVIDER_ORDER="nvidia",
+            SAARTHI_MAX_TOKENS="8192",
+            NVIDIA_MAX_TOKENS="16384",
+        )
+        self.assertEqual(payload["max_tokens"], 16384, "per-provider jeetna chahiye")
+
+    def test_purana_2048_hardcode_nahi_bacha(self):
+        """
+        Reasoning model ke saath 2048 bahut kam hai — jawab beech mein
+        kat jaata tha.
+        """
+        payload = self.payload_for(SAARTHI_PROVIDER_ORDER="deepseek")
+        self.assertGreaterEqual(payload["max_tokens"], 4096)

@@ -11,7 +11,7 @@
 >
 > **Ek line mein abhi ka haal:** 8 LLM providers, 34 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, aur **238 tests jo `python run_tests.py` se chalte hain.**
+> automation, aur **258 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -339,6 +339,8 @@ wapas nahi aata.
 | 7 | **Browser tab hijack** — agent user ka chalu tab chheen leta tha. Do jagah se: `webbrowser.open()` ka default `new=0` current tab REPLACE kar sakta tha, aur `launch_app()` hamesha `self._page` reuse karta tha | `new=2` + `autoraise=False`; naya tab per task; `_agent_url` se **user-takeover detection**; `MAX_TABS=10` cap; `bring_to_front()` kabhi nahi |
 | 9 | **Galat voice API naam** `hardware_check.py` mein — `Microphone` (asli `Recorder`), `engine.speak()` (asli `engine.say()`). Sandbox mein pakda nahi gaya kyunki mic nahi tha, wo code path chala hi nahi | Asli code padh ke sahi naam. Plus thin wrappers + AST test jo function-level imports bhi verify karta hai |
 | 10 | **Galat mic device** — Windows pe default "Microsoft Sound Mapper" (legacy MME) select hota tha, `peak` sirf 303 = silence. Whisper ko kuch sunai nahi deta tha. Asli wajah: `AudioConfig` mein device field HI NAHI THA, mic chunne ka koi tareeka nahi tha | `AudioConfig.device` + `from_env()` + `SAARTHI_MIC_DEVICE` (naam ya index se). Plus `--mic-scan` jo har mic try karke best batata hai, aur live level meter |
+| 11 | **`.env` ki generation settings KUCH NAHI KARTI THI** — user ne `NVIDIA_ENABLE_THINKING`, `NVIDIA_MAX_TOKENS`, `NVIDIA_TOP_P` likha tha, teeno code mein hi nahi the. Aur `max_tokens` har jagah 2048 hardcoded tha — reasoning model ke saath jawab beech mein kat jaata tha | `_provider_tuning()` — per-provider `{NAME}_MAX_TOKENS` / `_TOP_P` / `_ENABLE_THINKING`, plus global `SAARTHI_MAX_TOKENS` (default 2048 → 4096). Tests payload check karte hain, sirf config nahi |
+| 12 | **`SAARTHI_DEFAULT_DEVICE` pe validation nahi thi** — user ne `Realtek` likh diya (mic ki setting samajh ke). Chup-chaap accept ho gaya; ittefaq se desktop pe girta tha, par wo luck thi | `_env_choice` validation (`desktop`/`android`/`browser`) |
 | 8 | **`extract_amount()` substring** (BUG#1 ka same class) — money context `"rs"` SUBSTRING se check hota tha, to "yea**rs**", "fi**rs**t", "hou**rs**" amount de dete the | `\b` word boundaries + payment app naam explicit (`paytm`/`phonepe`/`upi`), kyunki `"pay"` substring hatane se wo miss ho rahe the |
 
 ### ⚠️ Jo galti MAINE (AI ne) ki thi — isse seekh
@@ -369,7 +371,7 @@ Ab rule #9 (`KAAM PURA KARO`) ulta hai — jab tak kaam ho na jaaye, rukna nahi.
 
 ## 11. TESTING STATUS — ye IMAANDAARI se padh
 
-### ✅ AB ASLI TEST SUITE HAI — 238 tests
+### ✅ AB ASLI TEST SUITE HAI — 258 tests
 
 ```bash
 python run_tests.py              # sab (0.1 second mein)
@@ -665,7 +667,7 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 | **Indian apps** | 110 |
 | **LLM providers** | **8** (chaar ek hi NVIDIA key pe) |
 | **ASR corrections** | 65 rules |
-| **Tests** | **238 pass** — `python run_tests.py` |
+| **Tests** | **258 pass** — `python run_tests.py` |
 | **Interface** | English (professional) |
 | **Agent ki baat** | User ki bhasha — `SAARTHI_LANGUAGE=auto` |
 | **Max steps** | 25 |

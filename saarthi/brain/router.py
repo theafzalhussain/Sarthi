@@ -199,7 +199,7 @@ class Brain:
         messages: list[Message],
         tools: list[ToolSchema] | None = None,
         temperature: float = 0.3,
-        max_tokens: int = 2048,
+        max_tokens: int | None = None,
         need_vision: bool = False,
     ) -> LLMResponse:
         """
@@ -218,6 +218,12 @@ class Brain:
         """
         if not self.providers:
             raise NoProviderError(self.settings.setup_help())
+
+        # Caller ne max_tokens na diya to global setting use karo
+        # (SAARTHI_MAX_TOKENS). Provider ka apna override iske BAAD
+        # lagta hai — resolve_max_tokens() mein.
+        if max_tokens is None:
+            max_tokens = getattr(self.settings, "max_tokens", 4096)
 
         # Kaunse providers use kar sakte hain
         candidates = self.providers

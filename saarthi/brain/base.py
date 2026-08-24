@@ -46,6 +46,24 @@ class LLMProvider(ABC):
         """Provider-specific extra payload (reasoning on/off waghairah)."""
         return getattr(self.config, "extra_body", None) or {}
 
+    def resolve_max_tokens(self, requested: int) -> int:
+        """
+        Is provider ka max_tokens.
+
+        `.env` mein `{NAME}_MAX_TOKENS` set ho to WO jeetta hai, warna
+        caller ka bheja hua use hota hai.
+
+        Ye reasoning models ke liye zaroori hai: thinking ON hone pe
+        reasoning tokens bhi isi budget se khaate hain, to chhota
+        budget jawab beech mein kaat deta hai.
+        """
+        own = getattr(self.config, "max_tokens", None)
+        return own if own else requested
+
+    def resolve_top_p(self):
+        """Is provider ka top_p (None = payload mein bhejo hi nahi)."""
+        return getattr(self.config, "top_p", None)
+
     async def list_models(self) -> list[str]:
         """
         Is provider pe kaunse models available hain — LIVE pata karo.

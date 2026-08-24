@@ -200,8 +200,13 @@ class OpenAICompatProvider(LLMProvider):
             "model": self.model,
             "messages": [self._convert_message(m) for m in messages],
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            # Provider ka apna max_tokens (.env se) jeetta hai
+            "max_tokens": self.resolve_max_tokens(max_tokens),
         }
+
+        top_p = self.resolve_top_p()
+        if top_p is not None:
+            payload["top_p"] = top_p
 
         if tools:
             payload["tools"] = [t.to_openai_format() for t in tools]

@@ -158,6 +158,80 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
+def _env_bool_or_none(key: str):
+    """
+    .env se true/false padho, PAR set na ho to None.
+
+    Tri-state chahiye hota hai: "true", "false", aur "user ne kuch
+    bola hi nahi". Teesre case mein hum provider ko field bhejte hi
+    nahi — uska apna default chalne dete hain.
+    """
+    raw = os.getenv(key)
+    if raw is None or not raw.strip():
+        return None
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on", "haan"}
+
+
+def _env_float_or_none(key: str):
+    """.env se decimal padho. Set na ho ya galat ho to None."""
+    raw = os.getenv(key)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _env_int_or_none(key: str):
+    """.env se number padho. Set na ho ya galat ho to None."""
+    raw = os.getenv(key)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _provider_tuning(name: str, base_extra: dict | None = None) -> dict:
+    """
+    Ek provider ke generation settings .env se padho.
+
+    Ye function isliye bana ki user ne apni .env mein ye likha tha:
+        NVIDIA_ENABLE_THINKING=true
+        NVIDIA_MAX_TOKENS=16384
+        NVIDIA_TOP_P=0.95
+
+    ...aur teeno KUCH NAHI KAR RAHE THE — code mein wo env vars hi
+    nahi the. User ko lagta raha ki setting kaam kar rahi hai.
+
+    Ab har provider ke liye ye chalte hain:
+        {NAME}_MAX_TOKENS        jawab ki max length
+        {NAME}_TOP_P             sampling
+        {NAME}_ENABLE_THINKING   reasoning on/off
+
+    Returns: {"max_tokens": ..., "top_p": ..., "extra_body": {...}}
+    Jo set nahi hai wo None — provider apna default use karega.
+    """
+    prefix = name.upper()
+    extra = dict(base_extra or {})
+
+    thinking = _env_bool_or_none(f"{prefix}_ENABLE_THINKING")
+    if thinking is not None:
+        # NVIDIA NIM ka format. Nemotron/DeepSeek dono isi se
+        # reasoning on/off karte hain.
+        kwargs = dict(extra.get("chat_template_kwargs") or {})
+        kwargs["thinking"] = thinking
+        extra["chat_template_kwargs"] = kwargs
+
+    return {
+        "max_tokens": _env_int_or_none(f"{prefix}_MAX_TOKENS"),
+        "top_p": _env_float_or_none(f"{prefix}_TOP_P"),
+        "extra_body": extra,
+    }
+
+
 def _env_choice(key: str, allowed: tuple, default: str) -> str:
     """
     .env se ek fixed choice padho.
@@ -198,6 +272,16 @@ class ProviderConfig:
     # liye). Khali dict = kuch extra nahi bhejna.
     extra_body: dict = field(default_factory=dict)
 
+    # --- Generation tuning (.env se, per-provider) ---
+    #
+    # None = is provider ka apna default use karo.
+    #
+    # max_tokens KHAAS ZAROORI hai reasoning models ke liye: thinking
+    # ON ho aur max_tokens chhota ho to jawab BEECH MEIN KAT jaata hai
+    # (reasoning tokens budget kha jaate hain).
+    max_tokens: int | None = None
+    top_p: float | None = None
+
     @property
     def is_available(self) -> bool:
         """Key hai ya nahi — yahi decide karta hai use kar sakte hain ya nahi."""
@@ -233,6 +317,14 @@ class Settings:
     # verify). 12 mein multi-part command ("gaana chala aur mausam bata")
     # beech mein atak jaati thi.
     max_steps: int = 25
+
+    # Jawab ki max length (global default).
+    #
+    # 2048 se 4096 kiya. Wajah: reasoning models (deepseek v4,
+    # nemotron) thinking ON hone pe reasoning tokens bhi isi budget se
+    # khaate hain — 2048 mein jawab BEECH MEIN KAT jaata tha.
+    # Per-provider override: NVIDIA_MAX_TOKENS, DEEPSEEK_MAX_TOKENS...
+    max_tokens: int = 4096
 
     # FULL ACCESS MODE — risky tools bina puche chalenge.
     #
@@ -299,12 +391,14 @@ class Settings:
                 api_key=os.getenv("GROQ_API_KEY"),
                 model=os.getenv("GROQ_MODEL", DEFAULT_MODELS["groq"]),
                 supports_vision=False,
+                **_provider_tuning("groq"),
             ),
             ProviderConfig(
                 name="gemini",
                 api_key=os.getenv("GEMINI_API_KEY"),
                 model=os.getenv("GEMINI_MODEL", DEFAULT_MODELS["gemini"]),
                 supports_vision=True,  # Screenshot dekh sakta hai
+                **_provider_tuning("gemini"),
             ),
             ProviderConfig(
                 name="openrouter",
@@ -313,12 +407,14 @@ class Settings:
                     "OPENROUTER_MODEL", DEFAULT_MODELS["openrouter"]
                 ),
                 supports_vision=False,
+                **_provider_tuning("openrouter"),
             ),
             ProviderConfig(
                 name="nvidia",
                 api_key=nvidia_key,
                 model=os.getenv("NVIDIA_MODEL", DEFAULT_MODELS["nvidia"]),
                 supports_vision=False,
+                **_provider_tuning("nvidia"),
             ),
             # --- NVIDIA ke same endpoint pe teen aur models ---
             ProviderConfig(
@@ -329,10 +425,13 @@ class Settings:
                 model=os.getenv("DEEPSEEK_MODEL", DEFAULT_MODELS["deepseek"]),
                 supports_vision=False,
                 supports_tools=_env_bool("DEEPSEEK_TOOLS", True),
-                # Thinking OFF — warna reasoning ka pura chain reply mein
-                # aa jaata hai. Free tier pe wo tokens barbaad hain, aur
-                # user ko saaf jawab chahiye, model ki bakbak nahi.
-                extra_body={"chat_template_kwargs": {"thinking": False}},
+                # Thinking default OFF — warna reasoning ka pura chain
+                # reply mein aa jaata hai. Free tier pe wo tokens
+                # barbaad hain, aur user ko saaf jawab chahiye.
+                # DEEPSEEK_ENABLE_THINKING=true se on kar sakta hai.
+                **_provider_tuning(
+                    "deepseek", {"chat_template_kwargs": {"thinking": False}}
+                ),
             ),
             ProviderConfig(
                 name="muse",
@@ -342,6 +441,7 @@ class Settings:
                 supports_vision=_env_bool("MUSE_VISION", True),
                 # Native tool calling
                 supports_tools=_env_bool("MUSE_TOOLS", True),
+                **_provider_tuning("muse"),
             ),
             ProviderConfig(
                 name="gemma",
@@ -353,6 +453,7 @@ class Settings:
                 # nahi hua. Tere paas chal jaaye to .env mein
                 # GEMMA_TOOLS=true kar de.
                 supports_tools=_env_bool("GEMMA_TOOLS", False),
+                **_provider_tuning("gemma"),
             ),
             ProviderConfig(
                 name="bluesminds",
@@ -361,6 +462,7 @@ class Settings:
                 # GPT-4o vision support karta hai — ye Gemini ka backup
                 # ban sakta hai screenshot dekhne mein
                 supports_vision="4o" in os.getenv("BLUESMINDS_MODEL", DEFAULT_MODELS["bluesminds"]),
+                **_provider_tuning("bluesminds"),
             ),
         ]
 
@@ -394,11 +496,20 @@ class Settings:
             confirm_risky=_env_bool("SAARTHI_CONFIRM_RISKY", True),
             auto_approve=_env_bool("SAARTHI_AUTO_APPROVE", False),
             max_steps=_env_int("SAARTHI_MAX_STEPS", 25),
+            max_tokens=_env_int("SAARTHI_MAX_TOKENS", 4096),
             order_is_explicit=order_is_explicit,
             order_missing=order_missing,
             debug=_env_bool("SAARTHI_DEBUG", False),
             adb_path=os.getenv("ADB_PATH", "adb"),
-            default_device=os.getenv("SAARTHI_DEFAULT_DEVICE", "desktop"),
+            # Validation zaroori hai: user ne galti se
+            # SAARTHI_DEFAULT_DEVICE=Realtek likh diya tha (wo mic ki
+            # setting samajh ke). Bina validation wo chup-chaap accept
+            # ho jaata tha aur ittefaq se desktop pe gir jaata tha.
+            default_device=_env_choice(
+                "SAARTHI_DEFAULT_DEVICE",
+                ("desktop", "android", "browser"),
+                "desktop",
+            ),
             browser_mode=_env_choice(
                 "SAARTHI_BROWSER_MODE", ("auto", "agent", "system"), "auto"
             ),
