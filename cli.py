@@ -60,23 +60,23 @@ async def ask_confirmation(action: str, details: dict) -> bool:
     NAHI. Chup-chaap kaam aage nahi badhta.
     """
     ui.blank()
-    ui.hint(format_confirmation(action, details), title="confirm karna hai")
+    ui.hint(format_confirmation(action, details), title="confirmation required")
 
-    prompt = "  " + ui.paint("haan / nahi", WARN, bold=True) + " " + ui.paint(
+    prompt = "  " + ui.paint("approve? y / n", WARN, bold=True) + " " + ui.paint(
         ui.sym["prompt"], WARN
     ) + " "
 
     try:
         answer = await asyncio.to_thread(input, prompt)
     except (EOFError, KeyboardInterrupt):
-        ui.error("cancel kar diya")
+        ui.error("Cancelled.")
         return False
 
     approved = is_affirmative(answer)
     if approved:
-        ui.success("theek hai, kar raha hun")
+        ui.success("Approved — continuing.")
     else:
-        ui.error("nahi kar raha")
+        ui.error("Denied — skipping this step.")
     ui.blank()
     return approved
 
@@ -130,10 +130,10 @@ async def show_startup(agent: Agent) -> None:
     # startup pe screen bharna nahi chahiye.
     if hints:
         missing = ", ".join(name for name, _ in hints)
-        ui.muted(f"{missing} abhi connected nahi — setup ke liye /devices")
+        ui.muted(f"Not connected: {missing}  —  run /devices for setup steps")
 
     if not agent.brain.has_vision:
-        ui.muted("Vision provider nahi — screenshot nahi dekh paunga (/models)")
+        ui.muted("No vision provider — screenshots cannot be analysed (/models)")
 
     # .env mein purana provider order pada hai?
     #
@@ -143,27 +143,29 @@ async def show_startup(agent: Agent) -> None:
     if settings.order_is_explicit and settings.order_missing:
         ui.blank()
         ui.hint(
-            ".env mein SAARTHI_PROVIDER_ORDER khud likha hua hai, aur usme\n"
-            f"ye providers nahi hain: {', '.join(settings.order_missing)}\n"
-            "Isliye wo sabse AAKHIR mein try honge — chahe wo smarter hon.\n\n"
-            "Best-first order chahiye to .env se SAARTHI_PROVIDER_ORDER wali\n"
-            "line HATA de (ya # laga de). Phir SAARTHI khud best model\n"
-            "pehle rakhega.",
-            title="dhyan de — provider order purana hai",
+            "Your .env sets SAARTHI_PROVIDER_ORDER manually, and these\n"
+            f"providers are missing from it: {', '.join(settings.order_missing)}\n"
+            "They will be tried LAST, even if they are the strongest models.\n\n"
+            "To get the best-first order, comment out (or delete) the\n"
+            "SAARTHI_PROVIDER_ORDER line in .env and restart.",
+            title="outdated provider order",
         )
 
     if settings.auto_approve:
         ui.hint(
-            "FULL ACCESS MODE ON hai — risky kaam bina puche honge.\n"
-            "(Hard blocks phir bhi lage hain: OTP/PIN/password type karna\n"
-            "aur rm -rf jaise commands kabhi nahi chalenge.)\n\n"
-            "Band karne ke liye: /auto",
-            title="full access",
+            "Risky actions will run WITHOUT asking you first.\n\n"
+            "Hard blocks still apply and cannot be bypassed:\n"
+            "  OTP / PIN / password / CVV entry\n"
+            "  rm -rf /, mkfs, fork bombs, curl | bash\n"
+            "  pressing a final payment button\n\n"
+            "Turn it off with /auto",
+            title="full access enabled",
         )
 
     ui.blank()
     ui.line(
-        f"  Ready hun bhai. Bol kya karna hai.   {ui.sym['bullet']}   /help se madad",
+        f"  Ready.   {ui.sym['bullet']}   Type a request in Hinglish or English"
+        f"   {ui.sym['bullet']}   /help for commands",
         OK,
     )
     ui.blank()
@@ -174,54 +176,66 @@ async def show_startup(agent: Agent) -> None:
 # ----------------------------------------------------------------------
 
 COMMANDS = [
-    ("/status", "brain, devices, memory, skills — sab ek jagah"),
-    ("/models", "kaunse LLM models available hain (LIVE check)"),
-    ("/tools", "saare tools ki list"),
-    ("/skills", "seekhi hui skills (Dikha Do Mode)"),
-    ("/devices", "connected devices + setup instructions"),
-    ("/memory", "yaad rakhi hui baatein"),
-    ("/browser", "browser kaise khulega — tab switch setting"),
-    ("/auto", "FULL ACCESS — risky kaam bina puche (hard blocks bache rahenge)"),
-    ("/retry", "hate hue providers ko dobara try karo"),
-    ("/verbose", "tool results dikhao ya chhupao"),
-    ("/reset", "current baat bhool jao (memory safe rahegi)"),
-    ("/help", "ye madad"),
-    ("/quit", "band karo"),
+    ("/status", "brain, devices, memory and skills in one view"),
+    ("/models", "list models available on your keys (live check)"),
+    ("/tools", "all available tools"),
+    ("/skills", "learned skills (Dikha Do Mode)"),
+    ("/devices", "connected devices and setup instructions"),
+    ("/memory", "everything the agent remembers about you"),
+    ("/browser", "how websites open — tab-safety setting"),
+    ("/auto", "full access: run risky actions without asking"),
+    ("/retry", "re-enable providers that were dropped"),
+    ("/verbose", "show or hide intermediate tool results"),
+    ("/reset", "clear the current conversation (memory is kept)"),
+    ("/help", "show this help"),
+    ("/quit", "exit"),
 ]
 
+# Interface English mein hai, par examples DONO bhasha mein hain —
+# user ko dikhna chahiye ki wo Hinglish mein bhi bol sakta hai.
 EXAMPLES = [
-    "youtube pe tum hi ho gaana chala do",
-    "mere phone me kya notifications hain",
-    "internet pe dhoondh IRCTC tatkal ka time",
-    "yaad rakh ki mummy ka number 98765xxxxx hai",
-    "laptop pe batao kitni disk space bachi hai",
+    ("youtube pe tum hi ho gaana chala do", "Hinglish"),
+    ("play Tere Bin on YouTube", "English"),
+    ("mere phone me kya notifications hain", "Hinglish"),
+    ("search for IRCTC tatkal booking time", "English"),
+    ("yaad rakh ki mummy ka number 98765xxxxx hai", "Hinglish"),
+    ("how much disk space is left on my laptop", "English"),
 ]
 
 
 def show_help() -> None:
-    """Madad — sections mein baanti hui."""
+    """Help screen, grouped into sections."""
     ui.blank()
-    ui.section("Kaise use kare")
-    ui.muted("Bas normal Hinglish mein bol. Koi syntax yaad karne ki zarurat nahi.")
+    ui.section("How to use")
+    ui.muted(
+        "Just type what you want in plain language. No syntax to remember."
+    )
+    ui.muted("Hinglish in, Hinglish out. English in, English out.")
     ui.blank()
-    for example in EXAMPLES:
-        ui.line(f'    {ui.sym["arrow"]}  "{example}"', TEXT)
+    ui.table(
+        ["example", "language"],
+        [[f'"{text}"', lang] for text, lang in EXAMPLES],
+    )
     ui.blank()
 
-    ui.section("Dikha Do Mode — naya kaam sikhana")
+    ui.section("Dikha Do Mode — teach a new task")
     ui.table(
-        ["bol", "kya hoga"],
+        ["say this", "what happens"],
         [
-            ['"dekh, ye kaam yaad kar le"', "recording ON"],
-            ["... phir steps batao ...", "agent har step yaad karta hai"],
-            ['"isko bijli ka bill bol de"', "skill save ho gayi"],
-            ['"bijli ka bill bhar de"', "agli baar khud ho jaayega"],
+            ['"dekh, ye kaam yaad kar le"', "recording starts"],
+            ["... then walk through the steps ...", "every step is remembered"],
+            ['"isko bijli ka bill bol de"', "saved as a named skill"],
+            ['"bijli ka bill bhar de"', "runs on its own next time"],
         ],
+    )
+    ui.muted(
+        "  Skills self-heal: if the app's UI changes, the agent finds the "
+        "new button and updates the skill."
     )
     ui.blank()
 
     ui.section("Commands")
-    ui.table(["command", "kaam"], [[c, d] for c, d in COMMANDS])
+    ui.table(["command", "description"], [[c, d] for c, d in COMMANDS])
     ui.blank()
 
 
@@ -247,7 +261,7 @@ def rank_model(model: str) -> int:
 async def show_models(agent: Agent) -> None:
     """LIVE model discovery — deprecated model ka ilaaj."""
     ui.blank()
-    ui.muted("Har provider se live pata kar raha hun (thoda time lagega)...")
+    ui.muted("Querying every provider — this takes a few seconds...")
     ui.blank()
 
     results = await agent.brain.discover_models()
@@ -265,7 +279,7 @@ async def show_models(agent: Agent) -> None:
             continue
 
         if not models:
-            ui.error("koi model nahi mila")
+            ui.error("No models returned.")
             ui.blank()
             continue
 
@@ -280,33 +294,33 @@ async def show_models(agent: Agent) -> None:
                 [
                     ui.badge(in_use),
                     model,
-                    "abhi yahi use ho raha" if in_use else "free / sasta",
+                    "currently in use" if in_use else "free / low cost",
                 ]
             )
 
         # Current model recommended list mein na ho to bhi dikhao —
         # user ko pata hona chahiye abhi kya chal raha hai
         if current in others:
-            rows.append([ui.badge(True), current, "abhi yahi use ho raha"])
+            rows.append([ui.badge(True), current, "currently in use"])
 
         if rows:
             ui.table(["", "model", "note"], rows)
 
         extra = []
         if len(recommended) > 15:
-            extra.append(f"{len(recommended) - 15} aur free models")
+            extra.append(f"{len(recommended) - 15} more free models")
         if others:
-            extra.append(f"{len(others)} baaki models (zyadatar paid)")
+            extra.append(f"{len(others)} other models (mostly paid)")
         if extra:
             ui.muted("  ... " + ", ".join(extra))
 
         ui.blank()
 
     ui.hint(
-        "Model badalna hai? .env mein set kar, phir SAARTHI restart kar:\n"
-        "    GROQ_MODEL=...      NVIDIA_MODEL=...\n"
-        "    GEMINI_MODEL=...    BLUESMINDS_MODEL=...",
-        title="model kaise badle",
+        "To switch models, set these in .env and restart:\n"
+        "    DEEPSEEK_MODEL=...   NVIDIA_MODEL=...   MUSE_MODEL=...\n"
+        "    GROQ_MODEL=...       GEMINI_MODEL=...   BLUESMINDS_MODEL=...",
+        title="changing models",
     )
 
 
@@ -326,29 +340,36 @@ async def show_status(agent: Agent) -> None:
     skill_stats = await agent.skills.stats()
 
     ui.section("Agent")
+    lang_note = {
+        "auto": "auto — mirrors whatever language you write in",
+        "hinglish": "hinglish (fixed)",
+        "english": "english (fixed)",
+        "hindi": "hindi (fixed)",
+    }.get(settings.language, settings.language)
+
     rows = [
         ["tools", str(len(agent.tools))],
         ["memory", f"{memory_stats['facts']} facts, {memory_stats['messages']} messages"],
         [
             "skills",
-            f"{skill_stats['skills']} seekhi "
-            f"({skill_stats['steps']} steps, {skill_stats['total_runs']} baar chali)",
+            f"{skill_stats['skills']} learned "
+            f"({skill_stats['steps']} steps, {skill_stats['total_runs']} runs)",
         ],
-        ["language", settings.language],
+        ["reply language", lang_note],
         [
-            "risky confirmation",
-            "ON" if settings.confirm_risky else "OFF  <-- khatarnak!",
+            "confirm risky actions",
+            "on" if settings.confirm_risky else "OFF  <-- unsafe",
         ],
         [
             "full access (/auto)",
-            "ON — bina puche karega" if settings.auto_approve else "OFF",
+            "ON — runs without asking" if settings.auto_approve else "off",
         ],
         ["browser mode", settings.browser_mode],
-        ["max steps", str(settings.max_steps)],
+        ["max steps per request", str(settings.max_steps)],
     ]
     if agent.recorder.recording:
         rows.append(
-            ["dikha do mode", f"ON ({agent.recorder.step_count} steps record hue)"]
+            ["dikha do mode", f"RECORDING ({agent.recorder.step_count} steps)"]
         )
     ui.table(["setting", "value"], rows)
     ui.blank()
@@ -365,7 +386,7 @@ async def show_devices(agent: Agent) -> None:
     ui.blank()
 
     for name, hint in hints:
-        ui.hint(hint, title=f"{name} connect kaise kare")
+        ui.hint(hint, title=f"how to connect {name}")
 
 
 def show_browser_info() -> None:
@@ -377,28 +398,28 @@ def show_browser_info() -> None:
         [
             ui.badge(settings.browser_mode == "agent"),
             "agent",
-            "SAARTHI ki apni alag window. Tere tabs kabhi nahi badlenge.",
+            "SAARTHI uses its own window. Your tabs are never touched.",
         ],
         [
             ui.badge(settings.browser_mode == "system"),
             "system",
-            "Tera normal browser. Naye tab mein khulega (focus nahi chheenta).",
+            "Your default browser, opened in a new tab without stealing focus.",
         ],
         [
             ui.badge(settings.browser_mode == "auto"),
             "auto",
-            "Playwright ho to agent, warna system.",
+            "Use the agent browser if Playwright is installed, else system.",
         ],
     ]
-    ui.table(["", "mode", "matlab"], modes)
+    ui.table(["", "mode", "behaviour"], modes)
     ui.blank()
     ui.hint(
-        f"Abhi: SAARTHI_BROWSER_MODE={settings.browser_mode}\n"
-        f"      SAARTHI_BROWSER_HEADLESS="
+        f"Current: SAARTHI_BROWSER_MODE={settings.browser_mode}\n"
+        f"         SAARTHI_BROWSER_HEADLESS="
         f"{'true' if settings.browser_headless else 'false'}\n\n"
-        "Badalna hai to .env mein set kar aur restart kar.\n"
-        "Tera tab switch ho raha hai? 'agent' mode use kar.",
-        title="setting",
+        "Change these in .env and restart.\n"
+        "If your tabs still switch, use 'agent' mode.",
+        title="current setting",
     )
 
 
@@ -412,7 +433,7 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
 
     if cmd in ("/quit", "/exit", "/q", "/bye"):
         ui.blank()
-        ui.line("  Chalo bye! Phir milte hain.", OK)
+        ui.line("  Goodbye.", OK)
         ui.blank()
         return False
 
@@ -440,12 +461,12 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
         skills = await agent.skills.list_skills()
         if not skills:
             ui.section("Skills")
-            ui.muted("Abhi koi skill nahi seekhi.")
-            ui.muted('Sikhane ke liye bol: "dekh, ye kaam yaad kar le"')
+            ui.muted("No skills learned yet.")
+            ui.muted('To teach one, say: "dekh, ye kaam yaad kar le"')
         else:
             ui.section(f"Skills ({len(skills)})")
             ui.table(
-                ["skill", "detail"],
+                ["skill", "details"],
                 [[s.name, s.summary()] for s in skills],
             )
         ui.blank()
@@ -464,18 +485,18 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
         if settings.auto_approve:
             ui.blank()
             ui.hint(
-                "FULL ACCESS ON — risky kaam ab bina puche honge\n"
-                "(shell command, skill chalana, memory delete).\n\n"
-                "Ye PHIR BHI blocked rahenge, chahe kuch bhi ho:\n"
-                "  - OTP / PIN / password / CVV type karna\n"
-                "  - rm -rf /, mkfs, fork bomb, curl | bash\n"
-                "  - final payment button dabana\n"
-                "Ye hard blocks hain, inko koi setting bypass nahi karti.\n\n"
-                "Band karne ke liye dobara: /auto",
-                title="full access ON",
+                "Risky actions will now run without asking:\n"
+                "  shell commands, running skills, deleting memory\n\n"
+                "These remain blocked no matter what:\n"
+                "  OTP / PIN / password / CVV entry\n"
+                "  rm -rf /, mkfs, fork bombs, curl | bash\n"
+                "  pressing a final payment button\n\n"
+                "These are hard blocks — no setting can bypass them.\n"
+                "Run /auto again to turn full access off.",
+                title="full access enabled",
             )
         else:
-            ui.success("Full access OFF — risky kaam pe dobara puchunga")
+            ui.success("Full access disabled — you will be asked again.")
         return True
 
     if cmd in ("/retry", "/revive"):
@@ -483,9 +504,9 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
         gone = [n for n, s in health.items() if s != "ok"]
         agent.brain.reset_health()
         if gone:
-            ui.success(f"Dobara try karunga: {', '.join(gone)}")
+            ui.success(f"Re-enabled: {', '.join(gone)}")
         else:
-            ui.muted("Sab providers already theek hain.")
+            ui.muted("All providers are already healthy.")
         return True
 
     if cmd == "/memory":
@@ -493,11 +514,11 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
         facts = await agent.memory.all_facts()
         if not facts:
             ui.section("Memory")
-            ui.muted("Abhi kuch yaad nahi hai.")
+            ui.muted("Nothing remembered yet.")
         else:
             ui.section(f"Memory ({len(facts)})")
             ui.table(
-                ["category", "kya", "value"],
+                ["category", "key", "value"],
                 [[f.category, f.key, f.value] for f in facts],
             )
         ui.blank()
@@ -506,15 +527,15 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
     if cmd == "/verbose":
         state["verbose"] = not state["verbose"]
         agent.on_output = make_output_handler(state["verbose"])
-        ui.muted(f"Verbose mode: {'ON' if state['verbose'] else 'OFF'}")
+        ui.muted(f"Verbose mode {'enabled' if state['verbose'] else 'disabled'}.")
         return True
 
     if cmd == "/reset":
         agent.reset_conversation()
-        ui.muted("Baat reset kar di. Memory aur skills safe hain.")
+        ui.muted("Conversation cleared. Saved memory and skills are untouched.")
         return True
 
-    ui.error(f"'{command}' samajh nahi aaya. /help try kar.")
+    ui.error(f"Unknown command '{command}'. Try /help")
     return True
 
 
@@ -555,13 +576,13 @@ async def main() -> int:
 
     # --- Brain ready hai? ---
     if not agent.brain.is_ready:
-        ui.hint(settings.setup_help(), title="ruk ja — pehle setup")
+        ui.hint(settings.setup_help(), title="setup required")
         return 1
 
     await show_startup(agent)
     await agent.start_session()
 
-    prompt = ui.prompt("tu")
+    prompt = ui.prompt("you")
 
     # --- REPL ---
     while True:
@@ -569,7 +590,7 @@ async def main() -> int:
             user_input = await asyncio.to_thread(input, prompt)
         except (EOFError, KeyboardInterrupt):
             ui.blank(2)
-            ui.line("  Chalo bye!", OK)
+            ui.line("  Goodbye.", OK)
             ui.blank()
             break
 
@@ -588,12 +609,12 @@ async def main() -> int:
             result = await agent.run_turn(user_input)
         except KeyboardInterrupt:
             ui.blank()
-            ui.error("rok diya")
+            ui.error("Interrupted.")
             ui.blank()
             continue
         except Exception as exc:  # noqa: BLE001 — CLI kabhi crash na ho
             ui.blank()
-            ui.reply_error(f"Kuch gadbad ho gayi: {exc}")
+            ui.reply_error(f"Something went wrong: {exc}")
             ui.blank()
             if settings.debug:
                 import traceback

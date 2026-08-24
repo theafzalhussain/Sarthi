@@ -106,18 +106,18 @@ async def run_check() -> int:
     hints: list[tuple[str, str]] = []
 
     # --- 1. LLM ---
-    ui.section("1  Brain (LLM)")
+    ui.section("1  Brain (LLM providers)")
     agent = Agent()
     if agent.brain.is_ready:
         ui.brain_table(agent.brain)
     else:
-        ui.error("Koi API key nahi hai")
+        ui.error("No API key found.")
         problems.append("LLM key")
         hints.append(("brain", settings.setup_help()))
     ui.blank()
 
     # --- 2. Mic ---
-    ui.section("2  Microphone (sunne ke liye)")
+    ui.section("2  Microphone (input)")
     if is_audio_available():
         devices = list_input_devices()
         ui.table(
@@ -125,9 +125,9 @@ async def run_check() -> int:
             [[ui.badge(True), str(d)] for d in devices[:6]] or [[ui.badge(False), "—"]],
         )
         if len(devices) > 6:
-            ui.muted(f"  ... aur {len(devices) - 6} devices")
+            ui.muted(f"  ... and {len(devices) - 6} more devices")
     else:
-        ui.error("Mic available nahi hai")
+        ui.error("No microphone available.")
         problems.append("microphone")
         hints.append(("microphone", audio_setup_help()))
     ui.blank()
@@ -140,18 +140,18 @@ async def run_check() -> int:
             ["", "cheez", "value"],
             [
                 [ui.badge(True), "faster-whisper", "ready"],
-                [ui.badge(True), "tere RAM ke hisaab se model", suggested],
-                [ui.badge(True), ".env mein daal", f"WHISPER_MODEL={suggested}"],
+                [ui.badge(True), "recommended model for your RAM", suggested],
+                [ui.badge(True), "add to .env", f"WHISPER_MODEL={suggested}"],
             ],
         )
     else:
-        ui.error("faster-whisper install nahi hai")
+        ui.error("faster-whisper is not installed.")
         problems.append("speech-to-text")
         hints.append(("speech-to-text", stt_setup_help()))
     ui.blank()
 
     # --- 4. TTS ---
-    ui.section("4  Text-to-speech (bolne ke liye)")
+    ui.section("4  Text-to-speech (output)")
     engine = TTSEngine()
     ui.table(
         ["", "backend", "quality"],
@@ -160,21 +160,21 @@ async def run_check() -> int:
             for name, available, quality in TTSEngine.available_backends()
         ],
     )
-    ui.muted(f"  chuna gaya: {engine.backend.name}")
+    ui.muted(f"  selected: {engine.backend.name}")
     if not engine.has_voice:
         hints.append(
             (
-                "awaaz",
-                "Awaaz nahi aayegi (jawab print honge).\n"
-                "Theek karne ke liye: sudo apt install espeak-ng",
+                "no voice output",
+                "Replies will be printed instead of spoken.\n"
+                "To fix: sudo apt install espeak-ng",
             )
         )
     ui.blank()
 
     # --- 5. Wake ---
-    ui.section("5  Wake mode (jagane ka tareeka)")
+    ui.section("5  Wake mode (how to trigger)")
     ui.table(
-        ["", "mode", "kya hai"],
+        ["", "mode", "description"],
         [
             [ui.badge(available), name, description]
             for name, available, description in available_wake_modes()
@@ -186,14 +186,14 @@ async def run_check() -> int:
     for title, hint in hints:
         ui.hint(hint, title=title)
 
-    ui.section("Nateeja")
+    ui.section("Result")
     if problems:
-        ui.error(f"Ye missing hain: {', '.join(problems)}")
-        ui.muted("Upar ke instructions follow kar, phir dobara --check chala.")
+        ui.error(f"Missing: {', '.join(problems)}")
+        ui.muted("Follow the instructions above, then run --check again.")
         ui.blank()
         return 1
 
-    ui.success("Sab ready hai!  Chala:  python voice_cli.py")
+    ui.success("All set. Run:  python voice_cli.py")
     ui.blank()
     return 0
 
@@ -240,8 +240,8 @@ async def main() -> int:
     if not ready:
         ui.hint(
             "\n".join(f"- {p}" for p in problems)
-            + "\n\nDetail ke liye chala: python voice_cli.py --check",
-            title="ruk ja — pehle ye theek kar",
+            + "\n\nFor details run: python voice_cli.py --check",
+            title="setup required",
         )
         return 1
 
@@ -251,25 +251,25 @@ async def main() -> int:
     ui.blank()
 
     if not session.tts.has_voice:
-        ui.muted("Awaaz available nahi — jawab print honge (espeak-ng install kar)")
+        ui.muted("No voice output available — replies will be printed (install espeak-ng)")
 
     ui.blank()
 
     # --- Single-shot test mode ---
     if once:
-        ui.muted("--once mode: ek baar sunke transcribe karunga")
+        ui.muted("--once mode: listening for a single utterance")
         ui.blank()
         await asyncio.to_thread(session.stt.load)
         await session.refresh_vocabulary()
         text = await session.listen_once()
         ui.blank()
-        ui.reply(f"Suna: `{text}`" if text else "Kuch suna hi nahi.")
+        ui.reply(f"Heard: `{text}`" if text else "Nothing was heard.")
         ui.blank()
         return 0
 
     ui.line(
-        f"  Bol ke kaam karwa.   {ui.sym['bullet']}   "
-        "Band karne ke liye 'band karo' bol ya Ctrl+C",
+        f"  Listening.   {ui.sym['bullet']}   Speak in Hinglish or English"
+        f"   {ui.sym['bullet']}   say 'band karo' or press Ctrl+C to exit",
         OK,
     )
     ui.blank()
@@ -279,7 +279,7 @@ async def main() -> int:
         await session.run()
     except KeyboardInterrupt:
         ui.blank(2)
-        ui.line("  Bye bhai!", OK)
+        ui.line("  Goodbye.", OK)
         ui.blank()
 
     return 0

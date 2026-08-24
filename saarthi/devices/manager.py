@@ -24,6 +24,34 @@ from .desktop import DesktopDevice
 log = logging.getLogger("saarthi.devices")
 
 
+def _desktop_os_hint() -> str:
+    """
+    LLM ke liye OS ki jaankari + kaunse commands chalenge.
+
+    Sirf naam kaafi nahi — LLM ko shell ka naam bhi chahiye, warna wo
+    Windows pe `ls` aur `xdg-open` likhta rehta hai.
+    """
+    import platform
+
+    system = platform.system()
+
+    if system == "Windows":
+        return (
+            f"Windows {platform.release()} — shell PowerShell/cmd hai. "
+            "Commands: dir, type, findstr (NOT ls/cat/grep). "
+            "'xdg-open' Windows pe NAHI chalta."
+        )
+    if system == "Darwin":
+        return (
+            f"macOS {platform.mac_ver()[0] or platform.release()} — "
+            "shell zsh/bash hai. Commands: ls, cat, grep, open."
+        )
+    if system == "Linux":
+        return f"Linux {platform.release()} — shell bash hai. Commands: ls, cat, grep, xdg-open."
+
+    return f"{system} {platform.release()}"
+
+
 class DeviceManager:
     """Saare devices ka manager."""
 
@@ -155,6 +183,16 @@ class DeviceManager:
 
             lines.append(f"- {name} ({device.kind}): {mark}")
             lines.append(f"    kar sakta hai: {cap_str}")
+
+            # OS batana ZARURI hai.
+            #
+            # Ye ek asli bug tha: LLM ko pata nahi tha ki user Windows pe
+            # hai, to usne `xdg-open` (Linux command) chala diya. Fail
+            # hua, phir `start` try kiya. Do confirmation, do fail.
+            #
+            # OS ka naam prompt mein hone se LLM sahi command chunta hai.
+            if connected and device.kind == "desktop":
+                lines.append(f"    OS: {_desktop_os_hint()}")
 
             if name == "android" and not connected:
                 lines.append(

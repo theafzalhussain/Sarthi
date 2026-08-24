@@ -217,7 +217,13 @@ class Settings:
     )
 
     # --- Behaviour ---
-    language: str = "hinglish"
+    #
+    # "auto" = user ki bhasha copy karo (English mein pucho -> English
+    # mein jawab, Hinglish mein pucho -> Hinglish mein jawab).
+    # Interface hamesha English hai — wo professional lagta hai — par
+    # BAAT user ki bhasha mein hoti hai.
+    # Fix karna hai to "hinglish" ya "english" set kar de.
+    language: str = "auto"
     confirm_risky: bool = True
 
     # Ek command ke liye max kitne steps.
@@ -382,7 +388,9 @@ class Settings:
         settings = cls(
             providers=providers,
             provider_order=order,
-            language=os.getenv("SAARTHI_LANGUAGE", "hinglish").strip().lower(),
+            language=_env_choice(
+                "SAARTHI_LANGUAGE", ("auto", "hinglish", "hindi", "english"), "auto"
+            ),
             confirm_risky=_env_bool("SAARTHI_CONFIRM_RISKY", True),
             auto_approve=_env_bool("SAARTHI_AUTO_APPROVE", False),
             max_steps=_env_int("SAARTHI_MAX_STEPS", 25),

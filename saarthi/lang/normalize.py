@@ -158,6 +158,110 @@ def parse_hindi_number(text: str) -> float | None:
     return total + current
 
 
+# ======================================================================
+#  LANGUAGE DETECTION
+#
+#  Kaam: user ne English mein likha ya Hinglish mein? Uske hisaab se
+#  agent usi bhasha mein jawab dega.
+#
+#  DESIGN SABAK (BUG#4 se seekha): marker words DISTINCTIVE hone
+#  chahiye, common nahi. "me", "do", "is", "us", "main", "the", "par"
+#  — ye Hinglish mein bhi hain aur English mein bhi. Inko marker
+#  banaya to "play a song for me" bhi Hinglish detect ho jaayega.
+#
+#  Isliye neeche sirf wo words hain jo ENGLISH MEIN NAHI hote.
+# ======================================================================
+
+_HINGLISH_MARKERS: set[str] = {
+    # Verbs / actions
+    "kar", "karo", "karna", "kardo", "kro", "karke", "karunga", "karenge",
+    "kholo", "khol", "kholna", "chalao", "chala", "chalu", "chalana",
+    "bhejo", "bhej", "bhejna", "daal", "daalo", "daalna",
+    "likho", "likh", "likhna", "bata", "batao", "batana",
+    "dekh", "dekho", "dekhna", "dikha", "dikhao", "sun", "suno",
+    "laga", "lagao", "hata", "hatao", "band", "bandh", "ruk", "ruko",
+    "de", "dena", "dedo", "lo", "lena", "milega", "chahiye", "chahta",
+    # Hona / होना
+    "hai", "hain", "ho", "hoga", "hogi", "hona", "hua", "hui", "thi", "tha",
+    "raha", "rahe", "rahi", "gaya", "gayi", "diya", "liya",
+    # Sawaal
+    "kya", "kyun", "kyu", "kaise", "kaisa", "kaisi", "kahan", "kaun",
+    "kaunsa", "kaunsi", "kitna", "kitne", "kitni", "kab",
+    # Sarvnaam / possessive
+    "mera", "meri", "mere", "tera", "teri", "tere", "tumhara", "tumhari",
+    "apna", "apni", "mujhe", "tujhe", "usko", "isko", "unko", "inko",
+    "hum", "hamara", "tum", "tu", "aap", "uska", "iska",
+    # Haan / naa
+    "nahi", "nhi", "naa", "mat", "haan", "han", "haa", "bilkul",
+    # Connectors (English mein nahi hote)
+    "aur", "lekin", "magar", "matlab", "warna", "phir", "toh", "kyunki",
+    "agar", "jab", "tab", "abhi", "thoda", "zara", "jara", "bas", "bhi",
+    # Vishesan
+    "accha", "achha", "acchi", "theek", "thik", "sahi", "galat",
+    "bada", "chhota", "jaldi", "dheere", "purana", "naya",
+    # Aam shabd
+    "bhai", "yaar", "yaad", "baat", "kaam", "cheez", "wala", "wali",
+    "sab", "kuch", "koi", "waqt", "paise", "paisa", "gaana", "gana",
+    "khana", "pani", "ghar", "aaj", "kal", "subah", "shaam", "raat",
+    # Particles
+    "ke", "ka", "ki", "ko", "se", "mein", "pe", "ye", "yeh", "wo", "woh",
+    "isse", "usse", "jo", "hi",
+}
+
+# Ye Hinglish mein bhi common hain par ENGLISH WORD bhi hain —
+# jaan-boojh ke marker nahi banaya. Yahan reference ke liye rakhe hain
+# taaki koi baad mein galti se add na kar de.
+_AMBIGUOUS_NOT_MARKERS: set[str] = {
+    "me", "do", "is", "us", "main", "the", "par", "so", "to", "no",
+    "on", "in", "at", "an", "as", "he", "we", "be", "or", "and", "a",
+    "hum",  # "hum" English mein bhi hai (humming)
+}
+
+
+def detect_language(text: str) -> str:
+    """
+    User ne kis bhasha mein likha? "hinglish" ya "english".
+
+    Ye interface aur jawab ki bhasha decide karta hai:
+        User English mein likhe  -> agent English mein jawab de
+        User Hinglish mein likhe -> agent Hinglish mein jawab de
+
+    Doubt ho to "hinglish" — kyunki ye project Hinglish-first hai
+    (Pillar #1), aur Hinglish user ko English jawab dena zyada
+    kharaab lagta hai ulte se.
+
+    >>> detect_language("open youtube and play a song")
+    'english'
+    >>> detect_language("youtube pe gaana chala do")
+    'hinglish'
+    >>> detect_language("bhai ek song play kar dena")
+    'hinglish'
+    """
+    if not text or not text.strip():
+        return "hinglish"
+
+    # Devanagari hai to pakka Hindi
+    if has_devanagari(text):
+        return "hinglish"
+
+    tokens = re.findall(r"[a-z]+", text.lower())
+    if not tokens:
+        return "hinglish"
+
+    hits = sum(1 for token in tokens if token in _HINGLISH_MARKERS)
+
+    if hits == 0:
+        return "english"
+
+    # Ek-do marker aur baaki sab English? Chhoti line mein ek marker
+    # kaafi hai ("play song bhai"), par lambi English line mein ek
+    # marker ittefaq ho sakta hai.
+    if len(tokens) >= 8 and hits == 1:
+        return "english"
+
+    return "hinglish"
+
+
 def extract_amount(text: str) -> float | None:
     """
     Text se paison ka amount nikaalo.

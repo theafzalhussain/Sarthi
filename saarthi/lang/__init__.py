@@ -28,6 +28,7 @@ from .lexicon import (
 )
 from .normalize import (
     ParsedCommand,
+    detect_language,
     extract_amount,
     has_devanagari,
     parse,
@@ -59,6 +60,7 @@ __all__ = [
     "has_devanagari",
     "strip_fillers",
     "parse_hindi_number",
+    "detect_language",
     "extract_amount",
     # Prompts
     "build_system_prompt",

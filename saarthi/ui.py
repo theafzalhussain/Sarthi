@@ -296,7 +296,7 @@ class Ui:
     def error(self, text: str) -> None:
         self.line(f"  {self.sym['fail']}  {text}", ERR)
 
-    def hint(self, text: str, title: str = "dhyan de") -> None:
+    def hint(self, text: str, title: str = "note") -> None:
         """
         Madad wali baat — box mein, taaki alag dikhe.
 
@@ -445,11 +445,11 @@ class Ui:
     #  Agent conversation
     # ------------------------------------------------------------------
 
-    def prompt(self, label: str = "tu") -> str:
+    def prompt(self, label: str = "you") -> str:
         """
         `input()` ko dene wala prompt string.
 
-            tu ❯
+            you ❯
         """
         return (
             "  "
@@ -593,10 +593,10 @@ class Ui:
             )
 
         if not rows:
-            self.muted("Koi provider nahi — .env mein API key daal.")
+            self.muted("No provider configured. Add an API key to .env")
             return
 
-        self.table(["", "provider", "model", "role", "tools", "aankh"], rows)
+        self.table(["", "provider", "model", "role", "tools", "vision"], rows)
 
         # Dead providers ki wajah neeche — table mein jagah nahi hai
         for name, state in health.items():
@@ -637,7 +637,7 @@ class Ui:
             if not connected:
                 hints.append((name, self._device_hint(name, device)))
 
-        self.table(["", "device", "type", "status", "kya kar sakta hai"], rows)
+        self.table(["", "device", "type", "status", "capabilities"], rows)
         return hints
 
     @staticmethod
@@ -653,14 +653,14 @@ class Ui:
 
         if name == "android" or device.kind == "android":
             return (
-                "Phone connect karne ke liye:\n"
-                "  1. Settings > About phone > Build number pe 7 baar tap\n"
-                "  2. Settings > Developer options > USB Debugging ON\n"
-                "  3. USB laga, phone pe 'Allow' dabao\n"
-                "  4. Check kar: adb devices"
+                "To connect your phone:\n"
+                "  1. Settings > About phone > tap Build number 7 times\n"
+                "  2. Settings > Developer options > enable USB Debugging\n"
+                "  3. Connect via USB, then tap 'Allow' on the phone\n"
+                "  4. Verify with: adb devices"
             )
 
-        return f"'{name}' abhi available nahi hai."
+        return f"'{name}' is not available right now."
 
     def tools_table(self, registry, max_desc: int = 64) -> None:
         """Saare tools — naam aur kaam."""
@@ -675,7 +675,7 @@ class Ui:
                 first = first[: max_desc - 1].rstrip() + "…"
             rows.append([name, first or "—"])
 
-        self.table(["tool", "kaam"], rows)
+        self.table(["tool", "purpose"], rows)
 
     def reply_error(self, text: str) -> None:
         """Jawab ki jagah error aaya."""
@@ -683,7 +683,7 @@ class Ui:
             self.console.print(
                 Panel(
                     Text(text, style=TEXT),
-                    title=f"[{ERR} bold]problem[/]",
+                    title=f"[{ERR} bold]error[/]",
                     title_align="left",
                     border_style=ERR,
                     box=box.ROUNDED,
@@ -693,7 +693,7 @@ class Ui:
             )
             return
 
-        self.line(f"  problem {self.sym['prompt']}", ERR, bold=True)
+        self.line(f"  error {self.sym['prompt']}", ERR, bold=True)
         self.block(text, ERR, indent=4)
 
 

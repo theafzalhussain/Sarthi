@@ -26,7 +26,7 @@ from .brain import Brain
 from .brain.types import LLMResponse, Message, NoProviderError, Role, ToolCall
 from .config import Settings, settings as default_settings
 from .devices import DeviceManager
-from .lang import build_system_prompt, build_user_message, parse
+from .lang import build_system_prompt, build_user_message, detect_language, parse
 from .memory import MemoryStore
 from .skills import SkillRecorder, SkillRunner, SkillStore
 from .tools import ToolContext, ToolRegistry, default_registry
@@ -171,13 +171,31 @@ class Agent:
         # --- PILLAR #1: Hinglish parse karo ---
         parsed = parse(user_input)
 
+        # User ne kis bhasha mein likha? Usi mein jawab dena hai.
+        #
+        # Ye HAR TURN pe detect hota hai (session ke shuru mein ek baar
+        # nahi) kyunki user beech mein bhasha badal sakta hai — ek
+        # message English, agla Hinglish. Interface English hai, par
+        # BAAT user ki bhasha mein hoti hai.
+        #
+        # settings.language mein "hinglish"/"english" fix kiya ho to
+        # wahi use hota hai — auto-detect override nahi karta.
+        configured = (self.settings.language or "auto").lower()
+        if configured == "auto":
+            reply_language = detect_language(user_input)
+        else:
+            reply_language = configured
+
         if self.settings.debug:
             hint = parsed.to_hint()
             if hint:
                 self.on_output("debug", hint)
+            self.on_output("debug", f"bhasha: {reply_language}")
 
         # Structured hints ke saath LLM ko bhejo
-        self.messages.append(Message.user(build_user_message(parsed)))
+        self.messages.append(
+            Message.user(build_user_message(parsed, reply_language))
+        )
 
         # Memory mein log karo
         await self.memory.log_turn(self.session_id, "user", user_input)

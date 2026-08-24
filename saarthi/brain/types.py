@@ -226,4 +226,16 @@ def classify_http_error(provider: str, status: int, body: str) -> BrainError:
                 f"  (server ne kaha: {snippet})"
             )
 
+    # 5xx — provider ka server kharab hai, hamari galti nahi.
+    #
+    # Asli case: NVIDIA ne "HTTP 500 Internal server error" diya. Purana
+    # code isko normal error samajh ke HAR step pe dobara try karta tha.
+    # Ye temporary hota hai, par turant theek bhi nahi hota — isliye
+    # RateLimitError bhejte hain taaki thodi der cooldown lag jaaye.
+    if status >= 500:
+        return RateLimitError(
+            f"{provider}: server down hai (HTTP {status}). "
+            f"Ye unki taraf ki problem hai — abhi doosra provider use karunga."
+        )
+
     return BrainError(f"{provider}: HTTP {status} — {snippet}")
