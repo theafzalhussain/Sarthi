@@ -334,6 +334,15 @@ class Settings:
     # Per-provider override: NVIDIA_MAX_TOKENS, DEEPSEEK_MAX_TOKENS...
     max_tokens: int = 4096
 
+    # --- Screenshot caching ---
+    # Kitne screenshots ek turn mein LLM ko bhejne hain (bade image =
+    # bahut tokens). Purane evict ho jaate hain, sirf latest N rehte.
+    # 0 = vision band (sirf text bhejo)
+    max_screenshots: int = 2
+
+    # Same screenshot dobara aaye to bhejne se baho (hash match)
+    screenshot_dedupe: bool = True
+
     # FULL ACCESS MODE — risky tools bina puche chalenge.
     #
     # DHYAN: isse HARD BLOCKS nahi hatte. OTP/PIN/password type karna
@@ -515,6 +524,8 @@ class Settings:
             auto_approve=_env_bool("SAARTHI_AUTO_APPROVE", False),
             max_steps=_env_int("SAARTHI_MAX_STEPS", 25),
             max_tokens=_env_int("SAARTHI_MAX_TOKENS", 4096),
+            max_screenshots=_env_int("SAARTHI_MAX_SCREENSHOTS", 2),
+            screenshot_dedupe=_env_bool("SAARTHI_SCREENSHOT_DEDUPE", True),
             order_is_explicit=order_is_explicit,
             order_missing=order_missing,
             debug=_env_bool("SAARTHI_DEBUG", False),

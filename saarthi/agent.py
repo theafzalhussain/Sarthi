@@ -23,6 +23,7 @@ Kyun koi framework (LangGraph/CrewAI) use nahi kiya:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -118,6 +119,12 @@ class Agent:
         self.session_id = uuid.uuid4().hex[:12]
         self.messages: list[Message] = []
         self._system_prompt: str | None = None
+
+        # --- Screenshot caching ---
+        # Tokens bachane ke liye: sirf latest N screenshots rakho,
+        # aur same screenshot dobara bhejne se baho (dedupe).
+        self._last_screenshot_hash: str | None = None
+        self._screenshot_msg_indices: list[int] = []  # positions of image messages
 
     # ------------------------------------------------------------------
     #  Setup
@@ -289,21 +296,41 @@ class Agent:
 
                 content = result.output if result.ok else f"FAIL: {result.error}"
 
-                # Screenshot mila? To image ke saath bhejo
+                # Screenshot mila? To image ke saath bhejo (WITH CACHING)
                 image_b64 = result.data.get("image_b64")
                 if image_b64:
+                    # Tool result HAMESHA append karo (API contract)
                     self.messages.append(
                         Message.tool_result(
                             content or "screenshot liya", call.id
                         )
                     )
-                    self.messages.append(
-                        Message.user(
-                            "Ye screen ka screenshot hai — dekh ke bata "
-                            "aage kya karna hai.",
-                            image_b64=image_b64,
+
+                    # DEDUPE: same screenshot dobara mat bhejo
+                    img_hash = hashlib.sha256(image_b64.encode()[:1000]).hexdigest()[:16]
+                    dedupe = getattr(self.settings, "screenshot_dedupe", True)
+
+                    if dedupe and img_hash == self._last_screenshot_hash:
+                        # Same screen — image bhejne ki zarurat nahi
+                        self.messages.append(
+                            Message.user(
+                                "Screenshot same hai — screen mein koi "
+                                "badlav nahi hua."
+                            )
                         )
-                    )
+                    else:
+                        # Naya screenshot — EVICT purane, append naya
+                        self._evict_old_screenshots()
+                        self.messages.append(
+                            Message.user(
+                                "Ye screen ka screenshot hai — dekh ke bata "
+                                "aage kya karna hai.",
+                                image_b64=image_b64,
+                            )
+                        )
+                        # Track this image message index
+                        self._screenshot_msg_indices.append(len(self.messages) - 1)
+                        self._last_screenshot_hash = img_hash
                 else:
                     self.messages.append(
                         Message.tool_result(content, call.id)
@@ -410,6 +437,41 @@ class Agent:
         return list(results)
 
     # ------------------------------------------------------------------
+    #  Screenshot Caching — tokens bachao
+    # ------------------------------------------------------------------
+
+    def _evict_old_screenshots(self) -> None:
+        """
+        Purane screenshot messages hatao — sirf latest N rakho.
+
+        IMPORTANT: Sirf Message.user(..., image_b64=...) messages ko
+        evict karna hai. Message.tool_result() ko KABHI mat chhedna —
+        warna LLM API "tool_call_id without response" error dega.
+
+        Evicted message ki jagah placeholder text daal dete hain taaki
+        message index sahi rahe (list se pop karna indices tod deta).
+        """
+        max_screenshots = getattr(self.settings, "max_screenshots", 2)
+
+        if max_screenshots <= 0:
+            # All screenshots disabled — evict everything
+            for idx in self._screenshot_msg_indices:
+                if idx < len(self.messages):
+                    self.messages[idx] = Message.user(
+                        "(screenshot removed — vision disabled)"
+                    )
+            self._screenshot_msg_indices.clear()
+            return
+
+        # Keep only latest N, evict older ones
+        while len(self._screenshot_msg_indices) >= max_screenshots:
+            old_idx = self._screenshot_msg_indices.pop(0)
+            if old_idx < len(self.messages):
+                self.messages[old_idx] = Message.user(
+                    "(old screenshot removed — saving tokens)"
+                )
+
+    # ------------------------------------------------------------------
     #  Dikha Do Mode
     # ------------------------------------------------------------------
 
@@ -450,6 +512,8 @@ class Agent:
         system = self.messages[0] if self.messages else None
         self.messages = [system] if system else []
         self.session_id = uuid.uuid4().hex[:12]
+        self._last_screenshot_hash = None
+        self._screenshot_msg_indices = []
 
     def trim_history(self, keep_messages: int = 40) -> int:
         """
