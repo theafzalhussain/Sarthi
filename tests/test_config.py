@@ -119,8 +119,57 @@ class Capabilities(SaarthiTestCase):
 
 
 class ProviderOrder(SaarthiTestCase):
-    def test_best_pehle_hai(self):
-        self.assertEqual(DEFAULT_PROVIDER_ORDER[0], "deepseek")
+    """
+    Provider order ek JAAN-BOOJH KE LIYA GAYA FAISLA hai, ittefaq nahi.
+    Isliye test usse lock karta hai — badalna ho to test bhi jaan-boojh
+    ke badalna padega.
+    """
+
+    def test_pehla_provider_tools_support_karta_hai(self):
+        """
+        Ye INVARIANT hai, taste nahi.
+
+        Pehla provider tool calling support kare — warna agent ka pehla
+        hi attempt fail hoga aur har turn mein ek bekaar API call jaayegi.
+        `gemma` isi wajah se sabse aakhir hai.
+        """
+        from saarthi.config import Settings
+
+        with clean_env(NVIDIA_API_KEY="nvapi-fake", GROQ_API_KEY="gsk-fake"):
+            providers = {p.name: p for p in Settings.load().available_providers}
+
+        first = DEFAULT_PROVIDER_ORDER[0]
+        if first in providers:
+            self.assertTrue(
+                providers[first].supports_tools,
+                f"'{first}' pehle hai par tools support nahi karta",
+            )
+
+    def test_order_ka_faisla_document_hai(self):
+        """
+        ⚠️ YE TEST TABHI BADLO JAB FAISLA JAAN-BOOJH KE BADLA HO.
+
+        Do soch hain aur dono theek hain — TRADEOFF hai:
+
+          SMART-FIRST : deepseek pehle. 1.6T MoE, 1M context, agentic
+                        multi-step kaam mein sabse accha. Par slow.
+          SPEED-FIRST : groq pehle. ~1.3s response. Rozana ke chhote
+                        command ("paytm kholo") mein bahut behtar lagta
+                        hai. Par bade multi-step kaam mein kamzor.
+
+        Abhi SPEED-FIRST chuna gaya hai (commit 6a49044, "5x faster
+        response"). Pehle SMART-FIRST tha.
+
+        Ye test us faisle ka RECORD hai. Order badle to yahan bhi
+        badlo — aur comment mein wajah likho, taaki agla banda (ya AI)
+        samajh sake ki ye ittefaq nahi tha.
+        """
+        self.assertEqual(
+            DEFAULT_PROVIDER_ORDER[0], "groq",
+            "Provider order badla hai. Agar jaan-boojh ke badla hai to is "
+            "test ko update karo aur wajah likho. Agar galti se badla hai "
+            "to config.py wapas theek karo.",
+        )
 
     def test_gemma_aakhir_mein_hai(self):
         """Tools bharosemand nahi — sabse aakhir."""
