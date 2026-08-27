@@ -126,9 +126,36 @@ class ProviderOrder(SaarthiTestCase):
         """Tools bharosemand nahi — sabse aakhir."""
         self.assertEqual(DEFAULT_PROVIDER_ORDER[-1], "gemma")
 
-    def test_8_providers_order_mein_hain(self):
-        self.assertEqual(len(DEFAULT_PROVIDER_ORDER), 9)
-        self.assertEqual(len(set(DEFAULT_PROVIDER_ORDER)), 8, "duplicate hai")
+    def test_provider_order_mein_duplicate_nahi_hai(self):
+        """
+        Ginti hardcode karna band — pehle ye test "8_providers" tha aur
+        `opencode` add hone pe aadha update hua: naam 8 kehta tha, len
+        9 assert karta tha, aur set 8. Confusing aur bekaar.
+
+        Asli baat ye hai: koi DUPLICATE na ho (warna ek provider do baar
+        try hoga) aur order mein har provider ka config maujood ho.
+        """
+        self.assertEqual(
+            len(DEFAULT_PROVIDER_ORDER), len(set(DEFAULT_PROVIDER_ORDER)),
+            "provider order mein duplicate hai",
+        )
+        self.assertGreaterEqual(len(DEFAULT_PROVIDER_ORDER), 8)
+
+    def test_order_ka_har_provider_ka_model_defined_hai(self):
+        """
+        Naya provider order mein daala par DEFAULT_MODELS mein bhoola —
+        to wo runtime pe KeyError ya khali model dega. Ye chup-chaap
+        fail hone wali cheez hai.
+        """
+        from saarthi.config import DEFAULT_MODELS
+
+        for name in DEFAULT_PROVIDER_ORDER:
+            with self.subTest(provider=name):
+                self.assertIn(
+                    name, DEFAULT_MODELS,
+                    f"'{name}' order mein hai par DEFAULT_MODELS mein nahi",
+                )
+                self.assertTrue(DEFAULT_MODELS[name], f"'{name}' ka model khali hai")
 
     def test_env_se_order_badal_sakta_hai(self):
         with clean_env(
@@ -151,8 +178,20 @@ class ProviderOrder(SaarthiTestCase):
             settings = Settings.load()
 
         self.assertTrue(settings.order_is_explicit)
-        self.assertEqual(set(settings.order_missing), {"deepseek", "muse", "gemma", "opencode"})
-        self.assertEqual(settings.provider_order[-3:], ["deepseek", "muse", "gemma"])
+
+        # Jo user ki list mein nahi the wo missing hone chahiye — ginti
+        # hardcode nahi karte, DEFAULT_PROVIDER_ORDER se nikalte hain
+        # taaki naya provider add hone pe test stale na ho.
+        listed = {"bluesminds", "nvidia", "gemini", "openrouter", "groq"}
+        expected_missing = [p for p in DEFAULT_PROVIDER_ORDER if p not in listed]
+
+        self.assertEqual(set(settings.order_missing), set(expected_missing))
+
+        # Aur missing wale AAKHIR mein jaate hain, default order mein
+        self.assertEqual(
+            settings.provider_order[-len(expected_missing):], expected_missing,
+            "missing providers aakhir mein default order se nahi lage",
+        )
 
     def test_bina_env_ke_explicit_flag_off_rehta_hai(self):
         with clean_env():
@@ -328,3 +367,63 @@ class InlineComments(SaarthiTestCase):
     def test_valid_value_ke_saath_comment_bhi_chalta_hai(self):
         with clean_env(SAARTHI_BROWSER_MODE="agent"):
             self.assertEqual(Settings.load().browser_mode, "agent")
+
+
+
+class EnvExampleMatchesCode(SaarthiTestCase):
+    """
+    `.env.example` mein likhe MODEL NAAM code ke default se match karein.
+
+    ⚠️ YE EK ASLI BUG SE BANA HAI.
+
+    `deepseek-ai/deepseek-v4-pro` 2026-08-07 pe EOL ho gaya. Code mein
+    `-0813` version aa gaya, par `.env.example` mein purana naam commented
+    pada reh gaya:
+
+        # DEEPSEEK_MODEL=deepseek-ai/deepseek-v4-pro
+
+    Ye SABSE KHATARNAK kism ka stale doc hai — user us line ko uncomment
+    karta hai (bilkul wajib kaam), aur usko 404 milta hai. Wo samjhega
+    agent tuta hua hai, jabki usne bas hamara apna example follow kiya.
+
+    BUG#6 bhi exactly yahi tha (deprecated model names, teen provider 404
+    de rahe the). Isliye ab test isko pakadta hai.
+    """
+
+    def env_example_models(self) -> dict:
+        """`.env.example` se `{PROVIDER}_MODEL=value` nikaalo (commented bhi)."""
+        import re
+
+        from saarthi.config import ROOT_DIR
+
+        path = ROOT_DIR / ".env.example"
+        self.assertTrue(path.exists(), ".env.example gayab hai")
+
+        found = {}
+        pattern = re.compile(r"^\s*#?\s*([A-Z][A-Z0-9]*)_MODEL\s*=\s*(\S+)\s*$")
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = pattern.match(line)
+            if match:
+                found.setdefault(match.group(1).lower(), match.group(2))
+        return found
+
+    def test_env_example_mein_kuch_model_line_hai(self):
+        """Parser hi toota ho to baaki test jhoothe pass ho jaayenge."""
+        self.assertGreater(
+            len(self.env_example_models()), 3,
+            "koi *_MODEL line nahi mili — parser check kar",
+        )
+
+    def test_env_example_ke_model_naam_code_se_match_karte_hain(self):
+        from saarthi.config import DEFAULT_MODELS
+
+        for provider, model in self.env_example_models().items():
+            if provider not in DEFAULT_MODELS:
+                continue  # alag/extra example, wo theek hai
+            with self.subTest(provider=provider):
+                self.assertEqual(
+                    model, DEFAULT_MODELS[provider],
+                    f"\n.env.example mein {provider.upper()}_MODEL={model}\n"
+                    f"par code ka default   {DEFAULT_MODELS[provider]}\n"
+                    f"User us line ko uncomment karega to 404 milega.",
+                )

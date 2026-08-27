@@ -297,7 +297,16 @@ class ReasoningModels(SaarthiTestCase):
 
         payload = fake.calls[0][1]
         self.assertEqual(payload.get("chat_template_kwargs"), {"thinking": False})
-        self.assertEqual(payload["model"], "deepseek-ai/deepseek-v4-pro")
+
+        # Model naam DEFAULT_MODELS se lete hain, hardcode NAHI.
+        #
+        # Pehle yahan "deepseek-ai/deepseek-v4-pro" likha tha. Wo model
+        # 2026-08-07 pe EOL ho gaya, config mein "-0813" version aa gaya,
+        # aur ye test fail hone laga — jabki code SAHI tha. Test ka kaam
+        # yahan `thinking: False` verify karna hai, model version nahi.
+        from saarthi.config import DEFAULT_MODELS
+
+        self.assertEqual(payload["model"], DEFAULT_MODELS["deepseek"])
 
     def test_muse_pe_extra_field_nahi_jaata(self):
         with clean_env(NVIDIA_API_KEY="nvapi-fake", SAARTHI_PROVIDER_ORDER="muse"):

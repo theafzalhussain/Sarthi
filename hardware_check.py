@@ -6,7 +6,7 @@ YE SCRIPT KIS LIYE HAI:
 
     Phase 1 aur 2 ka code sandbox mein bana tha jahan MIC NAHI THA,
     SPEAKER NAHI THA, PHONE NAHI THA. Logic sab verify ho chuka hai
-    (357 automated tests), par asli hardware pe kabhi chala nahi.
+    (360 automated tests), par asli hardware pe kabhi chala nahi.
 
     Ye script tere hardware ko check karti hai aur ek REPORT banati
     hai jo tu copy-paste karke dev/AI ko de sakta hai. Wo report se
