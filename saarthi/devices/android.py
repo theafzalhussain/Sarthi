@@ -176,6 +176,32 @@ class AndroidDevice(Device):
     #  ADB plumbing
     # ------------------------------------------------------------------
 
+    # WHITELIST — sirf ye commands retry-safe hain (read-only / idempotent).
+    # Default DENY: jo yahan nahi, uska retry NAHI hoga.
+    # Match args[0] (ya args[1] for "shell") against these prefixes.
+    _RETRY_WHITELIST: tuple[str, ...] = (
+        "devices",
+        "shell getprop",
+        "shell wm size",
+        "shell wm density",
+        "shell dumpsys",
+        "exec-out screencap",
+        "shell uiautomator dump",
+        "shell cat ",
+        "shell pm list",
+        "shell ip ",
+        "shell settings get",
+    )
+
+    # Permanent errors — retry BEKAAR hai, turant fail karo
+    _PERMANENT_ERRORS: tuple[str, ...] = (
+        "device not found",
+        "unauthorized",
+        "no devices",
+        "offline",
+        "not found",
+    )
+
     def _build_args(self, args: list[str]) -> list[str]:
         """ADB command banao, serial ke saath agar diya hai."""
         cmd = [self.adb_path]
@@ -183,39 +209,106 @@ class AndroidDevice(Device):
             cmd += ["-s", self.serial]
         return cmd + args
 
+    def _is_retryable(self, args: list[str]) -> bool:
+        """
+        Kya ye command retry-safe hai?
+
+        SAFETY FIRST: `input tap/text/swipe/keyevent` KABHI retry nahi.
+        Warna payment pe double tap, message do baar — asli nuksaan.
+        """
+        # args from the caller (BEFORE _build_args adds serial prefix)
+        joined = " ".join(args).lower()
+        return any(joined.startswith(prefix) for prefix in self._RETRY_WHITELIST)
+
+    def _is_permanent_error(self, stderr_text: str) -> bool:
+        """Ye error retry se theek nahi hoga."""
+        lower = stderr_text.lower()
+        return any(hint in lower for hint in self._PERMANENT_ERRORS)
+
     async def _adb_raw(
         self, args: list[str], timeout: float = 30.0
     ) -> tuple[int, bytes, bytes]:
         """
-        ADB chalao, raw bytes return karo.
+        ADB chalao, raw bytes return karo. SMART RETRY for safe commands.
 
-        Binary output (screenshot) ke liye bytes zaroori hai.
+        Retry logic:
+        - Sirf whitelisted (read-only) commands retry hote hain
+        - input tap/text/swipe = KABHI retry nahi (double action = nuksaan)
+        - Permanent errors (device not found) = turant fail
+        - Backoff: 0.5s, then 1.0s
+        - Default 2 retries (SAARTHI_ADB_RETRIES env)
         """
+        import os
+        max_retries = int(os.getenv("SAARTHI_ADB_RETRIES", "2") or "2")
+        retryable = self._is_retryable(args) and max_retries > 0
+        backoff_delays = [0.5, 1.0, 1.5]  # progressive backoff
+
         cmd = self._build_args(args)
+        attempts = max_retries + 1 if retryable else 1
 
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"ADB nahi mila ('{self.adb_path}').\n"
-                "Install kar: https://developer.android.com/tools/releases/platform-tools\n"
-                "Ya .env mein ADB_PATH set kar."
-            )
+        last_error: Exception | None = None
 
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            raise TimeoutError(f"ADB command timeout ({timeout}s): {' '.join(args)}")
+        for attempt in range(attempts):
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError:
+                raise FileNotFoundError(
+                    f"ADB nahi mila ('{self.adb_path}').\n"
+                    "Install kar: https://developer.android.com/tools/releases/platform-tools\n"
+                    "Ya .env mein ADB_PATH set kar."
+                )
 
-        return process.returncode or 0, stdout, stderr
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                last_error = TimeoutError(f"ADB command timeout ({timeout}s): {' '.join(args)}")
+
+                if attempt < attempts - 1:
+                    delay = backoff_delays[min(attempt, len(backoff_delays) - 1)]
+                    log.warning(
+                        "ADB timeout (attempt %d/%d), retrying in %.1fs: %s",
+                        attempt + 1, attempts, delay, " ".join(args)
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise last_error
+
+            # Check for permanent errors — no point retrying
+            stderr_text = stderr.decode("utf-8", errors="replace")
+            if (process.returncode or 0) != 0 and self._is_permanent_error(stderr_text):
+                return process.returncode or 1, stdout, stderr
+
+            # Success
+            if (process.returncode or 0) == 0:
+                if attempt > 0:
+                    log.info("ADB succeeded on attempt %d: %s", attempt + 1, " ".join(args))
+                return 0, stdout, stderr
+
+            # Non-zero exit, retryable command — retry
+            if attempt < attempts - 1:
+                delay = backoff_delays[min(attempt, len(backoff_delays) - 1)]
+                log.warning(
+                    "ADB failed (attempt %d/%d, exit %d), retrying in %.1fs: %s",
+                    attempt + 1, attempts, process.returncode, delay, " ".join(args)
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            # Last attempt failed
+            return process.returncode or 1, stdout, stderr
+
+        # Should not reach here, but just in case
+        if last_error:
+            raise last_error
+        return 1, b"", b""
 
     async def _adb(self, args: list[str], timeout: float = 30.0) -> ActionResult:
         """ADB chalao, text result return karo."""
