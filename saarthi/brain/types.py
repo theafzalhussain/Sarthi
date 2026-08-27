@@ -79,6 +79,32 @@ class ToolCall:
 
 
 @dataclass
+class StreamChunk:
+    """
+    Streaming ka ek tukda.
+
+    Provider se token-by-token aata hai. Agent isko real-time
+    user ko dikha sakta hai — pehle hi lagta hai jawab aa raha hai.
+    """
+
+    # Naya text jo is chunk mein aaya
+    delta: str = ""
+
+    # Tool call ka delta (partial function call building)
+    tool_call_delta: dict | None = None
+
+    # Ye chunk complete response hai? (last chunk)
+    is_final: bool = False
+
+    # Final chunk mein ye bhari hoti hain
+    tool_calls: list["ToolCall"] = field(default_factory=list)
+
+    # Token usage (sirf final chunk mein)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+
+@dataclass
 class LLMResponse:
     """
     LLM ka jawab.

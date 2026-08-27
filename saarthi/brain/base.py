@@ -8,9 +8,10 @@ Baaki pura agent waise hi chalta rahega.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 
 from ..config import ProviderConfig
-from .types import LLMResponse, Message, ToolSchema
+from .types import LLMResponse, Message, StreamChunk, ToolSchema
 
 
 class LLMProvider(ABC):
@@ -85,7 +86,7 @@ class LLMProvider(ABC):
         max_tokens: int = 2048,
     ) -> LLMResponse:
         """
-        LLM se baat karo.
+        LLM se baat karo (non-streaming, pura jawab ek baar mein).
 
         Args:
             messages: Conversation history
@@ -97,6 +98,35 @@ class LLMProvider(ABC):
             LLMResponse — text aur/ya tool calls
         """
         raise NotImplementedError
+
+    async def chat_stream(
+        self,
+        messages: list[Message],
+        tools: list[ToolSchema] | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+    ) -> AsyncIterator[StreamChunk]:
+        """
+        LLM se baat karo — STREAMING (token by token).
+
+        Real-time output ke liye. Har chunk mein thoda text aata hai,
+        user ko turant dikhna shuru hota hai. Last chunk `is_final=True`
+        hota hai aur usme complete tool_calls + usage hota hai.
+
+        Default implementation: non-streaming chat() call ke result ko
+        ek single chunk mein wrap kar deta hai. Subclass override kare
+        actual streaming ke liye.
+        """
+        # Fallback — providers jo stream nahi karte, unke liye ye chalta hai
+        response = await self.chat(messages, tools, temperature, max_tokens)
+        chunk = StreamChunk(
+            delta=response.text,
+            is_final=True,
+            tool_calls=response.tool_calls,
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+        )
+        yield chunk
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} model={self.model!r}>"

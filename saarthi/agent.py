@@ -9,6 +9,11 @@ Loop simple hai (jaan-boojh ke):
     4. Repeat, jab tak LLM final jawab na de (ya max_steps khatam)
     5. Sab kuch memory mein log karo
 
+v2 ENHANCEMENTS:
+    - STREAMING: LLM ka jawab token-by-token aata hai, user ko turant dikhta
+    - PARALLEL TOOLS: Multiple tool calls ek saath chalte hain (asyncio.gather)
+    - Faster response time due to real-time output
+
 Kyun koi framework (LangGraph/CrewAI) use nahi kiya:
     Kyunki ye loop 100 line ka hai aur samajh mein aata hai. Framework
     laga dete to andar kya ho raha hai kabhi samajh nahi aata. Jab ye
@@ -17,13 +22,14 @@ Kyun koi framework (LangGraph/CrewAI) use nahi kiya:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from .brain import Brain
-from .brain.types import LLMResponse, Message, NoProviderError, Role, ToolCall
+from .brain.types import LLMResponse, Message, NoProviderError, Role, StreamChunk, ToolCall
 from .config import Settings, settings as default_settings
 from .devices import DeviceManager
 from .lang import build_system_prompt, build_user_message, detect_language, parse
@@ -37,6 +43,14 @@ log = logging.getLogger("saarthi.agent")
 # CLI ye callbacks deta hai — isse agent UI se independent rehta hai
 ConfirmCallback = Callable[[str, dict], Awaitable[bool]]
 OutputCallback = Callable[[str, str], None]  # (kind, text)
+
+# Tools jo PARALLEL mein safe nahi hain (order dependent)
+# In tools ka output agla tool use karta hai, isliye sequential chahiye
+_SEQUENTIAL_TOOLS = frozenset({
+    "tap_karo", "text_pe_tap", "field_bharo", "key_dabao",
+    "scroll_karo", "swipe_karo", "back_jao",
+    "screenshot_lo", "screen_padho",
+})
 
 
 @dataclass
@@ -149,15 +163,19 @@ class Agent:
         log.info("Session shuru: %s", self.session_id)
 
     # ------------------------------------------------------------------
-    #  Main turn
+    #  Main turn — STREAMING + PARALLEL TOOLS
     # ------------------------------------------------------------------
 
     async def run_turn(self, user_input: str) -> TurnResult:
         """
-        Ek user command process karo.
+        Ek user command process karo — STREAMING ke saath.
 
         Ye main entry point hai — CLI, voice, ya server sab isi ko
         call karte hain.
+
+        v2: Ab response STREAM hota hai — user ko turant tokens dikhne
+        lagte hain. Aur multiple tool calls PARALLEL mein chalte hain
+        (jab tak wo independent hain).
         """
         if not self.messages:
             await self.start_session()
@@ -172,14 +190,6 @@ class Agent:
         parsed = parse(user_input)
 
         # User ne kis bhasha mein likha? Usi mein jawab dena hai.
-        #
-        # Ye HAR TURN pe detect hota hai (session ke shuru mein ek baar
-        # nahi) kyunki user beech mein bhasha badal sakta hai — ek
-        # message English, agla Hinglish. Interface English hai, par
-        # BAAT user ki bhasha mein hoti hai.
-        #
-        # settings.language mein "hinglish"/"english" fix kiya ho to
-        # wahi use hota hai — auto-detect override nahi karta.
         configured = (self.settings.language or "auto").lower()
         if configured == "auto":
             reply_language = detect_language(user_input)
@@ -206,15 +216,36 @@ class Agent:
         used_tools: list[str] = []
         steps = 0
 
-        # --- Plan-Act-Observe loop ---
+        # --- Plan-Act-Observe loop (STREAMING) ---
         while steps < self.settings.max_steps:
             steps += 1
 
             try:
-                response: LLMResponse = await self.brain.think(
+                # STREAMING: token-by-token output
+                streamed_text = ""
+                final_tool_calls: list[ToolCall] = []
+
+                async for chunk in self.brain.think_stream(
                     messages=self.messages,
                     tools=tool_schemas,
+                ):
+                    # Real-time text output — user ko turant dikhao
+                    if chunk.delta:
+                        streamed_text += chunk.delta
+                        self.on_output("stream", chunk.delta)
+
+                    # Final chunk — tool calls aur usage info
+                    if chunk.is_final:
+                        final_tool_calls = chunk.tool_calls
+
+                # Build response from stream
+                response = LLMResponse(
+                    text=streamed_text,
+                    tool_calls=final_tool_calls,
+                    prompt_tokens=chunk.prompt_tokens if chunk else 0,
+                    completion_tokens=chunk.completion_tokens if chunk else 0,
                 )
+
             except NoProviderError as exc:
                 return TurnResult(reply="", error=str(exc), steps_used=steps)
             except Exception as exc:  # noqa: BLE001
@@ -225,7 +256,7 @@ class Agent:
                     steps_used=steps,
                 )
 
-            # --- LLM ne final jawab diya ---
+            # --- LLM ne final jawab diya (no tools) ---
             if not response.wants_tools:
                 reply = response.text or "(kuch jawab nahi aaya)"
                 self.messages.append(Message.assistant(reply))
@@ -245,21 +276,20 @@ class Agent:
             if response.text:
                 self.on_output("thinking", response.text)
 
+            # --- PARALLEL TOOL EXECUTION ---
             pending_question: str | None = None
+            tool_results = await self._execute_tools_parallel(
+                response.tool_calls, ctx, used_tools
+            )
 
-            for call in response.tool_calls:
-                used_tools.append(call.name)
-                self.on_output("tool", str(call))
-
-                result = await self.tools.execute(call, ctx)
-
+            # Process results
+            for call, result in tool_results:
                 # --- DIKHA DO MODE: step record karo ---
                 self._record_if_learning(call, result)
 
-                # Tool ka result LLM ko wapas do
                 content = result.output if result.ok else f"FAIL: {result.error}"
 
-                # Screenshot mila? To image ke saath bhejo (Gemini dekhega)
+                # Screenshot mila? To image ke saath bhejo
                 image_b64 = result.data.get("image_b64")
                 if image_b64:
                     self.messages.append(
@@ -313,6 +343,71 @@ class Agent:
             tool_calls=used_tools,
             error="max steps limit",
         )
+
+    # ------------------------------------------------------------------
+    #  Parallel Tool Execution
+    # ------------------------------------------------------------------
+
+    async def _execute_tools_parallel(
+        self,
+        tool_calls: list[ToolCall],
+        ctx: ToolContext,
+        used_tools: list[str],
+    ) -> list[tuple[ToolCall, object]]:
+        """
+        Multiple tool calls ko parallel mein chalao (jab safe ho).
+
+        STRATEGY:
+        - Agar saare tools independent hain (search, memory, etc.)
+          -> asyncio.gather se ek saath chalao
+        - Agar koi bhi tool UI-dependent hai (tap, type, scroll)
+          -> sequential chalao (order matters)
+        - Mixed case: independent pehle parallel, phir sequential
+
+        Returns: [(ToolCall, ActionResult), ...] in original order
+        """
+        if len(tool_calls) <= 1:
+            # Single tool — no parallelization needed
+            results = []
+            for call in tool_calls:
+                used_tools.append(call.name)
+                self.on_output("tool", str(call))
+                result = await self.tools.execute(call, ctx)
+                results.append((call, result))
+            return results
+
+        # Classify tools: independent vs sequential
+        has_sequential = any(
+            call.name in _SEQUENTIAL_TOOLS for call in tool_calls
+        )
+
+        if has_sequential:
+            # Any UI-dependent tool means ALL must run in order
+            # (because later tools depend on screen state from earlier ones)
+            results = []
+            for call in tool_calls:
+                used_tools.append(call.name)
+                self.on_output("tool", str(call))
+                result = await self.tools.execute(call, ctx)
+                results.append((call, result))
+            return results
+
+        # ALL tools are independent — run in PARALLEL!
+        self.on_output(
+            "debug",
+            f"{len(tool_calls)} independent tools — parallel execution",
+        )
+
+        async def _run_one(call: ToolCall):
+            used_tools.append(call.name)
+            self.on_output("tool", str(call))
+            result = await self.tools.execute(call, ctx)
+            return (call, result)
+
+        # asyncio.gather — sab ek saath chalenge
+        tasks = [_run_one(call) for call in tool_calls]
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+        return list(results)
 
     # ------------------------------------------------------------------
     #  Dikha Do Mode

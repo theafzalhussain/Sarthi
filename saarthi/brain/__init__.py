@@ -22,6 +22,7 @@ from .types import (
     Message,
     NoProviderError,
     Role,
+    StreamChunk,
     ToolCall,
     ToolSchema,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "ToolCall",
     "ToolSchema",
     "LLMResponse",
+    "StreamChunk",
     "BrainError",
     "NoProviderError",
     "AllProvidersFailedError",

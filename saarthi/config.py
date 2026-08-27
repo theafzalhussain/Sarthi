@@ -58,6 +58,12 @@ DEFAULT_MODELS: dict[str, str] = {
     # .env mein BLUESMINDS_MODEL set kar.
     "bluesminds": "gpt-4o",
 
+    # OpenCode Zen — curated coding agent models. Laguna S 2.1 Free
+    # (Stealth/Poolside) 256K context, 32K output. FREE, tool calling
+    # support karta hai. Coding agents ke liye optimized.
+    # Key: https://opencode.ai/zen -> API Keys
+    "opencode": "laguna-s-2.1-free",
+
     # ------------------------------------------------------------------
     #  Neeche ke teeno bhi NVIDIA ke SAME endpoint pe chalte hain
     #  (integrate.api.nvidia.com) aur SAME NVIDIA_API_KEY use karte
@@ -71,7 +77,8 @@ DEFAULT_MODELS: dict[str, str] = {
     # DeepSeek V4 Pro — 1.6T total / 49B active MoE, 1M token context.
     # Reasoning + coding + AGENTIC kaam ke liye banaya gaya hai, tool
     # calling support karta hai. Sabse smart option.
-    "deepseek": "deepseek-ai/deepseek-v4-pro",
+    # NOTE: deepseek-v4-pro EOL 2026-08-07, ab -0813 version hai.
+    "deepseek": "deepseek-ai/deepseek-v4-pro-0813",
 
     # Meta Muse Glimmer 30B — multimodal (text + IMAGE), NATIVE tool
     # calling, reasoning alag field mein aata hai. 131K context.
@@ -122,6 +129,7 @@ NVIDIA_HOSTED: tuple = ("nvidia", "deepseek", "muse", "gemma")
 #  Aakhir mein wahi dheema pad jaata hai.
 DEFAULT_PROVIDER_ORDER: list[str] = [
     "deepseek",    # 1.6T MoE, 1M context — SABSE SMART, agentic
+    "opencode",    # Laguna S 2.1 Free — 256K context, coding ke liye bana, FREE
     "nvidia",      # nemotron ultra — long-running agents ke liye bana
     "muse",        # vision + tools dono, 30B (tez bhi hai)
     "groq",        # sabse TEZ, aur iski key ALAG hai (backup ke liye)
@@ -463,6 +471,16 @@ class Settings:
                 # ban sakta hai screenshot dekhne mein
                 supports_vision="4o" in os.getenv("BLUESMINDS_MODEL", DEFAULT_MODELS["bluesminds"]),
                 **_provider_tuning("bluesminds"),
+            ),
+            # --- OpenCode Zen — coding agent models ---
+            ProviderConfig(
+                name="opencode",
+                api_key=os.getenv("OPENCODE_API_KEY"),
+                model=os.getenv("OPENCODE_MODEL", DEFAULT_MODELS["opencode"]),
+                supports_vision=False,
+                # Laguna S 2.1 tool calling support karta hai
+                supports_tools=_env_bool("OPENCODE_TOOLS", True),
+                **_provider_tuning("opencode"),
             ),
         ]
 

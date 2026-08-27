@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -25,6 +26,7 @@ from .types import (
     LLMResponse,
     Message,
     Role,
+    StreamChunk,
     ToolCall,
     ToolSchema,
     classify_http_error,
@@ -44,6 +46,9 @@ BASE_URLS: dict[str, str] = {
     "openrouter": "https://openrouter.ai/api/v1",
     # Bluesminds — multi-model gateway, 200+ models, OpenAI-compatible
     "bluesminds": "https://api.bluesminds.com/v1",
+    # OpenCode Zen — curated coding models, free tier available
+    # Key: https://opencode.ai/zen (API Keys section)
+    "opencode": "https://opencode.ai/zen/v1",
 
     # --- NVIDIA NIM pe hosted models ---
     # Ye chaar "providers" ek hi URL aur ek hi NVIDIA_API_KEY use karte
@@ -277,4 +282,163 @@ class OpenAICompatProvider(LLMProvider):
             model=self.model,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
+        )
+
+
+    # ------------------------------------------------------------------
+    #  Streaming — real-time token output
+    # ------------------------------------------------------------------
+
+    async def chat_stream(
+        self,
+        messages: list[Message],
+        tools: list[ToolSchema] | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+    ) -> AsyncIterator[StreamChunk]:
+        """
+        Streaming chat — tokens jaise aate hain, waise yield karo.
+
+        User ko turant dikhna shuru hota hai. Last chunk `is_final=True`.
+        Agar provider streaming support na kare ya error aaye to
+        fallback pe non-streaming response bhejta hai.
+        """
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [self._convert_message(m) for m in messages],
+            "temperature": temperature,
+            "max_tokens": self.resolve_max_tokens(max_tokens),
+            "stream": True,
+        }
+
+        top_p = self.resolve_top_p()
+        if top_p is not None:
+            payload["top_p"] = top_p
+
+        if tools:
+            payload["tools"] = [t.to_openai_format() for t in tools]
+            payload["tool_choice"] = "auto"
+
+        for key, value in self.extra_body.items():
+            payload.setdefault(key, value)
+
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        if self.name == "openrouter":
+            headers["HTTP-Referer"] = "https://github.com/saarthi-agent"
+            headers["X-Title"] = "SAARTHI"
+
+        url = f"{self.base_url}/chat/completions"
+
+        # Collected state for building final response
+        full_text = ""
+        tool_calls_builder: dict[int, dict] = {}  # index -> {id, name, args_str}
+        prompt_tokens = 0
+        completion_tokens = 0
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                async with client.stream(
+                    "POST", url, json=payload, headers=headers
+                ) as resp:
+                    if resp.status_code >= 400:
+                        # Error — read body and raise
+                        body = await resp.aread()
+                        raise classify_http_error(
+                            self.name, resp.status_code, body.decode("utf-8", errors="replace")
+                        )
+
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+
+                        try:
+                            data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        choices = data.get("choices") or []
+                        if not choices:
+                            # Usage info chunk (some providers send it separately)
+                            usage = data.get("usage")
+                            if usage:
+                                prompt_tokens = usage.get("prompt_tokens", 0)
+                                completion_tokens = usage.get("completion_tokens", 0)
+                            continue
+
+                        delta = choices[0].get("delta", {})
+                        finish_reason = choices[0].get("finish_reason")
+
+                        # --- Text delta ---
+                        text_delta = delta.get("content") or ""
+                        if text_delta:
+                            full_text += text_delta
+                            yield StreamChunk(delta=text_delta)
+
+                        # --- Tool call deltas ---
+                        if delta.get("tool_calls"):
+                            for tc_delta in delta["tool_calls"]:
+                                idx = tc_delta.get("index", 0)
+                                if idx not in tool_calls_builder:
+                                    tool_calls_builder[idx] = {
+                                        "id": tc_delta.get("id") or f"call_{uuid.uuid4().hex[:8]}",
+                                        "name": "",
+                                        "arguments": "",
+                                    }
+                                builder = tool_calls_builder[idx]
+                                fn = tc_delta.get("function", {})
+                                if fn.get("name"):
+                                    builder["name"] = fn["name"]
+                                if fn.get("arguments"):
+                                    builder["arguments"] += fn["arguments"]
+
+                        # --- Usage in final chunk ---
+                        if finish_reason:
+                            usage = data.get("usage") or {}
+                            if usage:
+                                prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+                                completion_tokens = usage.get("completion_tokens", completion_tokens)
+
+        except (BrainError, Exception) as exc:
+            # If streaming fails but we already got some text, don't lose it
+            if full_text or tool_calls_builder:
+                pass  # Fall through to final chunk below
+            else:
+                raise
+
+        # Build final tool calls from collected deltas
+        final_tool_calls: list[ToolCall] = []
+        for idx in sorted(tool_calls_builder.keys()):
+            builder = tool_calls_builder[idx]
+            name = builder["name"]
+            if not name:
+                continue
+            raw_args = builder["arguments"]
+            try:
+                args = json.loads(raw_args) if raw_args else {}
+            except json.JSONDecodeError:
+                args = {}
+            final_tool_calls.append(
+                ToolCall(id=builder["id"], name=name, arguments=args)
+            )
+
+        # Reasoning content fallback (same as non-streaming)
+        if not full_text and not final_tool_calls:
+            # Some providers put reasoning in the final chunk
+            pass
+
+        # Yield final chunk with complete info
+        yield StreamChunk(
+            delta="",
+            is_final=True,
+            tool_calls=final_tool_calls,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
         )

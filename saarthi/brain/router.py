@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import AsyncIterator
 
 from ..config import Settings, settings as default_settings
 from .base import LLMProvider
@@ -27,6 +28,7 @@ from .types import (
     ModelUnavailableError,
     NoProviderError,
     RateLimitError,
+    StreamChunk,
     ToolSchema,
 )
 
@@ -372,6 +374,129 @@ class Brain:
 
             except Exception as exc:  # noqa: BLE001 — unexpected bhi handle karo
                 log.warning("%s unexpected error: %s", provider.name, exc)
+                self._note_failure(provider.name)
+                errors.append(f"{provider.name}: unexpected — {exc}")
+                continue
+
+        raise AllProvidersFailedError(
+            "Saare providers fail ho gaye bhai:\n  "
+            + "\n  ".join(errors)
+        )
+
+    # ------------------------------------------------------------------
+    #  Streaming — real-time token output
+    # ------------------------------------------------------------------
+
+    async def think_stream(
+        self,
+        messages: list[Message],
+        tools: list[ToolSchema] | None = None,
+        temperature: float = 0.3,
+        max_tokens: int | None = None,
+        need_vision: bool = False,
+    ) -> AsyncIterator[StreamChunk]:
+        """
+        Streaming version of think() — tokens jaise aate hain yield karo.
+
+        Same fallback logic as think(): provider fail ho to agla try.
+        Par streaming shuru hone ke baad provider switch nahi hota —
+        ek baar stream chalu to wahi complete karo.
+
+        Usage:
+            full_text = ""
+            async for chunk in brain.think_stream(messages, tools):
+                if chunk.delta:
+                    print(chunk.delta, end="", flush=True)
+                    full_text += chunk.delta
+                if chunk.is_final:
+                    tool_calls = chunk.tool_calls
+        """
+        if not self.providers:
+            raise NoProviderError(self.settings.setup_help())
+
+        if max_tokens is None:
+            max_tokens = getattr(self.settings, "max_tokens", 4096)
+
+        # --- Provider selection (same as think()) ---
+        candidates = self.providers
+        if need_vision:
+            candidates = [p for p in self.providers if p.supports_vision]
+            if not candidates:
+                raise NoProviderError(
+                    "Screenshot samajhne ke liye Gemini key chahiye.\n"
+                    "Free key: https://aistudio.google.com/apikey\n"
+                    "Phir .env mein GEMINI_API_KEY daal de."
+                )
+
+        if any(m.has_image for m in messages):
+            vision_only = [p for p in candidates if p.supports_vision]
+            if vision_only:
+                candidates = vision_only
+
+        if tools:
+            with_tools = [p for p in candidates if p.supports_tools]
+            without_tools = [p for p in candidates if not p.supports_tools]
+            if with_tools:
+                candidates = with_tools + without_tools
+
+        healthy = [p for p in candidates if self._is_usable(p)]
+        if not healthy:
+            if candidates:
+                self.reset_health()
+                healthy = candidates
+            else:
+                raise NoProviderError(self.settings.setup_help())
+
+        errors: list[str] = []
+
+        for index, provider in enumerate(healthy):
+            try:
+                log.debug("Streaming from provider: %s", provider.name)
+
+                # Start streaming — ek baar shuru ho to complete karo
+                async for chunk in provider.chat_stream(
+                    messages=messages,
+                    tools=tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                ):
+                    yield chunk
+
+                # Successfully completed
+                if index > 0:
+                    self._say(
+                        "debug",
+                        f"{healthy[0].name} ne kaam nahi kiya, "
+                        f"{provider.name} se stream kiya",
+                    )
+                self._note_success(provider.name)
+                return  # Stream complete
+
+            except ModelUnavailableError as exc:
+                short = str(exc).splitlines()[0]
+                self.mark_dead(provider.name, short)
+                self._say("error", f"{provider.name} hata diya — {short}")
+                errors.append(f"{provider.name}: {exc}")
+                continue
+
+            except RateLimitError as exc:
+                self.mark_cooldown(provider.name)
+                self._say(
+                    "debug",
+                    f"{provider.name} ki limit khatam — "
+                    f"{self.COOLDOWN_SECONDS}s ke liye chhod raha hun",
+                )
+                errors.append(f"{provider.name}: {exc}")
+                continue
+
+            except BrainError as exc:
+                log.warning("%s stream fail: %s", provider.name, exc)
+                self._note_failure(provider.name)
+                errors.append(f"{provider.name}: {exc}")
+                continue
+
+            except Exception as exc:  # noqa: BLE001
+                log.warning("%s unexpected stream error: %s", provider.name, exc)
                 self._note_failure(provider.name)
                 errors.append(f"{provider.name}: unexpected — {exc}")
                 continue

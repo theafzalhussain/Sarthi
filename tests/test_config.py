@@ -23,7 +23,7 @@ NVIDIA_NIM = "https://integrate.api.nvidia.com/v1"
 class Providers(SaarthiTestCase):
     def test_8_providers_hain(self):
         with clean_env():
-            self.assertEqual(len(Settings.load().providers), 8)
+            self.assertEqual(len(Settings.load().providers), 9)
 
     def test_saare_providers_ka_base_url_hai(self):
         for name in DEFAULT_MODELS:
@@ -33,7 +33,7 @@ class Providers(SaarthiTestCase):
 
     def test_default_models_sahi_hain(self):
         expected = {
-            "deepseek": "deepseek-ai/deepseek-v4-pro",
+            "deepseek": "deepseek-ai/deepseek-v4-pro-0813",
             "muse": "meta/muse-glimmer-30b",
             "gemma": "google/diffusiongemma-26b-a4b-it",
             "nvidia": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -127,7 +127,7 @@ class ProviderOrder(SaarthiTestCase):
         self.assertEqual(DEFAULT_PROVIDER_ORDER[-1], "gemma")
 
     def test_8_providers_order_mein_hain(self):
-        self.assertEqual(len(DEFAULT_PROVIDER_ORDER), 8)
+        self.assertEqual(len(DEFAULT_PROVIDER_ORDER), 9)
         self.assertEqual(len(set(DEFAULT_PROVIDER_ORDER)), 8, "duplicate hai")
 
     def test_env_se_order_badal_sakta_hai(self):
@@ -151,7 +151,7 @@ class ProviderOrder(SaarthiTestCase):
             settings = Settings.load()
 
         self.assertTrue(settings.order_is_explicit)
-        self.assertEqual(set(settings.order_missing), {"deepseek", "muse", "gemma"})
+        self.assertEqual(set(settings.order_missing), {"deepseek", "muse", "gemma", "opencode"})
         self.assertEqual(settings.provider_order[-3:], ["deepseek", "muse", "gemma"])
 
     def test_bina_env_ke_explicit_flag_off_rehta_hai(self):

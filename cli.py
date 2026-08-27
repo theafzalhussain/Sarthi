@@ -86,22 +86,60 @@ async def ask_confirmation(action: str, details: dict) -> bool:
 # ----------------------------------------------------------------------
 
 
-def make_output_handler(verbose: bool):
+def make_output_handler(verbose: bool, state: dict | None = None):
     """Agent jo kar raha hai wo dikhao."""
+
+    # Streaming state — track kare ki abhi stream chal raha hai
+    streaming = {"active": False}
 
     def handle(kind: str, text: str) -> None:
         if not text:
             return
 
-        if kind == "thinking":
+        if kind == "stream":
+            # REAL-TIME streaming — token by token print karo
+            if not streaming["active"]:
+                streaming["active"] = True
+                # Stream shuru — new line pe print shuru karo
+                import sys
+                sys.stdout.write("  ")
+                sys.stdout.flush()
+            import sys
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            # Mark that reply has been streamed (prevents duplicate in ui.reply)
+            if state is not None:
+                state['streamed_reply'] = True
+        elif kind == "thinking":
+            # Stream khatam hua tha to line break do
+            if streaming["active"]:
+                streaming["active"] = False
+                import sys
+                sys.stdout.write("\n")
+                sys.stdout.flush()
             ui.activity("thinking", text.strip())
         elif kind == "tool":
+            if streaming["active"]:
+                streaming["active"] = False
+                import sys
+                sys.stdout.write("\n")
+                sys.stdout.flush()
             ui.activity("tool", text.strip())
         elif kind == "result":
+            if streaming["active"]:
+                streaming["active"] = False
+                import sys
+                sys.stdout.write("\n")
+                sys.stdout.flush()
             if verbose:
                 first = text.splitlines()[0] if text else ""
                 ui.activity("result", first[:150])
         elif kind == "error":
+            if streaming["active"]:
+                streaming["active"] = False
+                import sys
+                sys.stdout.write("\n")
+                sys.stdout.flush()
             first = text.splitlines()[0] if text else ""
             ui.activity("error", first[:200])
         elif kind == "debug":
@@ -526,7 +564,7 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
 
     if cmd == "/verbose":
         state["verbose"] = not state["verbose"]
-        agent.on_output = make_output_handler(state["verbose"])
+        agent.on_output = make_output_handler(state["verbose"], state)
         ui.muted(f"Verbose mode {'enabled' if state['verbose'] else 'disabled'}.")
         return True
 
@@ -571,7 +609,7 @@ async def main() -> int:
 
     agent = Agent(
         confirm=ask_confirmation,
-        on_output=make_output_handler(state["verbose"]),
+        on_output=make_output_handler(state["verbose"], state),
     )
 
     # --- Brain ready hai? ---
@@ -604,6 +642,7 @@ async def main() -> int:
             continue
 
         # --- Agent ko kaam do ---
+        state["streamed_reply"] = False
         started = time.monotonic()
         try:
             result = await agent.run_turn(user_input)
@@ -635,7 +674,13 @@ async def main() -> int:
                 if result.tool_calls:
                     bits.insert(1, ", ".join(result.tool_calls))
                 meta = f"  {ui.sym['bullet']}  ".join(bits)
-            ui.reply(result.reply, meta=meta)
+            # Agar reply streaming se already print ho chuka to skip
+            if state.get("streamed_reply"):
+                if meta:
+                    ui.muted(meta)
+                state["streamed_reply"] = False
+            else:
+                ui.reply(result.reply, meta=meta)
 
         # Free tier ke tokens bachao — purani baat trim karo
         agent.trim_history()
