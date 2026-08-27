@@ -23,13 +23,46 @@ from .safety import check_shell_safety, check_text_safety
 
 
 def _resolve_device(ctx: ToolContext, device: str | None):
-    """Device dhoondo, warna clear error do."""
+    """Device dhoondo, warna clear error do.
+    
+    SMART ROUTING: Agar device specify nahi kiya aur default device
+    pe capability nahi hai (jaise desktop pe screenshot/key_dabao), par
+    browser active hai — to browser pe route kar do automatically.
+    """
     dev = ctx.devices.get(device)
     if dev is None:
         available = ", ".join(ctx.devices.devices) or "koi nahi"
         return None, ActionResult.failure(
             f"'{device}' naam ka device nahi mila. Available: {available}"
         )
+    return dev, None
+
+
+def _resolve_device_smart(ctx: ToolContext, device: str | None, capability: Capability | None = None):
+    """
+    Smart device resolution — browser pe auto-route jab desktop fail hoga.
+    
+    Ye fix karta hai wo problem jab agent browser mein kaam kar raha hai
+    (YouTube khola, page padha) par key_dabao/screenshot_lo default device
+    (desktop) pe jaata hai aur fail hota hai.
+    """
+    dev = ctx.devices.get(device)
+    if dev is None:
+        available = ", ".join(ctx.devices.devices) or "koi nahi"
+        return None, ActionResult.failure(
+            f"'{device}' naam ka device nahi mila. Available: {available}"
+        )
+    
+    # Smart routing: device explicitly diya hai to wahi use karo
+    if device is not None:
+        return dev, None
+    
+    # Default device pe capability nahi hai? Browser try karo.
+    if capability and not dev.can(capability):
+        browser = ctx.devices.get("browser")
+        if browser is not None and browser.can(capability):
+            return browser, None
+    
     return dev, None
 
 
@@ -138,7 +171,7 @@ class ScreenshotTool(Tool):
     requires_capability = Capability.SCREENSHOT
 
     async def run(self, ctx: ToolContext, device: str | None = None) -> ActionResult:
-        dev, error = _resolve_device(ctx, device)
+        dev, error = _resolve_device_smart(ctx, device, Capability.SCREENSHOT)
         if error:
             return error
         return await dev.screenshot()
@@ -172,7 +205,7 @@ class TapTextTool(Tool):
     async def run(
         self, ctx: ToolContext, text: str, device: str | None = None
     ) -> ActionResult:
-        dev, error = _resolve_device(ctx, device)
+        dev, error = _resolve_device_smart(ctx, device, Capability.TAP)
         if error:
             return error
         return await dev.tap_text(text)
@@ -248,14 +281,14 @@ class PressKeyTool(Tool):
     description = (
         "Hardware ya special key dabao. Android: back/home/enter/recent/"
         "volume_up/volume_down/power. Desktop: enter/tab/esc ya combo "
-        "jaise 'ctrl+c'."
+        "jaise 'ctrl+c'. Browser mein bhi kaam karta hai (space=play/pause)."
     )
     parameters = {
         "type": "object",
         "properties": {
             "key": {
                 "type": "string",
-                "description": "Key ka naam, jaise 'back', 'home', 'enter'",
+                "description": "Key ka naam, jaise 'back', 'home', 'enter', 'space'",
             },
             **DEVICE_PARAM,
         },
@@ -266,7 +299,7 @@ class PressKeyTool(Tool):
     async def run(
         self, ctx: ToolContext, key: str, device: str | None = None
     ) -> ActionResult:
-        dev, error = _resolve_device(ctx, device)
+        dev, error = _resolve_device_smart(ctx, device, Capability.KEY)
         if error:
             return error
         return await dev.press_key(key)

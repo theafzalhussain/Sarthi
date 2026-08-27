@@ -653,36 +653,44 @@ class BrowserDevice(Device):
         # --- SMART PARTIAL MATCH via JavaScript ---
         # YouTube/Google results mein lambe text hote hain. User ya agent
         # chhota text deta hai. JS mein dhoondh ke click karo.
+        # Searches ALL visible elements (not just <a> and <button>)
         try:
-            clicked = await self._page.evaluate(f"""
-            (searchText) => {{
+            clicked = await self._page.evaluate("""
+            (searchText) => {
                 const lower = searchText.toLowerCase();
-                // Pehle links mein dhoondho (search results usually links hain)
-                const links = document.querySelectorAll('a, [role=link]');
-                for (const el of links) {{
-                    const elText = (el.innerText || el.textContent || '').toLowerCase();
-                    if (elText.includes(lower)) {{
+
+                // Strategy 1: Search ALL elements with text (covers YouTube's
+                // custom <ytd-video-renderer>, <yt-formatted-string>, etc.)
+                const allElements = document.querySelectorAll('a, [role=link], [role=button], button, [onclick], h3, span[role], yt-formatted-string, ytd-video-renderer #video-title');
+                for (const el of allElements) {
+                    const elText = (el.innerText || el.textContent || '').toLowerCase().trim();
+                    if (elText && elText.includes(lower)) {
                         const rect = el.getBoundingClientRect();
-                        if (rect.width > 5 && rect.height > 5) {{
-                            el.click();
+                        if (rect.width > 5 && rect.height > 5 && rect.top >= 0 && rect.top < window.innerHeight) {
+                            // Find the closest clickable parent if this element isn't clickable
+                            const clickTarget = el.closest('a') || el.closest('[role=link]') || el.closest('button') || el;
+                            clickTarget.click();
                             return true;
-                        }}
-                    }}
-                }}
-                // Phir buttons/clickable elements
-                const all = document.querySelectorAll('button, [role=button], [onclick]');
-                for (const el of all) {{
-                    const elText = (el.innerText || el.textContent || '').toLowerCase();
-                    if (elText.includes(lower)) {{
+                        }
+                    }
+                }
+
+                // Strategy 2: Even broader — any visible element containing the text
+                const everything = document.querySelectorAll('*');
+                for (const el of everything) {
+                    if (el.children.length > 3) continue; // Skip containers
+                    const elText = (el.innerText || el.textContent || '').toLowerCase().trim();
+                    if (elText && elText.includes(lower) && elText.length < 200) {
                         const rect = el.getBoundingClientRect();
-                        if (rect.width > 5 && rect.height > 5) {{
-                            el.click();
+                        if (rect.width > 10 && rect.height > 10 && rect.top >= 0 && rect.top < window.innerHeight) {
+                            const clickTarget = el.closest('a') || el.closest('[role=link]') || el;
+                            clickTarget.click();
                             return true;
-                        }}
-                    }}
-                }}
+                        }
+                    }
+                }
                 return false;
-            }}
+            }
             """, query)
 
             if clicked:
@@ -693,16 +701,34 @@ class BrowserDevice(Device):
             pass
 
         # --- FIRST CLICKABLE RESULT (YouTube/Google specific) ---
-        # Agar text match nahi hua par ye ek search results page hai,
-        # to pehla result click karo
+        # Agar text match nahi hua, to pehla video/search result click karo
         try:
-            # YouTube video results
-            yt_result = self._page.locator("ytd-video-renderer a#video-title, a.yt-simple-endpoint[href*='watch']").first
-            if await yt_result.count() > 0:
-                await yt_result.click(timeout=5000)
+            # YouTube video results — multiple selector strategies
+            yt_selectors = [
+                "ytd-video-renderer a#video-title",
+                "a.yt-simple-endpoint[href*='watch']",
+                "ytd-video-renderer a[href*='watch']",
+                "#contents ytd-video-renderer a",
+                "a[href*='/watch?v=']",
+            ]
+            for sel in yt_selectors:
+                locator = self._page.locator(sel).first
+                try:
+                    if await locator.count() > 0:
+                        await locator.click(timeout=4000)
+                        await asyncio.sleep(0.3)
+                        self._remember_url()
+                        return ActionResult.success(f"First video result clicked ('{query}' exact match nahi mila)")
+                except Exception:  # noqa: BLE001
+                    continue
+
+            # Google search results
+            google_result = self._page.locator("div.g a[href], div[data-hveid] a[href]").first
+            if await google_result.count() > 0:
+                await google_result.click(timeout=4000)
                 await asyncio.sleep(0.3)
                 self._remember_url()
-                return ActionResult.success(f"Pehla video result click kiya ('{query}' exact nahi mila)")
+                return ActionResult.success(f"First search result clicked ('{query}' exact match nahi mila)")
         except Exception:  # noqa: BLE001
             pass
 
