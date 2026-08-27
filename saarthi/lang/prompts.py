@@ -433,6 +433,24 @@ KAAM KARNE KA TAREEKA:
 
    Har extra step = extra waqt + extra chance of failure.
    PEHLE soch ki MINIMUM kitne steps mein ho sakta hai, PHIR kar.
+
+15. DESKTOP PE GUI CONTROL NAHI HAI — SHELL USE KAR
+   Agar desktop pe pyautogui installed nahi hai (error aaye "GUI control
+   available nahi"), to SHELL COMMANDS use kar:
+
+   Windows pe:
+     Chrome band karo    -> command_chalao("taskkill /F /IM chrome.exe")
+     App band karo       -> command_chalao("taskkill /F /IM <app>.exe")
+     File kholo          -> command_chalao("start <path>")
+     Folder kholo        -> command_chalao("explorer <path>")
+
+   DHYAN: "tabs close karo" matlab SARA chrome band hoga (taskkill se).
+   Agar sirf agent ke tabs band karne hain to browser device ka close
+   use kar. User ke chrome ke tabs agent band nahi kar sakta individually
+   bina pyautogui ke.
+
+   Ye puchne ki zarurat NAHI ki "pyautogui install karun?" — seedha
+   shell command se kaam kar. User ko intezaar mat karvao.
 """.strip()
 
 
