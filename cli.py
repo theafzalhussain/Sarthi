@@ -41,7 +41,7 @@ from saarthi.ui import BRAND, ERR, MUTED, OK, TEXT, WARN, Ui  # noqa: E402
 
 ui = Ui()
 
-TAGLINE = "Hinglish-first personal AI agent"
+TAGLINE = "Personal AI Agent"
 
 
 # ----------------------------------------------------------------------
@@ -202,8 +202,8 @@ async def show_startup(agent: Agent) -> None:
 
     ui.blank()
     ui.line(
-        f"  Ready.   {ui.sym['bullet']}   Streaming ON"
-        f"   {ui.sym['bullet']}   Hinglish or English"
+        f"  Ready.   {ui.sym['bullet']}   Streaming"
+        f"   {ui.sym['bullet']}   Type in any language"
         f"   {ui.sym['bullet']}   /help",
         OK,
     )

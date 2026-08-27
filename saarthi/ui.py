@@ -120,7 +120,7 @@ _WORDMARK_GRADIENT = [
 _WORDMARK_SMALL = "S A A R T H I"
 
 # Tagline for v2
-_V2_BADGE = "streaming · parallel · multi-task"
+_V2_BADGE = "streaming | parallel | multi-task"
 
 
 # ======================================================================

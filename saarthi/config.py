@@ -128,13 +128,13 @@ NVIDIA_HOSTED: tuple = ("nvidia", "deepseek", "muse", "gemma")
 #  kar deta hai, jabki tez-par-kamzor model 3-4 baar galti karta hai.
 #  Aakhir mein wahi dheema pad jaata hai.
 DEFAULT_PROVIDER_ORDER: list[str] = [
-    "deepseek",    # 1.6T MoE, 1M context — SABSE SMART, agentic
-    "opencode",    # Laguna S 2.1 Free — 256K context, coding ke liye bana, FREE
-    "nvidia",      # nemotron ultra — long-running agents ke liye bana
-    "muse",        # vision + tools dono, 30B (tez bhi hai)
-    "groq",        # sabse TEZ, aur iski key ALAG hai (backup ke liye)
-    "bluesminds",  # gateway (gpt-4o/gpt-5.6/glm)
-    "openrouter",  # 98 free models ka router
+    "groq",        # FASTEST — 1.3s response, alag key (backup ke liye best)
+    "muse",        # 0.6s, vision + tools dono, 30B
+    "opencode",    # Laguna S 2.1 Free — 256K context, coding optimized
+    "bluesminds",  # gateway (gpt-4o/gpt-5.6/glm) — fast + vision
+    "nvidia",      # nemotron ultra — smart, agentic
+    "deepseek",    # 1.6T MoE, 1M context — SABSE SMART par slow (backup)
+    "openrouter",  # free models ka router
     "gemini",      # aankh (screenshot)
     "gemma",       # SABSE AAKHIR — tool calling bharosemand nahi
 ]

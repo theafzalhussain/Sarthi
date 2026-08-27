@@ -480,7 +480,7 @@ class BrowserDevice(Device):
         try:
             await self._page.goto(target, wait_until="domcontentloaded")
             # Thoda ruk jao — JS content load ho jaaye
-            await asyncio.sleep(1.2)
+            await asyncio.sleep(0.3)
             title = await self._page.title()
         except Exception as exc:  # noqa: BLE001
             return ActionResult.failure(f"'{target}' khul nahi paya: {exc}")
@@ -608,7 +608,7 @@ class BrowserDevice(Device):
             return error
         try:
             await self._page.mouse.click(int(x), int(y))
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.3)
             # Click se page badal sakta hai — agent ka URL update karo,
             # warna agli baar lagega ki user ne navigate kiya tha
             self._remember_url()
@@ -644,7 +644,7 @@ class BrowserDevice(Device):
                 if await locator.count() == 0:
                     continue
                 await locator.first.click(timeout=6000)
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.2)
                 self._remember_url()
                 return ActionResult.success(f"'{query}' pe click kiya")
             except Exception:  # noqa: BLE001
@@ -686,7 +686,7 @@ class BrowserDevice(Device):
             """, query)
 
             if clicked:
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.3)
                 self._remember_url()
                 return ActionResult.success(f"'{query}' pe click kiya (partial match)")
         except Exception:  # noqa: BLE001
@@ -700,7 +700,7 @@ class BrowserDevice(Device):
             yt_result = self._page.locator("ytd-video-renderer a#video-title, a.yt-simple-endpoint[href*='watch']").first
             if await yt_result.count() > 0:
                 await yt_result.click(timeout=5000)
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.3)
                 self._remember_url()
                 return ActionResult.success(f"Pehla video result click kiya ('{query}' exact nahi mila)")
         except Exception:  # noqa: BLE001
@@ -768,7 +768,7 @@ class BrowserDevice(Device):
         if key.lower().strip() in ("back", "peeche", "wapas"):
             try:
                 await self._page.go_back()
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.2)
                 self._remember_url()
                 return ActionResult.success("peeche gaya")
             except Exception as exc:  # noqa: BLE001
@@ -776,7 +776,7 @@ class BrowserDevice(Device):
 
         try:
             await self._page.keyboard.press(target)
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.2)
             # Enter se search/submit ho sakta hai -> URL badal jaata hai
             self._remember_url()
             return ActionResult.success(f"{key} press kiya")
@@ -792,7 +792,7 @@ class BrowserDevice(Device):
             return error
         try:
             await self._page.mouse.wheel(x2 - x1, y2 - y1)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
             return ActionResult.success(f"scroll kiya ({x2 - x1},{y2 - y1})")
         except Exception as exc:  # noqa: BLE001
             return ActionResult.failure(f"Scroll fail: {exc}")
@@ -821,7 +821,7 @@ class BrowserDevice(Device):
 
         try:
             await self._page.mouse.wheel(*delta)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
             return ActionResult.success(f"{direction} scroll kiya")
         except Exception as exc:  # noqa: BLE001
             return ActionResult.failure(f"Scroll fail: {exc}")

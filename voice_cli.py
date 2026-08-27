@@ -43,7 +43,7 @@ from saarthi.voice.tts import TTSEngine  # noqa: E402
 
 ui = Ui()
 
-TAGLINE = "Hinglish-first personal AI agent"
+TAGLINE = "Personal AI Agent"
 
 
 # ----------------------------------------------------------------------
@@ -268,8 +268,8 @@ async def main() -> int:
         return 0
 
     ui.line(
-        f"  Listening.   {ui.sym['bullet']}   Speak in Hinglish or English"
-        f"   {ui.sym['bullet']}   say 'band karo' or press Ctrl+C to exit",
+        f"  Listening.   {ui.sym['bullet']}   Speak in any language"
+        f"   {ui.sym['bullet']}   say 'stop' or press Ctrl+C to exit",
         OK,
     )
     ui.blank()
