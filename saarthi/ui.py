@@ -119,6 +119,9 @@ _WORDMARK_GRADIENT = [
 # Chhoti terminal ya no-unicode ke liye
 _WORDMARK_SMALL = "S A A R T H I"
 
+# Tagline for v2
+_V2_BADGE = "streaming · parallel · multi-task"
+
 
 # ======================================================================
 #  SYMBOLS — har ek ka ASCII fallback
@@ -364,6 +367,9 @@ class Ui:
         sep = f"  {self.sym['bullet']}  "
         self.blank()
         self.line("  " + sep.join(bits), MUTED)
+
+        # v2 features badge
+        self.line(f"  {_V2_BADGE}", ACCENT)
         self.blank()
 
     # ------------------------------------------------------------------
@@ -553,6 +559,11 @@ class Ui:
                 health = brain.health() or {}
             except Exception:  # noqa: BLE001 — purana Brain object bhi chale
                 health = {}
+
+        # Provider count badge
+        total = len(brain.providers)
+        healthy_count = sum(1 for s in health.values() if s == "ok") if health else total
+        self.muted(f"{healthy_count}/{total} providers active  |  streaming: on  |  parallel tools: on")
 
         rows = []
         for index, provider in enumerate(brain.providers):

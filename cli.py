@@ -202,8 +202,9 @@ async def show_startup(agent: Agent) -> None:
 
     ui.blank()
     ui.line(
-        f"  Ready.   {ui.sym['bullet']}   Type a request in Hinglish or English"
-        f"   {ui.sym['bullet']}   /help for commands",
+        f"  Ready.   {ui.sym['bullet']}   Streaming ON"
+        f"   {ui.sym['bullet']}   Hinglish or English"
+        f"   {ui.sym['bullet']}   /help",
         OK,
     )
     ui.blank()
