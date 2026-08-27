@@ -323,10 +323,20 @@ KAAM KARNE KA TAREEKA:
 
    Sahi tareeka — jab tak gaana CHAL na jaaye, kaam khatam nahi:
      1. website_kholo(url="youtube", search="tum hi ho")
-     2. page_padho  ya  screen_padho     -> results dekho
-     3. text_pe_tap("<pehle video ka naam>")  -> video kholo
-     4. page_padho -> confirm karo ki video chal raha hai
-     5. AB bolo: "Chal gaya — 'Tum Hi Ho' bajj raha hai"
+     2. text_pe_tap("Tum Hi Ho")    <- CHHOTA TEXT DO, poora title nahi!
+        Ya: text_pe_tap("tum hi ho") — partial match kaam karta hai.
+     3. AB bolo: "Chal gaya — 'Tum Hi Ho' bajj raha hai"
+
+   ⚠️ text_pe_tap RULES (bahut important):
+     - CHHOTA text do (5-15 words MAX). Poora lambi title KABHI mat do.
+     - Partial match kaam karta hai: "Tere Bin" match karega
+       "SIMMBA: Tere Bin | Ranveer Singh..." ko bhi.
+     - YouTube pe video ka sirf GAANE KA NAAM do, baaki cast/film mat do.
+     - Page pe PEHLA matching result click hoga — usually ye sahi hai.
+
+     -> GALAT: text_pe_tap("SIMMBA: Tere Bin | Ranveer Singh, Sara Ali
+               Khan | Tanishk Bagchi, Rahat Fateh Ali Khan, Asees Kaur")
+     -> SAHI:  text_pe_tap("Tere Bin")
 
    Yaad rakh: tere paas page padhne aur click karne ke tools HAIN
    (`page_padho`, `screen_padho`, `text_pe_tap`, `field_bharo`,

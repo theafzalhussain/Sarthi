@@ -620,8 +620,8 @@ class BrowserDevice(Device):
         """
         Text pe click karo.
 
-        Base class ka version bhi chalta (ui_tree se), par Playwright ka
-        apna text-matching zyada reliable hai — isliye override kiya.
+        SMART MATCHING: Pehle exact try karo, phir partial. YouTube
+        videos ke lambe naam mein se chhota hissa bhi kaam karega.
         Na mile to base class wala fallback try hota hai.
         """
         error = await self._ensure_browser()
@@ -630,7 +630,7 @@ class BrowserDevice(Device):
 
         query = text.strip()
 
-        # Playwright ke locators — accuracy ke order mein
+        # --- FAST PATH: Playwright ke locators ---
         attempts = [
             self._page.get_by_role("button", name=query, exact=False),
             self._page.get_by_role("link", name=query, exact=False),
@@ -649,6 +649,62 @@ class BrowserDevice(Device):
                 return ActionResult.success(f"'{query}' pe click kiya")
             except Exception:  # noqa: BLE001
                 continue
+
+        # --- SMART PARTIAL MATCH via JavaScript ---
+        # YouTube/Google results mein lambe text hote hain. User ya agent
+        # chhota text deta hai. JS mein dhoondh ke click karo.
+        try:
+            clicked = await self._page.evaluate(f"""
+            (searchText) => {{
+                const lower = searchText.toLowerCase();
+                // Pehle links mein dhoondho (search results usually links hain)
+                const links = document.querySelectorAll('a, [role=link]');
+                for (const el of links) {{
+                    const elText = (el.innerText || el.textContent || '').toLowerCase();
+                    if (elText.includes(lower)) {{
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width > 5 && rect.height > 5) {{
+                            el.click();
+                            return true;
+                        }}
+                    }}
+                }}
+                // Phir buttons/clickable elements
+                const all = document.querySelectorAll('button, [role=button], [onclick]');
+                for (const el of all) {{
+                    const elText = (el.innerText || el.textContent || '').toLowerCase();
+                    if (elText.includes(lower)) {{
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width > 5 && rect.height > 5) {{
+                            el.click();
+                            return true;
+                        }}
+                    }}
+                }}
+                return false;
+            }}
+            """, query)
+
+            if clicked:
+                await asyncio.sleep(1.0)
+                self._remember_url()
+                return ActionResult.success(f"'{query}' pe click kiya (partial match)")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # --- FIRST CLICKABLE RESULT (YouTube/Google specific) ---
+        # Agar text match nahi hua par ye ek search results page hai,
+        # to pehla result click karo
+        try:
+            # YouTube video results
+            yt_result = self._page.locator("ytd-video-renderer a#video-title, a.yt-simple-endpoint[href*='watch']").first
+            if await yt_result.count() > 0:
+                await yt_result.click(timeout=5000)
+                await asyncio.sleep(1.0)
+                self._remember_url()
+                return ActionResult.success(f"Pehla video result click kiya ('{query}' exact nahi mila)")
+        except Exception:  # noqa: BLE001
+            pass
 
         # Playwright se nahi mila — ui_tree wala tareeka try karo
         # (isi se self-healing bhi chalta hai)
