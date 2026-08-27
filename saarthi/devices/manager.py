@@ -16,7 +16,7 @@ import logging
 
 from ..config import Settings, settings as default_settings
 from ..lang.lexicon import detect_target_device
-from .android import AndroidDevice
+from .android import AndroidDevice, list_adb_serials
 from .base import ActionResult, Capability, Device
 from .browser import BrowserDevice
 from .desktop import DesktopDevice
@@ -59,6 +59,7 @@ class DeviceManager:
         self.settings = config or default_settings
         self.devices: dict[str, Device] = {}
         self._availability_cache: dict[str, bool] = {}
+        self._multi_phone_serials: list[str] = []  # multiple phones detected
 
     # ------------------------------------------------------------------
     #  Registration
@@ -75,12 +76,56 @@ class DeviceManager:
 
         Desktop hamesha available hai. Android tab jab ADB connected ho.
         Browser tab jab Playwright installed ho.
-        Register abhi karte hain, availability check baad mein.
+
+        MULTI-PHONE: Agar 2+ phones connected hain, har ek ko alag
+        register karta hai (android-<serial>). "android" naam bhi
+        kaam karta rahe — backward compatibility ke liye.
         """
+        import os
+        
         self.register(DesktopDevice(name="desktop"))
-        self.register(
-            AndroidDevice(name="android", adb_path=self.settings.adb_path)
-        )
+
+        # --- Multi-phone enumeration ---
+        pinned_serial = os.getenv("SAARTHI_ANDROID_SERIAL", "").strip() or None
+        adb_path = self.settings.adb_path
+
+        if pinned_serial:
+            # User ne specific phone pin kiya hai
+            self.register(
+                AndroidDevice(name="android", adb_path=adb_path, serial=pinned_serial)
+            )
+        else:
+            # Enumerate connected phones (3s timeout, crash nahi)
+            serials = list_adb_serials(adb_path, timeout=3.0)
+
+            if len(serials) == 0:
+                # Koi phone nahi — purana behaviour: ek "android" register
+                # (user baad mein connect karega, availability check handle karega)
+                self.register(AndroidDevice(name="android", adb_path=adb_path))
+
+            elif len(serials) == 1:
+                # Ek phone — "android" naam se (backward compatible)
+                self.register(
+                    AndroidDevice(name="android", adb_path=adb_path, serial=serials[0])
+                )
+
+            else:
+                # Multiple phones — har ek ko register karo
+                # Pehla phone "android" bhi ban jaata hai (default)
+                for i, serial in enumerate(serials):
+                    device_name = f"android-{serial.lower()}"
+                    self.register(
+                        AndroidDevice(name=device_name, adb_path=adb_path, serial=serial)
+                    )
+
+                # "android" alias = pehla phone (backward compatibility)
+                self.register(
+                    AndroidDevice(name="android", adb_path=adb_path, serial=serials[0])
+                )
+
+                # Track for startup notification
+                self._multi_phone_serials = serials
+
         self.register(BrowserDevice(name="browser"))
 
     # ------------------------------------------------------------------

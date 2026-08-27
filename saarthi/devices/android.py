@@ -35,6 +35,50 @@ from .base import ActionResult, Capability, Device, UIElement
 
 log = logging.getLogger("saarthi.devices.android")
 
+
+# ======================================================================
+#  ADB serial discovery (SYNC — setup_defaults mein use hota hai)
+# ======================================================================
+
+
+def list_adb_serials(adb_path: str = "adb", timeout: float = 3.0) -> list[str]:
+    """
+    Connected Android devices ke serials nikaalo (SYNC).
+
+    Returns sirf 'device' state wale — offline/unauthorized skip.
+    ADB na mile ya timeout ho to KHALI LIST, crash NAHI.
+
+    Sync kyun: DeviceManager.setup_defaults() sync hai. Async
+    _adb_raw yahan use nahi kar sakte.
+    """
+    import shutil
+    import subprocess
+
+    # ADB installed nahi hai — bahut common scenario
+    if not shutil.which(adb_path) and "/" not in adb_path and "\\" not in adb_path:
+        return []
+
+    try:
+        result = subprocess.run(
+            [adb_path, "devices"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    serials: list[str] = []
+    for line in result.stdout.splitlines()[1:]:  # skip "List of devices attached"
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "device":
+            serials.append(parts[0])
+
+    return serials
+
 # Hinglish/simple key naam -> Android keycode
 KEY_MAP: dict[str, str] = {
     "home": "KEYCODE_HOME",

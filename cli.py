@@ -173,6 +173,19 @@ async def show_startup(agent: Agent) -> None:
     if not agent.brain.has_vision:
         ui.muted("No vision provider — screenshots cannot be analysed (/models)")
 
+    # Multi-phone detected — tell user
+    if agent.devices._multi_phone_serials:
+        serials = agent.devices._multi_phone_serials
+        ui.blank()
+        ui.hint(
+            f"{len(serials)} phones detected:\n"
+            + "\n".join(f"  {i+1}. {s}" for i, s in enumerate(serials))
+            + f"\n\nDefault: {serials[0]}\n"
+            "To pin a specific phone, set in .env:\n"
+            f"  SAARTHI_ANDROID_SERIAL={serials[0]}",
+            title="multiple phones",
+        )
+
     # .env mein purana provider order pada hai?
     #
     # Ye ek chup-chaap trap hai: user ne pehle order likha tha, baad mein
