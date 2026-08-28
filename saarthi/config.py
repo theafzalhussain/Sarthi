@@ -91,6 +91,14 @@ DEFAULT_MODELS: dict[str, str] = {
     # DHYAN: ye diffusion model hai, iska tool calling bharosemand
     # nahi hai. Isliye default mein tools OFF hain (neeche dekh).
     "gemma": "google/diffusiongemma-26b-a4b-it",
+
+    # --- OLLAMA — on-device, free, private ---
+    # qwen2.5:7b choose kiya kyunki:
+    #   - Tool calling SUPPORT karta hai (SAARTHI ke liye zaroori)
+    #   - 7B chhota hai, 8GB RAM mein fit hota hai (Pillar #3)
+    #   - Hinglish samajhta hai
+    # Badalna hai? .env mein OLLAMA_MODEL=llama3.1:8b (ya jo bhi)
+    "ollama": "qwen2.5:7b",
 }
 
 
@@ -152,6 +160,11 @@ DEFAULT_PROVIDER_ORDER: list[str] = [
     "deepseek",    # 1.6T MoE, 1M context — SABSE SMART par slow (backup)
     "openrouter",  # free models ka router
     "gemini",      # aankh (screenshot)
+    "ollama",      # LOCAL — zero rate limit, par user ne install kiya ho tabhi
+                   # Aakhir ke paas ISLIYE: jab tak user ne `ollama serve` nahi
+                   # chalaya, iska request fail hoga. OLLAMA_ENABLED=true se
+                   # on hota hai — bina uske available_providers mein aayega
+                   # hi nahi, to order matter nahi karta.
     "gemma",       # SABSE AAKHIR — tool calling bharosemand nahi
 ]
 
@@ -306,9 +319,35 @@ class ProviderConfig:
     max_tokens: int | None = None
     top_p: float | None = None
 
+    # LOCAL PROVIDERS (jaise Ollama) ko API key nahi chahiye.
+    #
+    # Pehle is_available sirf key check karta tha — isliye Ollama
+    # available_providers mein KABHI aata hi nahi tha. Ab:
+    #   requires_key=True  (default) -> purana behaviour, cloud ke liye
+    #   requires_key=False           -> bina key ke bhi available
+    #
+    # ⚠️ Cloud providers pe ye KABHI False mat karna — warna bina key
+    # wale cloud providers try honge aur har turn mein bekaar 401.
+    requires_key: bool = True
+
     @property
     def is_available(self) -> bool:
-        """Key hai ya nahi — yahi decide karta hai use kar sakte hain ya nahi."""
+        """
+        Ye provider use karne layak hai?
+
+        Cloud providers ke liye key zaroori hai. Local providers
+        (Ollama) ke liye key nahi chahiye — requires_key=False se
+        bypass hota hai.
+
+        ⚠️ REGRESSION GUARD: bina key wala CLOUD provider (requires_key=True)
+        yahan se KABHI True nahi aana chahiye — warna har turn mein
+        bekaar 401 aayega aur 1-2 second barbaad.
+        """
+        if not self.requires_key:
+            # Local provider (Ollama) — key ki zarurat nahi.
+            # Par user ne explicitly enable kiya ho tabhi chalao,
+            # warna bina Ollama install kiye network timeout aayega.
+            return _env_bool("OLLAMA_ENABLED", False) if self.name == "ollama" else True
         return bool(self.api_key and self.api_key.strip())
 
 
@@ -506,6 +545,29 @@ class Settings:
                 # Laguna S 2.1 tool calling support karta hai
                 supports_tools=_env_bool("OPENCODE_TOOLS", True),
                 **_provider_tuning("opencode"),
+            ),
+            # --- OLLAMA — on-device LLM, local, free, private ---
+            #
+            # Kyun ye sabse accha hai SAARTHI ke liye:
+            #   - ZERO rate limit (Groq ke 8000 TPM se chhut jaata hai)
+            #   - ZERO cost (model ek baar download, phir unlimited)
+            #   - ZERO data leak (screen text, notifications, sab local)
+            #   - Internet na ho to bhi chale
+            #
+            # API key nahi chahiye (local server hai). requires_key=False
+            # isliye hai ki is_available bina key ke bhi True de.
+            #
+            # OLLAMA_ENABLED=true .env mein likhna padega — warna ye
+            # available nahi maana jaayega. Kyun: Ollama install nahi
+            # hai aur ye try ho to ek bekaar network timeout lagega.
+            ProviderConfig(
+                name="ollama",
+                api_key=os.getenv("OLLAMA_API_KEY", "ollama"),  # dummy — Ollama ko farak nahi padta
+                model=os.getenv("OLLAMA_MODEL", DEFAULT_MODELS["ollama"]),
+                supports_vision=_env_bool("OLLAMA_VISION", False),
+                supports_tools=_env_bool("OLLAMA_TOOLS", True),
+                requires_key=False,
+                **_provider_tuning("ollama"),
             ),
         ]
 

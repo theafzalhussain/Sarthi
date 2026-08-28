@@ -210,6 +210,8 @@ class FakeHTTP:
                 names.append("openrouter")
             elif "googleapis" in url:
                 names.append("gemini")
+            elif "localhost:11434" in url or "ollama" in url:
+                names.append("ollama")
             else:
                 names.append(url)
         return names

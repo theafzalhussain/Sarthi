@@ -13,6 +13,7 @@ BASE_URLS mein ek line daalni hai. Bas. Baaki kuch nahi badalta.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -58,6 +59,12 @@ BASE_URLS: dict[str, str] = {
     "deepseek": _NVIDIA_NIM,   # deepseek v4 pro — sabse smart, 1M ctx
     "muse": _NVIDIA_NIM,       # meta muse glimmer — vision + tools
     "gemma": _NVIDIA_NIM,      # google diffusiongemma — vision
+
+    # --- OLLAMA — on-device LLM, ZERO rate limit, ZERO cost ---
+    # OpenAI-compatible endpoint. OLLAMA_HOST se override hota hai
+    # (kuch log doosri machine ya port pe chalate hain).
+    # Fayda: privacy (data local rehta hai) + no rate limit + free.
+    "ollama": os.getenv("OLLAMA_HOST", "http://localhost:11434") + "/v1",
 }
 
 
@@ -244,6 +251,15 @@ class OpenAICompatProvider(LLMProvider):
             async with httpx.AsyncClient(timeout=90.0) as client:
                 resp = await client.post(url, json=payload, headers=headers)
         except httpx.RequestError as exc:
+            # Ollama band ho to actionable error — "ollama serve" chalao
+            if self.name == "ollama":
+                raise BrainError(
+                    f"ollama se connection nahi hua — {exc}\n"
+                    "Check kar:\n"
+                    "  1. `ollama serve` chal raha hai?\n"
+                    "  2. `ollama list` se model check kar (pull hua hai?)\n"
+                    "  3. OLLAMA_HOST sahi hai? (.env mein dekh)"
+                ) from exc
             raise BrainError(f"{self.name}: network problem — {exc}") from exc
 
         # Error ko classify karo — rate limit (temporary) aur dead model

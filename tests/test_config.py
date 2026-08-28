@@ -23,7 +23,7 @@ NVIDIA_NIM = "https://integrate.api.nvidia.com/v1"
 class Providers(SaarthiTestCase):
     def test_8_providers_hain(self):
         with clean_env():
-            self.assertEqual(len(Settings.load().providers), 9)
+            self.assertEqual(len(Settings.load().providers), 10)
 
     def test_saare_providers_ka_base_url_hai(self):
         for name in DEFAULT_MODELS:
