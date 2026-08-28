@@ -145,31 +145,51 @@ class ProviderOrder(SaarthiTestCase):
                 f"'{first}' pehle hai par tools support nahi karta",
             )
 
-    def test_order_ka_faisla_document_hai(self):
+    def test_tight_rate_limit_wala_provider_PEHLE_nahi_hai(self):
         """
-        ⚠️ YE TEST TABHI BADLO JAB FAISLA JAAN-BOOJH KE BADLA HO.
+        ⚠️ YE ASLI SABAK HAI — do baar seekha gaya.
 
-        Do soch hain aur dono theek hain — TRADEOFF hai:
+        Pehle `deepseek` primary tha (sabse smart, par slow). Phir speed
+        ke liye `groq` primary banaya gaya — "1.3s response".
 
-          SMART-FIRST : deepseek pehle. 1.6T MoE, 1M context, agentic
-                        multi-step kaam mein sabse accha. Par slow.
-          SPEED-FIRST : groq pehle. ~1.3s response. Rozana ke chhote
-                        command ("paytm kholo") mein bahut behtar lagta
-                        hai. Par bade multi-step kaam mein kamzor.
+        Par groq ke free tier mein 8000 TPM ka limit hai, aur hamara
+        system prompt hi ~5000 token ka hai. Nateeja: 1-2 message ke baad
+        HAR BAAR rate limit. Speed bekaar jab request hi fail ho jaaye.
+        Ab `muse` primary hai (0.6s, NVIDIA endpoint, tight TPM nahi).
 
-        Abhi SPEED-FIRST chuna gaya hai (commit 6a49044, "5x faster
-        response"). Pehle SMART-FIRST tha.
+        Pehle ye test pehle provider ka NAAM pin karta tha. Wo galat
+        approach thi — order genuinely tune hota rehta hai, aur test har
+        tuning pe fail hone lagta tha bina koi asli baat batae.
 
-        Ye test us faisle ka RECORD hai. Order badle to yahan bhi
-        badlo — aur comment mein wajah likho, taaki agla banda (ya AI)
-        samajh sake ki ye ittefaq nahi tha.
+        Ab test wo cheez lock karta hai jo SEEKHI gayi hai: tight rate
+        limit wala provider PRIMARY nahi ban sakta. Order badalne ki
+        aazadi hai, wahi galti dohrane ki nahi.
         """
-        self.assertEqual(
-            DEFAULT_PROVIDER_ORDER[0], "groq",
-            "Provider order badla hai. Agar jaan-boojh ke badla hai to is "
-            "test ko update karo aur wajah likho. Agar galti se badla hai "
-            "to config.py wapas theek karo.",
+        from saarthi.config import TIGHT_RATE_LIMIT_PROVIDERS
+
+        first = DEFAULT_PROVIDER_ORDER[0]
+        self.assertNotIn(
+            first, TIGHT_RATE_LIMIT_PROVIDERS,
+            f"'{first}' primary hai par uska free tier tight hai "
+            f"({TIGHT_RATE_LIMIT_PROVIDERS.get(first)}). "
+            f"1-2 message ke baad har baar rate limit lagegi.",
         )
+
+    def test_tight_limit_wale_order_mein_reh_sakte_hain(self):
+        """
+        Ban nahi karna hai — sirf primary banne se rokna hai. Groq backup
+        ke liye achha hai (chhote query pe bahut tez), aur uski key ALAG
+        hai to jab NVIDIA down ho tab wo bachata hai.
+        """
+        from saarthi.config import TIGHT_RATE_LIMIT_PROVIDERS
+
+        for name in TIGHT_RATE_LIMIT_PROVIDERS:
+            with self.subTest(provider=name):
+                self.assertIn(
+                    name, DEFAULT_PROVIDER_ORDER,
+                    f"'{name}' order se poori tarah hata diya — backup ke "
+                    f"liye rakhna behtar hai",
+                )
 
     def test_gemma_aakhir_mein_hai(self):
         """Tools bharosemand nahi — sabse aakhir."""

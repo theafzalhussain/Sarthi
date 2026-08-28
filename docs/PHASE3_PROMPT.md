@@ -33,7 +33,7 @@ screenshot caching, multi-phone support, aur retry logic.
 
 ## Current state — ye VERIFIED hai, dobara khoj mat karo
 
-- 361 tests pass (`python run_tests.py`)
+- 362 tests pass (`python run_tests.py`)
 - 9 LLM providers, 39 tools, 3 devices (android/browser/desktop)
 - Agent loop: `saarthi/agent.py` → `Agent.run_turn()`, line ~169.
   Plan-Act-Observe loop line ~220: `while steps < self.settings.max_steps:`

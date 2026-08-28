@@ -127,6 +127,22 @@ NVIDIA_HOSTED: tuple = ("nvidia", "deepseek", "muse", "gemma")
 #  ho wo pehle rakho" — kyunki smart model ek hi prompt mein pura kaam
 #  kar deta hai, jabki tez-par-kamzor model 3-4 baar galti karta hai.
 #  Aakhir mein wahi dheema pad jaata hai.
+# Jinke free tier mein TIGHT rate limit hai — ye PRIMARY nahi ban sakte.
+#
+# ⚠️ YE EK ASLI SABAK HAI, TASTE NAHI.
+#
+# Groq ko "sabse tez" dekh ke primary bana diya gaya tha (1.3s response).
+# Par uske free tier mein 8000 TPM (tokens per minute) ka limit hai, aur
+# hamara system prompt hi ~5000 token ka hai. Nateeja: 1-2 message ke baad
+# HAR BAAR rate limit. Speed ka koi fayda nahi jab request hi fail ho.
+#
+# Ye dict isliye hai ki agla banda (ya AI) dobara wahi galti na kare.
+# Test check karta hai ki inme se koi PEHLE na ho.
+TIGHT_RATE_LIMIT_PROVIDERS: dict[str, str] = {
+    "groq": "8000 TPM free tier — system prompt hi ~5000 token hai",
+}
+
+
 DEFAULT_PROVIDER_ORDER: list[str] = [
     "muse",        # FASTEST (0.6s) + vision + tools, no tight TPM limit
     "opencode",    # Laguna S 2.1 Free — 256K context, coding optimized

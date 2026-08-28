@@ -11,7 +11,7 @@
 >
 > **Ek line mein abhi ka haal:** 8 LLM providers, 39 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, aur **361 tests jo `python run_tests.py` se chalte hain.**
+> automation, aur **362 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -383,7 +383,7 @@ Ab rule #9 (`KAAM PURA KARO`) ulta hai — jab tak kaam ho na jaaye, rukna nahi.
 
 ## 11. TESTING STATUS — ye IMAANDAARI se padh
 
-### ✅ AB ASLI TEST SUITE HAI — 361 tests
+### ✅ AB ASLI TEST SUITE HAI — 362 tests
 
 ```bash
 python run_tests.py              # sab (0.1 second mein)
@@ -661,7 +661,7 @@ pip install -r requirements.txt
 cp .env.example .env          # Windows: Copy-Item .env.example .env
 # .env mein keys daal (model lines COMMENTED rehne do)
 
-python run_tests.py           # PEHLE YE — 361 tests, 5 second
+python run_tests.py           # PEHLE YE — 362 tests, 5 second
 python cli.py                 # text mode
 ```
 
@@ -777,7 +777,7 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 | **Indian apps** | 110 |
 | **LLM providers** | **8** (chaar ek hi NVIDIA key pe) |
 | **ASR corrections** | 65 rules |
-| **Tests** | **361 pass** — `python run_tests.py` |
+| **Tests** | **362 pass** — `python run_tests.py` |
 | **Interface** | English (professional) |
 | **Agent ki baat** | User ki bhasha — `SAARTHI_LANGUAGE=auto` |
 | **Max steps** | 25 |
@@ -789,7 +789,7 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 
 ### Naye AI ke liye 60-second summary
 
-1. `python run_tests.py` chala — 361 pass hone chahiye. Kuch fail ho to
+1. `python run_tests.py` chala — 362 pass hone chahiye. Kuch fail ho to
    **wahi pehle theek kar**, naya feature baad mein.
 2. Interface **English** hai, agent ki **baat user ki bhasha** mein. Ye do
    alag cheezein hain — confuse mat kar.
