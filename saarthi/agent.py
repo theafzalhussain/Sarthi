@@ -306,11 +306,40 @@ class Agent:
                         )
                     )
 
-                    # DEDUPE: same screenshot dobara mat bhejo
-                    img_hash = hashlib.sha256(image_b64.encode()[:1000]).hexdigest()[:16]
+                    # DEDUPE: same screenshot dobara mat bhejo.
+                    #
+                    # ⚠️ POORA string hash karo, pehle 1000 byte NAHI.
+                    #
+                    # Pehle `image_b64.encode()[:1000]` tha. Wo GALAT tha:
+                    # do alag screenshot ka PNG header + shuruaati data
+                    # same ho sakta hai (same app, same size, badlav neeche
+                    # ki taraf). Tab hum jhooth bol dete — "screen mein koi
+                    # badlav nahi hua" — jabki screen badal gayi thi. Agent
+                    # phir wahi kaam dohraata ya haar maan leta.
+                    #
+                    # 1-2 MB pe sha256 kuch millisecond leta hai. LLM call
+                    # ke saamne wo kuch bhi nahi.
+                    img_hash = hashlib.sha256(image_b64.encode()).hexdigest()
                     dedupe = getattr(self.settings, "screenshot_dedupe", True)
+                    max_shots = getattr(self.settings, "max_screenshots", 2)
 
-                    if dedupe and img_hash == self._last_screenshot_hash:
+                    if max_shots <= 0:
+                        # Vision band hai — image bhejna hi nahi hai.
+                        #
+                        # Pehle yahan bug tha: `_evict_old_screenshots()`
+                        # purane hata deta tha par NAYA image phir bhi
+                        # append ho jaata tha. Matlab
+                        # SAARTHI_MAX_SCREENSHOTS=0 pe bhi ek image jaati
+                        # thi — setting ka matlab hi khatam.
+                        self._evict_old_screenshots()
+                        self.messages.append(
+                            Message.user(
+                                "Screenshot liya gaya par vision band hai "
+                                "(SAARTHI_MAX_SCREENSHOTS=0). "
+                                "screen_padho use kar."
+                            )
+                        )
+                    elif dedupe and img_hash == self._last_screenshot_hash:
                         # Same screen — image bhejne ki zarurat nahi
                         self.messages.append(
                             Message.user(
