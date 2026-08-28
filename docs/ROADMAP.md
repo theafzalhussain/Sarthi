@@ -106,7 +106,7 @@ USB cable / ADB ke bina phone control — HTTP-based AccessibilityDevice adapter
 Kyun ye direction: ADB ka exact mirror — laptop se phone ko command. Agent,
 tools, skills, self-healing — kisi mein ek line nahi badli.
 
-### 🎯 Phase 4B — Android App (Kotlin) — NEXT
+### ✅ Phase 4B — Android App (Kotlin) — HO GAYA
 
 | Kaam | Tech |
 |---|---|
@@ -114,7 +114,21 @@ tools, skills, self-healing — kisi mein ek line nahi badli.
 | Screen control | **AccessibilityService** |
 | Background | Foreground Service |
 | Notifications | NotificationListenerService |
-| Naye API | Android AppFunctions |
+| HTTP server | NanoHTTPD (single file, Apache-2.0) |
+
+**Ban gaya:** `android/` folder, 1,340 lines Kotlin, 8 files.
+Saare 14 endpoints implement hue aur Python client ke contract se
+**exactly match** karte hain (`ui_tree`, `notifications`,
+`recorded_actions` ke JSON keys verify kiye gaye).
+
+Security verified — 8/8 points:
+SecureRandom 32-char token · `MessageDigest.isEqual` constant-time
+compare · sirf private IP (public/mobile data pe server band ho jaata
+hai) · default OFF · `isPassword` node ka text khali · recording mein
+`{PASSWORD}` placeholder · **koi `/shell` endpoint nahi** · koi logging
+nahi. Plus `/type` pe apna OTP/PIN/CVV block (do-tarfa defense).
+
+Manual test checklist: [PHASE4B_TEST.md](PHASE4B_TEST.md)
 
 ### Asli inaam: user ke taps sunna
 
@@ -157,8 +171,8 @@ Achhi khabar: `skills/store.py` ka data format **same rahega**. Store aur runner
 2. ✅ Phase 2 (Voice)         <- HO GAYA
 3. ✅ Phase 3 (Browser+Polish) <- HO GAYA (v2.0)
 4. ✅ Phase 4A (Python side)   <- HO GAYA — HTTP contract + tests
-   🎯 Phase 4B (Kotlin app)   <- NEXT — phone pe Android app
-5. 🎯 Phase 5 (Powerful)      <- polish + advanced features
+   ✅ Phase 4B (Kotlin app)   <- HO GAYA — 1,340 lines, security 8/8
+5. 🎯 Phase 5 (Powerful)      <- NEXT — polish + advanced features
 ```
 
 ---
