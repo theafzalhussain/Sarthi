@@ -11,7 +11,7 @@
 >
 > **Ek line mein abhi ka haal:** 9 LLM providers, 40 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, phone control via HTTP (no USB needed), aur **415 tests jo `python run_tests.py` se chalte hain.**
+> automation, phone control via HTTP (no USB needed), aur **451 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -354,6 +354,9 @@ wapas nahi aata.
 | 22 | **Mic stream DIGITAL SILENCE bhej raha tha** — `--mic-live` ne measure kiya: `sd.rec()` (callback) → peak 16105 ✅, par blocking `stream.read()` → **333 chunk, HAR EK rms 0**. Ek hi device, ek hi samplerate/channels/dtype. Stream chal bhi raha tha (333 chunks theek 10 second mein aaye) — bas audio zero thi. Upar se user ko "kuch sunai nahi diya" dikhta tha, to wo zor se bolta tha — bekaar, galti uski nahi thi | `record_until_silence` ab **callback-based** hai (`sd.rec` bhi andar se yahi karta hai) + `queue.Queue` + `indata.copy()`. Loop `_consume_chunks()` mein alag hua — **bina mic ke testable**. Naya `ListenState.NO_AUDIO` jo TIMEOUT se alag hai. Plus `--mic-stream` (8 config measure karta hai) aur `SAARTHI_MIC_BLOCKSIZE` / `SAARTHI_MIC_LATENCY` |
 | 23 | **Whisper ke YouTube-caption hallucinations agent tak pahunch rahe the** — biasing OFF, model `small`, audio peak 16105 (theek) — phir bhi "paytm kholo" → `"So, you know, it's a YouTube story."` Whisper YouTube captions pe train hai, mushkil audio pe training data se phrase nikaal deta hai. **KHATRA: us text mein "YouTube" tha, to agent SACH MEIN YOUTUBE KHOL DETA** jabki paytm maanga tha | `HALLUCINATION_MARKERS` — **poore phrase** match hote hain, single shabd NAHI (warna "youtube kholo" bhi mar jaata = BUG#1 dohrana). Punctuation-independent match. Test enforce karta hai ki har marker multi-word ho — usne meri hi list mein `castingwords` pakda |
 | 24 | **`--stt-tune` ki output se diagnosis ho hi nahi pa raha tha** — (a) biasing setting print nahi hoti thi, to pata nahi chalta ki hallucination BUG#19 hai ya BUG#23; (b) confidence (logprob/no_speech) nahi dikhta tha; (c) progress nahi dikhta tha — 3 variants × 5-15 second, user ne pehle ke baad **Ctrl+C daba diya** ("Rok diya."), `hi` aur `auto` kabhi try hi nahi hue | `[INFO] Biasing:` line, per-variant `logprob`/`no_speech`/`detected`, `[1/3]` counter jo transcribe se **PEHLE** print hota hai, "Ctrl+C mat dabana ~30 second lagega" warning, aur `REJECTED: <wajah>` |
+| 25 | **Screen ka data CLOUD LLM ko chala jaata tha, bina kisi filter ke** — `safety.py` sirf TYPE karne pe rok lagata tha (OTP/PIN/CVV/password). PADHNE pe koi rok nahi thi. `screen_padho` screen ka saara text LLM ko bhejta tha, aur LLM cloud pe hai (NVIDIA/Groq/Gemini). Matlab card number, balance, account number — sab third-party server pe. Codebase mein `redact`/`mask`/`sanitize` naam ka kuch bhi nahi tha | Naya `tools/redact.py` — card (Luhn **+ brand prefix/length**), OTP/CVV/account (context-based), IFSC. **DEFAULT ON** (ye feature nahi, bug fix hai). Redaction sirf LLM-facing `output` pe lagti hai, device layer RAW rehta hai — warna `tap_text()` ko asli text na milta aur tapping tut jaati |
+| 26 | **`dumpsys notification --noredact`** — `--noredact` ka matlab hai "Android, sensitive content chhupao MAT". Android by default OTP notifications redact karta hai; hum usse **jaan-boojh ke bypass** kar rahe the. Matlab OTP ka SMS padh ke cloud LLM ko bheja ja sakta tha — jabki `safety.py` mein "OTP type nahi karunga" ka HARD BLOCK hai. **Seedha contradiction** | Flag hata diya. Ab Android ki apni redaction chalti hai (layer 1) aur uske baad `redact.py` (layer 2) |
+| 27 | **Agent kisi bhi banking app ko khol sakta tha** — koi app blocklist nahi thi. Paytm, PhonePe, ICICI, HDFC, SBI — sab khul jaate the | Naya `tools/banking.py` — `SAARTHI_BANKING_LOCK` (**default OFF**, kyunki ON karne se "paytm kholo" band ho jaata hai) + `SAARTHI_BLOCKED_APPS`. Package name pe **fail-CLOSED substring** match (`com.icicibank.x` mein "bank" alag shabd nahi hai — word boundary se MISS ho jaata tha), friendly naam pe **word boundary** (BUG#1 ka sabak) |
 
 ### ⚠️ Jo galti MAINE (AI ne) ki thi — isse seekh
 
@@ -540,6 +543,59 @@ Traceback matlab code chal gaya tha.
 **Aur sabse zaroori:** maine bug WAPAS daal ke verify kiya ki test
 sach mein fail hota hai. Warna "test pass ho raha hai" ka jhoota
 bharosa ban jaata hai. **Naya test likho to ye zaroor karo.**
+
+### 🚨 SOURCE-INSPECTION TEST — ye galti CHAAR baar hui hai
+
+Jab code ko chalane ke liye hardware chahiye (mic, phone) to test aksar
+source padh ke check karta hai. Wo do tarah se DHOKA deta hai:
+
+**Dhoka #1 — COMMENT pe match kar jaata hai.**
+
+```python
+# GALAT
+source = inspect.getsource(Recorder.record_until_silence)
+self.assertNotIn("stream.read(", source)   # FAIL — comment mein hi likha hai!
+```
+
+Usi function ke comment mein bug ka EXPLANATION likha tha ("pehle
+`stream.read()` tha, wo zeros deta tha"). Test us comment pe match kar
+gaya. **Comment aur docstring code nahi hote.**
+
+```python
+# SAHI — AST se
+tree = ast.parse(textwrap.dedent(inspect.getsource(...)))
+reads = [n for n in ast.walk(tree)
+         if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+         and n.func.attr == "read"]
+self.assertEqual(reads, [])
+```
+
+**Dhoka #2 — DEAD CODE pe pass ho jaata hai.** (Ye zyada khatarnak hai.)
+
+```python
+# GALAT
+self.assertIn("redact_sensitive", source)
+```
+
+Maine verify karne ke liye redaction ka code path dead kar diya —
+`result = await dev.ui_tree()` ko `return await dev.ui_tree()` bana
+diya, taaki neeche ka redaction chale hi na. **Teeno test PASS HO
+GAYE**, kyunki shabd source mein bacha hua tha.
+
+Matlab card number LLM ko ja raha tha aur test kehta tha "sab theek hai".
+
+```python
+# SAHI — asli tool chalao, fake device ke saath, OUTPUT check karo
+result = self.run_tool("screen_padho", FakeDevice())   # card deta hai
+self.assertNotIn("4111 1111 1111 1111", result.output)
+```
+
+**Niyam:**
+1. Ho sake to **BEHAVIOUR** test likho — fake device/injection se asli
+   code chalao. Hardware ki zarurat aksar nahi hoti, sirf ek fake object.
+2. Behaviour possible na ho to **AST** use karo, plain text NAHI.
+3. Dono case mein **bug wapas daal ke** confirm karo ki test fail hota
+   hai. Ye step skip kiya to baaki sab bekaar hai.
 
 Aur verified:
 - 56 Python files, ~15,300 lines (+2,700 test lines)

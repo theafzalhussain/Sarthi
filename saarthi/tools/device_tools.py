@@ -17,9 +17,15 @@ Isse reliability badhti hai aur free-tier tokens bachte hain.
 
 from __future__ import annotations
 
+import logging
+
 from ..devices.base import ActionResult, Capability
+from .banking import check_app_allowed, screenshot_allowed
 from .base import Tool, ToolContext
+from .redact import redact_sensitive, redaction_note
 from .safety import check_shell_safety, check_text_safety
+
+log = logging.getLogger("saarthi.tools.device")
 
 
 def _resolve_device(ctx: ToolContext, device: str | None):
@@ -156,7 +162,23 @@ class ReadScreenTool(Tool):
                 f"screenshot_lo try kar."
             )
 
-        return await dev.ui_tree()
+        result = await dev.ui_tree()
+
+        # --- SENSITIVE DATA HATAO (LLM ko bhejne se PEHLE) ---
+        #
+        # Ye YAHIN hona chahiye, device layer mein NAHI.
+        #
+        # Wajah: `tap_text("Send Money")` ko ASLI text chahiye element
+        # dhoondhne ke liye. Device layer pe redact kar dete to tapping
+        # hi tut jaati. Leak ka raasta LLM tha (ye `output` string), aur
+        # device ka raw data nahi.
+        if result.ok and result.output:
+            clean, found = redact_sensitive(result.output)
+            if found:
+                log.info("screen_padho: %s redact kiya", ", ".join(found))
+                result.output = clean + redaction_note(found)
+
+        return result
 
 
 class ScreenshotTool(Tool):
@@ -174,6 +196,27 @@ class ScreenshotTool(Tool):
         dev, error = _resolve_device_smart(ctx, device, Capability.SCREENSHOT)
         if error:
             return error
+
+        # --- BANKING LOCK: banking app saamne ho to screenshot nahi ---
+        #
+        # Screenshot pe khaas rok kyun: redaction TEXT pe lagti hai,
+        # IMAGE pe nahi lag sakti. Screenshot mein card number aur
+        # balance saaf dikhta hai aur wo seedha vision model ko chala
+        # jaata hai. Text redact karke image bhej dena bekaar hai.
+        current = ""
+        get_current = getattr(dev, "current_app", None)
+        if get_current is not None:
+            try:
+                app_result = await get_current()
+                current = (app_result.output or "") if app_result.ok else ""
+            except Exception:  # noqa: BLE001 — pata na chale to allow (documented)
+                current = ""
+
+        allowed, reason = screenshot_allowed(current)
+        if not allowed:
+            log.warning("screenshot_lo blocked (banking app: %s)", current)
+            return ActionResult.failure(reason)
+
         return await dev.screenshot()
 
 
@@ -376,6 +419,18 @@ class LaunchAppTool(Tool):
     async def run(
         self, ctx: ToolContext, app: str, device: str | None = None
     ) -> ActionResult:
+        # --- BANKING LOCK / BLOCKED APPS ---
+        #
+        # Ye check SABSE PEHLE hai — device resolve karne se bhi pehle.
+        # Wajah: blocked app ke liye device dhoondhna, availability check
+        # karna, package resolve karna — sab bekaar kaam hai. Aur agar
+        # baad mein check hota to koi naya code path usse bypass kar
+        # sakta tha. Security check pehla hona chahiye.
+        allowed, reason = check_app_allowed(app)
+        if not allowed:
+            log.warning("app_kholo blocked: %s", app)
+            return ActionResult.failure(reason)
+
         dev, error = _resolve_device(ctx, device)
         if error:
             return error
@@ -612,7 +667,19 @@ class NotificationsTool(Tool):
         dev, error = _resolve_device(ctx, device)
         if error:
             return error
-        return await dev.read_notifications()
+
+        result = await dev.read_notifications()
+
+        # Notifications mein OTP aata hai — ye sabse zaroori redaction
+        # point hai. Android ki apni redaction pehla layer hai
+        # (`--noredact` hataya gaya), ye doosra.
+        if result.ok and result.output:
+            clean, found = redact_sensitive(result.output)
+            if found:
+                log.info("notifications_padho: %s redact kiya", ", ".join(found))
+                result.output = clean + redaction_note(found)
+
+        return result
 
 
 # ======================================================================
@@ -699,7 +766,20 @@ class ReadPageTool(Tool):
                 f"'{dev.name}' pe page_padho support nahi hai (ye browser "
                 f"ke liye hai)"
             )
-        return await reader(max_chars=max_chars)
+
+        result = await reader(max_chars=max_chars)
+
+        # Banking WEBSITE bhi utni hi khatarnak hai jitni app.
+        # netbanking.hdfcbank.com ka page text bhi LLM ko jaata hai —
+        # usme account number aur balance hota hai. Isliye yahan bhi
+        # redaction, sirf phone screen pe nahi.
+        if result.ok and result.output:
+            clean, found = redact_sensitive(result.output)
+            if found:
+                log.info("page_padho: %s redact kiya", ", ".join(found))
+                result.output = clean + redaction_note(found)
+
+        return result
 
 
 def device_tools() -> list[Tool]:

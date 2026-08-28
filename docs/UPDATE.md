@@ -139,7 +139,7 @@ notepad .env
 ```powershell
 cd C:\Sarthi
 git status              # "On branch main" aana chahiye
-python run_tests.py     # 415 tests pass hone chahiye
+python run_tests.py     # 451 tests pass hone chahiye
 python cli.py
 ```
 
@@ -237,7 +237,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 cd C:\Sarthi
 git status              # repo theek hai?
 git pull                # update
-python run_tests.py     # 415 tests
+python run_tests.py     # 451 tests
 python cli.py           # text mode
 python hardware_check.py    # mic/speaker/phone diagnostic
 ```

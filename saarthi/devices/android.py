@@ -676,9 +676,29 @@ class AndroidDevice(Device):
         return await self._shell(command)
 
     async def read_notifications(self) -> ActionResult:
-        """Notifications padho."""
+        """
+        Notifications padho.
+
+        ⚠️ `--noredact` FLAG JAAN-BOOJH KE HATAYA GAYA HAI.
+
+        Pehle ye command aisi thi:
+            dumpsys notification --noredact | grep ...
+
+        `--noredact` ka matlab hai: "Android, sensitive notification
+        content chhupao MAT". Android by default OTP jaise notifications
+        redact karta hai — wo flag usse bypass kar raha tha.
+
+        Nateeja: OTP ka SMS notification padha ja sakta tha aur cloud LLM
+        (NVIDIA/Groq/Gemini) ko bhej diya ja sakta tha.
+
+        Ye SEEDHA CONTRADICTION tha: `tools/safety.py` "OTP type nahi
+        karunga" ka hard block lagata hai, aur hum usi OTP ko padh ke
+        bahar bhej rahe the. Flag hata diya — ab Android ki apni
+        redaction chalti hai, aur uske BAAD `tools/redact.py` ki layer
+        bhi lagti hai (do-tarfa defense).
+        """
         result = await self._shell(
-            "dumpsys notification --noredact | grep -E 'tickerText|android.title|android.text'",
+            "dumpsys notification | grep -E 'tickerText|android.title|android.text'",
             timeout=30.0,
         )
         if not result.ok:
