@@ -405,7 +405,7 @@ class VoiceSession:
             return
 
         self.running = True
-        self.on_event("ready", "Ready. Listening...")
+        self.on_event("ready", "Ready — press Enter, then speak.")
         await self.speak("Ready.")
 
         while self.running:

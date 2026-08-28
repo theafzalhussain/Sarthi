@@ -212,7 +212,7 @@ class PushToTalkWake(WakeDetector):
 
     def wait_for_wake(self) -> bool:
         try:
-            answer = input("\n  [Press Enter to speak, or 'q' to quit] ")
+            answer = input("\n  \033[96m>\033[0m ")
         except (EOFError, KeyboardInterrupt):
             return False
 
