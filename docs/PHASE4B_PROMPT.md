@@ -41,13 +41,13 @@ app ko bilkul wahi dena hai.
 3. **Code comments HINGLISH mein.** UI text English mein. Ye poore
    project ka style hai.
 4. **Python side ke tests todna nahi.** Kaam khatam hone pe
-   `python run_tests.py` chala ke confirm karo — **462 pass** hone chahiye.
+   `python run_tests.py` chala ke confirm karo — **468 pass** hone chahiye.
 5. **Naya folder `android/`** — Python package ke andar kuch mat daalo.
 6. `main` pe direct push.
 
 ## CURRENT STATE — VERIFIED, DOBARA KHOJ MAT KARO
 
-- **462 tests pass**, ~26,000 lines Python, 40 tools
+- **468 tests pass**, ~26,000 lines Python, 40 tools
 - Devices: `android` (ADB), `phone` (HTTP — 4A), `browser`, `desktop`
 - `saarthi/devices/accessibility.py` — 474 lines, `AccessibilityDevice`
 - `.env` mein: `SAARTHI_PHONE_URL`, `SAARTHI_PHONE_TOKEN`
@@ -369,7 +369,7 @@ verify ho jaayegi, jo sabse zyada galat hone wali cheez hai.
 
 # ACCEPTANCE CRITERIA
 
-- [ ] `python run_tests.py` — **462 pass** (Python side toota nahi)
+- [ ] `python run_tests.py` — **468 pass** (Python side toota nahi)
 - [ ] `python hardware_check.py --phone` — saare check PASS
 - [ ] Bina token request → **401**, koi data nahi
 - [ ] Token `MessageDigest.isEqual` se compare hota hai (`==` se nahi)

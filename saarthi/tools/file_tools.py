@@ -59,8 +59,29 @@ def _resolve(path_text: str) -> Path:
 
 
 def _path_problem(path: Path) -> str:
-    """Yahan likhna safe hai? Problem ho to wajah do."""
-    lowered = str(path).lower()
+    """
+    Yahan likhna safe hai? Problem ho to wajah do.
+
+    ⚠️ SEPARATOR NORMALIZE KARNA ZARURI HAI — YE EK ASLI BUG SE BANA HAI.
+
+    Pehle ye seedha `str(path).lower()` pe match karta tha. Par `Path`
+    apne platform ka separator use karta hai:
+
+        Windows pe  Path("/etc/passwd")           -> "\\etc\\passwd"
+        Windows pe  Path("C:/Windows/System32/x") -> "C:\\Windows\\System32\\x"
+
+    Aur `_BLOCKED_PATH_PARTS` mein pattern FORWARD SLASH ke saath hain
+    ("/etc/", "/boot/"). To Windows pe ye match hote hi nahi the —
+    security check chup-chaap bypass ho jaata tha.
+
+    Ye user ki machine pe hi pakda gaya: `test_bug15_system_folder_mein_
+    nahi_likhta` Windows pe FAIL hua, Linux pe pass tha. Platform-specific
+    security hole sabse bura hota hai — ek platform pe test green rehta
+    hai aur doosre pe hole khula rehta hai.
+
+    Ab dono separator ko "/" bana ke compare karte hain.
+    """
+    lowered = str(path).lower().replace("\\", "/")
 
     for blocked in _BLOCKED_PATH_PARTS:
         if blocked in lowered:

@@ -496,3 +496,171 @@ class EnvExampleMatchesCode(SaarthiTestCase):
                     f"par code ka default   {DEFAULT_MODELS[provider]}\n"
                     f"User us line ko uncomment karega to 404 milega.",
                 )
+
+
+
+class CleanEnvActuallyIsolates(SaarthiTestCase):
+    """
+    META-TEST — `clean_env()` sach mein user ki `.env` ko door rakhta hai?
+
+    ⚠️ YE EK ASLI BUG SE BANA HAI.
+
+    `tests/helpers.py` ka docstring khud kehta hai:
+
+        "clean_env() — user ki asli .env ko test se door rakhta hai.
+         Warna test tere machine pe pass hoga aur doosre pe fail...
+         Ye sabse common test bug hai."
+
+    Aur usme EXACTLY wahi bug tha. `_RISKY_SUFFIXES` mein `_MAX_TOKENS`,
+    `_TOP_P`, `_ENABLE_THINKING` missing the.
+
+    User ki `.env` mein `NVIDIA_TOP_P=0.95` aur `NVIDIA_MAX_TOKENS=8192`
+    tha. Nateeja: uski machine pe DO test fail hote the aur sandbox mein
+    pass — kyunki sandbox mein `.env` hi nahi hai.
+
+    Aisa bug sabse mehnga hota hai: user ko lagta hai code toota hai,
+    jabki test isolation tooti hui hai. Aur ulta bhi ho sakta hai — asli
+    bug user ki `.env` ki wajah se CHHUP jaaye.
+
+    Ab prefixes config se derive hote hain (`_provider_prefixes()`),
+    isliye naya provider add hone pe apne aap cover ho jaayega.
+    """
+
+    def test_provider_ke_saare_env_vars_clear_hote_hain(self):
+        import os
+
+        from saarthi.config import DEFAULT_MODELS
+
+        # Har provider ke liye wo settings jo asli mein exist karti hain
+        leaky = {}
+        for provider in DEFAULT_MODELS:
+            prefix = provider.upper().replace(" ", "_").replace("-", "_")
+            leaky[f"{prefix}_MAX_TOKENS"] = "8192"
+            leaky[f"{prefix}_TOP_P"] = "0.95"
+            leaky[f"{prefix}_ENABLE_THINKING"] = "true"
+            leaky[f"{prefix}_MODEL"] = "leaked-model"
+
+        saved = dict(os.environ)
+        try:
+            os.environ.update(leaky)
+
+            with clean_env():
+                still_here = [key for key in leaky if key in os.environ]
+                self.assertEqual(
+                    still_here, [],
+                    f"clean_env() ne ye vars clear nahi kiye: {still_here}\n"
+                    f"User ki .env inhe set kar sakti hai aur test uski "
+                    f"machine pe fail/pass alag hoga.",
+                )
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+
+    def test_asli_leak_scenario_reproduce_nahi_hota(self):
+        """
+        Wahi exact case jo user ki machine pe fail hua tha:
+        NVIDIA_TOP_P + NVIDIA_MAX_TOKENS set hone pe provider ke
+        max_tokens/top_p None hone chahiye.
+        """
+        import os
+
+        saved = dict(os.environ)
+        try:
+            os.environ["NVIDIA_TOP_P"] = "0.95"
+            os.environ["NVIDIA_MAX_TOKENS"] = "8192"
+
+            with clean_env(NVIDIA_API_KEY="nvapi-fake"):
+                providers = {
+                    p.name: p for p in Settings.load().available_providers
+                }
+                nvidia = providers["nvidia"]
+                self.assertIsNone(
+                    nvidia.max_tokens,
+                    "NVIDIA_MAX_TOKENS user ki .env se leak ho raha hai",
+                )
+                self.assertIsNone(
+                    nvidia.top_p,
+                    "NVIDIA_TOP_P user ki .env se leak ho raha hai",
+                )
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+
+    def test_naya_provider_apne_aap_cover_ho_jaata_hai(self):
+        """
+        Prefix list config se derive honi chahiye, hardcode nahi. Warna
+        agla provider add karte waqt wahi bug dobara aayega.
+        """
+        from tests.helpers import _provider_prefixes
+
+        from saarthi.config import DEFAULT_MODELS
+
+        prefixes = _provider_prefixes()
+        self.assertTrue(prefixes, "provider prefixes khali hain")
+
+        for provider in DEFAULT_MODELS:
+            expected = f"{provider.upper().replace(' ', '_')}_"
+            with self.subTest(provider=provider):
+                self.assertIn(expected, prefixes)
+
+
+class SystemPathBlockIsCrossPlatform(SaarthiTestCase):
+    """
+    System path block Windows aur Linux DONO pe kaam kare.
+
+    ⚠️ YE EK ASLI SECURITY HOLE SE BANA HAI.
+
+    `_path_problem()` seedha `str(path).lower()` pe match karta tha, par
+    `Path` apne platform ka separator use karta hai:
+
+        Windows pe  Path("/etc/passwd")  ->  "\\etc\\passwd"
+
+    Aur blocked patterns FORWARD SLASH ke saath the ("/etc/", "/boot/").
+    To Windows pe wo match hote hi nahi the — check chup-chaap bypass.
+
+    Ye user ki Windows machine pe pakda gaya: test wahan FAIL hua aur
+    Linux pe pass tha. **Platform-specific security hole sabse bura
+    hota hai** — ek platform pe test green rehta hai aur doosre pe hole
+    khula rehta hai.
+    """
+
+    def test_forward_slash_form_block_hota_hai(self):
+        from pathlib import Path
+
+        from saarthi.tools.file_tools import _path_problem
+
+        for path in ("/etc/passwd", "/boot/config", "/sys/x", "/proc/1/mem"):
+            with self.subTest(path=path):
+                self.assertTrue(_path_problem(Path(path)), f"{path} allowed!")
+
+    def test_BACKSLASH_form_bhi_block_hota_hai(self):
+        """
+        Yahi wo case hai jo Windows pe tootta tha. `Path` backslash mein
+        normalize karta hai, aur pattern forward slash mein tha.
+        """
+        from pathlib import Path
+
+        from saarthi.tools.file_tools import _path_problem
+
+        for path in (
+            "\\etc\\passwd",
+            "\\boot\\config",
+            "C:\\Windows\\System32\\evil.txt",
+            "C:\\Program Files\\x\\y.txt",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(
+                    _path_problem(Path(path)),
+                    f"{path!r} allowed ho gaya — Windows pe security hole",
+                )
+
+    def test_aam_file_dono_form_mein_allowed_hai(self):
+        """False positive se bachao — normal path block nahi hone chahiye."""
+        from pathlib import Path
+
+        from saarthi.tools.file_tools import _path_problem
+
+        for path in ("notes.txt", "data/report.csv", "data\\report.csv",
+                     "C:\\Users\\me\\Desktop\\marks.csv"):
+            with self.subTest(path=path):
+                self.assertEqual(_path_problem(Path(path)), "", f"{path} blocked!")

@@ -1129,9 +1129,21 @@ class StreamConfigScan(SaarthiTestCase):
         config = AudioConfig()
 
         for probe in (module._probe_stream, module._probe_sd_rec):
-            peak, error = probe(None, config)
-            self.assertEqual(peak, 0)
-            self.assertIsInstance(error, str)
+            with self.subTest(probe=probe.__name__):
+                # ⚠️ `peak == 0` ASSERT NAHI karna.
+                #
+                # Pehle yahi likha tha, aur wo user ki machine pe FAIL
+                # hua (peak 2708 aaya) — kyunki uske paas sounddevice
+                # AUR asli mic hai, to probe ne sach mein audio record
+                # kar liya. Sandbox mein sounddevice nahi hai isliye
+                # wahan 0 aata tha aur test green dikhta tha.
+                #
+                # Is test ka asli kaam ye hai: probe CRASH na kare aur
+                # (int, str) tuple de — chahe mic ho ya na ho.
+                peak, error = probe(None, config)
+                self.assertIsInstance(peak, int)
+                self.assertGreaterEqual(peak, 0)
+                self.assertIsInstance(error, str)
 
     def test_scan_default_raaste_ko_alag_se_check_karta_hai(self):
         """

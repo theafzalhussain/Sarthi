@@ -11,7 +11,7 @@
 >
 > **Ek line mein abhi ka haal:** 9 LLM providers, 40 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, phone control via HTTP (no USB needed), aur **462 tests jo `python run_tests.py` se chalte hain.**
+> automation, phone control via HTTP (no USB needed), aur **468 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -359,6 +359,8 @@ wapas nahi aata.
 | 27 | **Agent kisi bhi banking app ko khol sakta tha** — koi app blocklist nahi thi. Paytm, PhonePe, ICICI, HDFC, SBI — sab khul jaate the | Naya `tools/banking.py` — `SAARTHI_BANKING_LOCK` (**default OFF**, kyunki ON karne se "paytm kholo" band ho jaata hai) + `SAARTHI_BLOCKED_APPS`. Package name pe **fail-CLOSED substring** match (`com.icicibank.x` mein "bank" alag shabd nahi hai — word boundary se MISS ho jaata tha), friendly naam pe **word boundary** (BUG#1 ka sabak) |
 | 28 | **Banking screenshot lock PHONE device pe CHUP-CHAAP kaam nahi karta tha** — `banking.py` `getattr(dev, "current_app", None)` se method dhoondhta hai. `AndroidDevice` (ADB) pe wo hai, par naye `AccessibilityDevice` (Phase 4A) pe NAHI tha. To `getattr` `None` deta tha, `current` khali reh jaata tha, aur `screenshot_allowed("")` ALLOW kar deta tha. **Banking lock ON hone ke baad bhi phone pe banking screen ka screenshot ban jaata tha — koi error, koi warning nahi.** Ye sabse khatarnak kism ki failure hai: dikhta hai protection lagi hai, par lagi nahi hoti | `AccessibilityDevice.current_app()` add kiya — `/health` se `current_app` field padhta hai. Field na aaye to **jhoothi success nahi**, saaf failure (warna khali string se lock dobara bypass ho jaata). Behaviour test: asli `screenshot_lo` tool fake phone ke saath chalta hai |
 | 29 | **HTTP phone (Phase 4A) ka koi DIAGNOSTIC nahi tha** — ADB ke liye `--phone` tha, par WiFi wale phone ke liye kuch nahi. User ko sirf agent ke andar se "connection nahi hua" milta aur pata nahi chalta ki galti URL mein hai, token mein, WiFi mein, ya app band hai | `check_phone_http()` — URL/token/connection/`current_app`/`ui_tree` sab check karta hai. Token ki **VALUE kabhi print nahi** hoti (report user copy-paste karke bhejta hai), sirf length. URL set na ho to **SKIP, FAIL nahi** (ADB users ke liye wo optional hai) |
+| 30 | **`clean_env()` khud LEAK kar raha tha** — uska docstring kehta hai "user ki asli .env ko test se door rakhta hai, warna test tere machine pe pass hoga aur doosre pe fail" — aur usme **exactly wahi bug** tha. `_RISKY_SUFFIXES` mein `_MAX_TOKENS`/`_TOP_P`/`_ENABLE_THINKING` missing the. User ki `.env` mein `NVIDIA_TOP_P=0.95` aur `NVIDIA_MAX_TOKENS=8192` tha, to uski machine pe **2 test fail** hote the aur sandbox mein pass (kyunki wahan `.env` hi nahi hai) | Suffix list poori ki, **plus `_provider_prefixes()` jo `DEFAULT_MODELS` se prefixes DERIVE karta hai** — naya provider add ho to apne aap cover. Meta-test bana jo asli leak scenario reproduce karta hai |
+| 31 | **System-path block Windows pe CHUP-CHAAP bypass ho raha tha** — `_path_problem()` `str(path).lower()` pe match karta tha, par `Path` platform ka separator use karta hai: Windows pe `Path("/etc/passwd")` → `\etc\passwd`. Blocked patterns forward-slash mein the (`/etc/`, `/boot/`), to Windows pe match hote hi nahi the. **Platform-specific security hole sabse bura hota hai** — Linux pe test green, Windows pe hole khula | `str(path).lower().replace("\\", "/")` — dono form normalize. Test dono form check karta hai (forward slash aur backslash) |
 
 ### ⚠️ Jo galti MAINE (AI ne) ki thi — isse seekh
 

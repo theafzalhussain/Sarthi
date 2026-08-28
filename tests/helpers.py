@@ -40,8 +40,41 @@ _saarthi_log.setLevel(logging.CRITICAL)
 
 # Ye env vars test ke result ko badal sakte hain — inko hata dete hain
 _RISKY_PREFIXES = ("SAARTHI_", "WHISPER_", "TTS_", "PORCUPINE_", "WAKE_", "VOICE_")
-_RISKY_SUFFIXES = ("_API_KEY", "_MODEL", "_TOOLS", "_VISION")
+
+# ⚠️ YE LIST ADHOORI THI AUR USSE ASLI NUKSAAN HUA.
+#
+# `_MAX_TOKENS`, `_TOP_P`, `_ENABLE_THINKING` missing the. User ki `.env`
+# mein `NVIDIA_TOP_P=0.95` aur `NVIDIA_MAX_TOKENS=8192` tha, aur wo
+# TESTS MEIN LEAK HO RAHA THA. Do test uski machine pe fail hote the aur
+# CI/sandbox mein pass — bilkul wahi cheez jisse bachne ke liye
+# `clean_env()` banaya gaya tha.
+#
+# Yahan whack-a-mole khelna galat hai. Neeche `_provider_prefixes()`
+# saare provider naam config se nikaal ke unke SAARE env vars clear
+# karta hai — naya provider add ho to apne aap cover ho jaayega.
+_RISKY_SUFFIXES = (
+    "_API_KEY", "_MODEL", "_TOOLS", "_VISION",
+    "_MAX_TOKENS", "_TOP_P", "_ENABLE_THINKING", "_BASE_URL",
+)
 _RISKY_EXACT = ("ADB_PATH",)
+
+
+def _provider_prefixes() -> tuple:
+    """
+    Har provider ka env prefix — config se nikaala, hardcode NAHI.
+
+    Isse naya provider add hone pe test isolation apne aap kaam karti
+    hai. Pehle suffix list manually maintain hoti thi aur wahi bug bani.
+    """
+    try:
+        from saarthi.config import DEFAULT_MODELS
+
+        return tuple(
+            f"{name.upper().replace(' ', '_').replace('-', '_')}_"
+            for name in DEFAULT_MODELS
+        )
+    except Exception:  # noqa: BLE001 — helper kabhi crash na kare
+        return ()
 
 
 @contextlib.contextmanager
@@ -54,10 +87,12 @@ def clean_env(**overrides):
             settings = Settings.load()
     """
     saved = dict(os.environ)
+    provider_prefixes = _provider_prefixes()
     try:
         for key in list(os.environ):
             if (
                 key.startswith(_RISKY_PREFIXES)
+                or key.startswith(provider_prefixes)
                 or key.endswith(_RISKY_SUFFIXES)
                 or key in _RISKY_EXACT
             ):
