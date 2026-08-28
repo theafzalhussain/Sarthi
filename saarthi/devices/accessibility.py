@@ -206,6 +206,46 @@ class AccessibilityDevice(Device):
         summary = f"model={model}, android={android}, screen={screen[0]}x{screen[1]}"
         return ActionResult.success(summary, **data)
 
+    async def current_app(self) -> ActionResult:
+        """
+        Abhi kaunsa app saamne khula hai?
+
+        ⚠️ YE METHOD EK CHUP-CHAAP FAIL SE BANA HAI.
+
+        `AndroidDevice` (ADB) pe `current_app()` hai, par yahan nahi tha.
+        Banking screenshot lock (`tools/banking.py`) ise aise call karta
+        hai:
+
+            get_current = getattr(dev, "current_app", None)
+            if get_current is not None: ...
+
+        Method na hone pe wo chup-chaap `None` maan leta tha, `current`
+        khali reh jaata tha, aur `screenshot_allowed("")` ALLOW kar deta
+        tha. Matlab: banking lock ON hone ke baad bhi PHONE pe screenshot
+        block nahi hota tha — bilkul chup-chaap, koi error nahi.
+
+        Yahi sabse khatarnak kism ki security failure hai: dikhta hai ki
+        protection lagi hui hai, par lagi nahi hoti.
+
+        Contract: `GET /health` ke response mein `current_app` field aani
+        chahiye (AccessibilityService ko `rootInActiveWindow.packageName`
+        se ye pata hota hai — sasta hai).
+        """
+        result = await self._get("/health", timeout=5.0)
+        if not result.ok:
+            return result
+
+        package = (result.data.get("current_app") or "").strip()
+        if not package:
+            # App purana ho aur ye field na bheje — imaandaari se batao,
+            # jhoothi success mat do
+            return ActionResult.failure(
+                "Phone app ne current_app nahi bheja (purana version?). "
+                "Banking screenshot lock is device pe kaam nahi karega."
+            )
+
+        return ActionResult.success(package, package=package)
+
     # ------------------------------------------------------------------
     #  Input actions
     # ------------------------------------------------------------------

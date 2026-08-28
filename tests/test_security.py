@@ -27,7 +27,11 @@ Jawab NAHI tha. Scan mein ye mila:
 
 from __future__ import annotations
 
-from tests.helpers import SaarthiTestCase, clean_env
+import pathlib
+
+from tests.helpers import SaarthiTestCase, captured_stdout, clean_env
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 # ----------------------------------------------------------------------
@@ -569,3 +573,309 @@ class SecurityWiring(SaarthiTestCase):
             "--noredact wapas aa gaya — Android ki apni OTP redaction "
             "bypass ho jaayegi aur OTP cloud LLM ko ja sakta hai",
         )
+
+
+
+class BankingLockOnPhoneDevice(SaarthiTestCase):
+    """
+    Banking screenshot lock PHONE device (Phase 4A) pe bhi kaam kare.
+
+    ⚠️ YE EK CHUP-CHAAP FAILURE SE BANA HAI.
+
+    `tools/banking.py` ka screenshot lock aise likha tha:
+
+        get_current = getattr(dev, "current_app", None)
+        if get_current is not None: ...
+
+    `AndroidDevice` (ADB) pe `current_app()` hai — wahan sab theek tha.
+    Par `AccessibilityDevice` (naya phone device) pe wo method NAHI tha.
+    To `getattr` `None` deta tha, `current` khali reh jaata tha, aur
+    `screenshot_allowed("")` ALLOW kar deta tha.
+
+    Matlab: banking lock ON karne ke baad bhi PHONE pe banking screen ka
+    screenshot ban jaata tha — bilkul chup-chaap, koi error nahi, koi
+    warning nahi.
+
+    Yahi sabse khatarnak kism ki security failure hai: dikhta hai ki
+    protection lagi hai, par lagi nahi hoti.
+    """
+
+    def test_accessibility_device_pe_current_app_HAI(self):
+        """
+        Sabhi phone-jaise devices pe ye method hona chahiye, warna
+        screenshot lock unpe chup-chaap bypass ho jaayega.
+        """
+        from saarthi.devices.accessibility import AccessibilityDevice
+        from saarthi.devices.android import AndroidDevice
+
+        for device_class in (AndroidDevice, AccessibilityDevice):
+            with self.subTest(device=device_class.__name__):
+                self.assertTrue(
+                    hasattr(device_class, "current_app"),
+                    f"{device_class.__name__} pe current_app nahi hai — "
+                    f"banking screenshot lock chup-chaap bypass hoga",
+                )
+
+    def test_health_se_current_app_padhta_hai(self):
+        import asyncio
+
+        from saarthi.devices.accessibility import AccessibilityDevice
+        from saarthi.devices.base import ActionResult
+
+        device = AccessibilityDevice(name="phone", base_url="http://x", token="t")
+
+        async def fake_get(path, timeout=10.0):
+            return ActionResult.success("ok", current_app="net.one97.paytm")
+
+        device._get = fake_get
+        result = asyncio.run(device.current_app())
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.data.get("package"), "net.one97.paytm")
+
+    def test_field_na_aaye_to_JHOOTHI_success_nahi_deta(self):
+        """
+        Purana phone app ye field na bheje to `ActionResult.success("")`
+        dena SABSE BURA hoga — khali string se `screenshot_allowed`
+        ALLOW kar deta aur lock chup-chaap bypass ho jaata.
+
+        Isliye failure return karte hain, saaf wajah ke saath.
+        """
+        import asyncio
+
+        from saarthi.devices.accessibility import AccessibilityDevice
+        from saarthi.devices.base import ActionResult
+
+        device = AccessibilityDevice(name="phone", base_url="http://x", token="t")
+
+        async def fake_get(path, timeout=10.0):
+            return ActionResult.success("ok")  # current_app field GAYAB
+
+        device._get = fake_get
+        result = asyncio.run(device.current_app())
+
+        self.assertFalse(result.ok, "field gayab hone pe jhoothi success di")
+        self.assertIn("current_app", result.error)
+
+    def test_lock_ON_pe_phone_ka_banking_screenshot_BLOCK_hota_hai(self):
+        """
+        End-to-end: asli `screenshot_lo` tool chalao ek fake phone device
+        ke saath jo Paytm khula bata raha hai. Screenshot block hona
+        chahiye.
+
+        Ye BEHAVIOUR test hai, source-inspection nahi — kyunki original
+        bug source mein dikhta hi nahi tha (method ki GAIRHAAZIRI thi,
+        galat code nahi).
+        """
+        import asyncio
+
+        from saarthi.config import Settings
+        from saarthi.devices.base import ActionResult, Capability
+        from saarthi.tools import default_registry
+        from saarthi.tools.base import ToolContext
+
+        class FakePhone:
+            name = "phone"
+            kind = "android"
+
+            def can(self, capability):
+                return True
+
+            async def current_app(self):
+                return ActionResult.success("net.one97.paytm",
+                                            package="net.one97.paytm")
+
+            async def screenshot(self):
+                return ActionResult.success("liya", image_b64="SECRET_IMAGE")
+
+        class FakeManager:
+            devices = {"phone": FakePhone()}
+
+            def get(self, name=None):
+                return FakePhone()
+
+        tool = default_registry().get("screenshot_lo")
+
+        with clean_env(SAARTHI_BANKING_LOCK="true"):
+            ctx = ToolContext(devices=FakeManager(), settings=Settings.load())
+            result = asyncio.run(tool.run(ctx))
+
+        self.assertFalse(result.ok, "banking screen ka screenshot ban gaya")
+        self.assertNotIn("SECRET_IMAGE", str(result.data))
+        self.assertIn("BANKING LOCK", result.error)
+
+    def test_lock_ON_pe_normal_app_ka_screenshot_CHALTA_hai(self):
+        """Lock se normal kaam nahi rukna chahiye."""
+        import asyncio
+
+        from saarthi.config import Settings
+        from saarthi.devices.base import ActionResult
+        from saarthi.tools import default_registry
+        from saarthi.tools.base import ToolContext
+
+        class FakePhone:
+            name = "phone"
+            kind = "android"
+
+            def can(self, capability):
+                return True
+
+            async def current_app(self):
+                return ActionResult.success("com.android.chrome",
+                                            package="com.android.chrome")
+
+            async def screenshot(self):
+                return ActionResult.success("liya", image_b64="IMG")
+
+        class FakeManager:
+            devices = {"phone": FakePhone()}
+
+            def get(self, name=None):
+                return FakePhone()
+
+        tool = default_registry().get("screenshot_lo")
+
+        with clean_env(SAARTHI_BANKING_LOCK="true"):
+            ctx = ToolContext(devices=FakeManager(), settings=Settings.load())
+            result = asyncio.run(tool.run(ctx))
+
+        self.assertTrue(result.ok, "chrome ka screenshot bhi block ho gaya")
+
+
+
+class PhoneHttpDiagnostic(SaarthiTestCase):
+    """
+    `hardware_check.py --phone` HTTP phone bhi check kare.
+
+    Phase 4A ke baad phone ADB ke bina chal sakta hai, par uska koi
+    diagnostic NAHI tha. User ko sirf agent ke andar se "connection nahi
+    hua" milta aur pata nahi chalta ki galti kahan hai — URL, token,
+    WiFi, ya app band hai.
+
+    Is project ka niyam: guess mat karo, MEASURE karo.
+    """
+
+    def load_module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "hardware_check", ROOT / "hardware_check.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        with captured_stdout():
+            spec.loader.exec_module(module)
+        return module
+
+    def test_check_phone_http_maujood_aur_wired_hai(self):
+        """
+        ⚠️ AST SE, TEXT SE NAHI.
+
+        Pehle ye `assertIn("check_phone_http()", source)` tha. Maine
+        main() se uska CALL hata ke verify kiya — test PASS HO GAYA,
+        kyunki `def check_phone_http() -> None:` (definition) mein bhi
+        wahi string hai.
+
+        Matlab function bana hua tha par kabhi chalta hi nahi, aur test
+        keh raha tha "wired hai". Paanchvi baar yahi galti.
+        """
+        import ast
+
+        module = self.load_module()
+        self.assertTrue(hasattr(module, "check_phone_http"))
+
+        tree = ast.parse((ROOT / "hardware_check.py").read_text(encoding="utf-8"))
+
+        # `main()` ke ANDAR se call hona chahiye
+        main_func = next(
+            (n for n in ast.walk(tree)
+             if isinstance(n, ast.FunctionDef) and n.name == "main"),
+            None,
+        )
+        self.assertIsNotNone(main_func, "main() function nahi mila")
+
+        called = {
+            node.func.id
+            for node in ast.walk(main_func)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        self.assertIn(
+            "check_phone_http", called,
+            "check_phone_http() main() se call hi nahi hota — function "
+            "bana hua hai par kabhi chalta nahi",
+        )
+
+    def test_url_set_na_ho_to_SKIP_karta_hai_fail_nahi(self):
+        """
+        Jo log ADB use karte hain unke liye phone URL optional hai. Usse
+        FAIL dikhana galat hai — summary mein bekaar ka red aayega aur
+        user asli problem dhoondhta rahega.
+        """
+        module = self.load_module()
+
+        with clean_env():
+            with captured_stdout():
+                module.REPORT.clear()
+                module.check_phone_http()
+
+        report = "\n".join(module.REPORT)
+        self.assertIn("[SKIP]", report)
+        self.assertNotIn("[FAIL]", report)
+
+    def test_token_na_ho_to_FAIL_deta_hai(self):
+        """URL diya par token nahi — ye asli galti hai, batana chahiye."""
+        module = self.load_module()
+
+        with clean_env(SAARTHI_PHONE_URL="http://192.168.1.5:8080"):
+            with captured_stdout():
+                module.REPORT.clear()
+                module.check_phone_http()
+
+        report = "\n".join(module.REPORT)
+        self.assertIn("[FAIL]", report)
+        self.assertIn("401", report, "user ko batana chahiye ki 401 milega")
+
+    def test_token_ki_VALUE_kabhi_print_nahi_hoti(self):
+        """
+        🚨 Ye report user copy-paste karke bhejta hai. Token uska password
+        jaisa hai — screen pe kabhi nahi aana chahiye.
+        """
+        module = self.load_module()
+        secret = "SUPERSECRETTOKEN12345"
+
+        with clean_env(SAARTHI_PHONE_URL="http://127.0.0.1:9",
+                       SAARTHI_PHONE_TOKEN=secret):
+            with captured_stdout() as output:
+                module.REPORT.clear()
+                module.check_phone_http()
+
+        printed = output.getvalue() + "\n".join(module.REPORT)
+        self.assertNotIn(secret, printed, "TOKEN LEAK ho gaya report mein")
+        self.assertIn("chars", printed, "length to batani chahiye")
+
+    def test_phone_offline_pe_crash_NAHI_actionable_error(self):
+        module = self.load_module()
+
+        with clean_env(SAARTHI_PHONE_URL="http://127.0.0.1:9",
+                       SAARTHI_PHONE_TOKEN="abcdefghijklmnopqrst"):
+            with captured_stdout():
+                module.REPORT.clear()
+                module.check_phone_http()  # crash nahi hona chahiye
+
+        report = "\n".join(module.REPORT)
+        self.assertIn("[FAIL]", report)
+        self.assertIn("WiFi", report, "actionable hint nahi diya")
+
+    def test_current_app_bhi_check_karta_hai(self):
+        """
+        Banking screenshot lock `current_app` pe depend karta hai. Purana
+        phone app wo field na bheje to lock chup-chaap bypass hota hai —
+        diagnostic ko ye batana chahiye.
+        """
+        import inspect
+
+        module = self.load_module()
+        source = inspect.getsource(module.check_phone_http)
+
+        self.assertIn("current_app", source)
+        self.assertIn("BANKING SCREENSHOT LOCK", source,
+                      "user ko nahi batata ki kya tootega")

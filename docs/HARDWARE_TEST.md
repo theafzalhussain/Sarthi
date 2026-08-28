@@ -55,7 +55,7 @@ python hardware_check.py --stt-tune  # galat suna? best Whisper setting dhoondho
 python hardware_check.py --mic-live  # voice "kuch sunai nahi diya" bole to
 python hardware_check.py --mic-stream # mic se sirf 0 aa raha ho to
 python hardware_check.py --speaker   # sirf awaaz
-python hardware_check.py --phone     # sirf phone (ADB)
+python hardware_check.py --phone     # phone — ADB aur WiFi/HTTP dono
 python hardware_check.py --browser   # sirf browser
 python hardware_check.py --keys      # sirf keys + install
 

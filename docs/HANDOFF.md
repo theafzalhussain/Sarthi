@@ -11,7 +11,7 @@
 >
 > **Ek line mein abhi ka haal:** 9 LLM providers, 40 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, phone control via HTTP (no USB needed), aur **451 tests jo `python run_tests.py` se chalte hain.**
+> automation, phone control via HTTP (no USB needed), aur **462 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -357,6 +357,8 @@ wapas nahi aata.
 | 25 | **Screen ka data CLOUD LLM ko chala jaata tha, bina kisi filter ke** — `safety.py` sirf TYPE karne pe rok lagata tha (OTP/PIN/CVV/password). PADHNE pe koi rok nahi thi. `screen_padho` screen ka saara text LLM ko bhejta tha, aur LLM cloud pe hai (NVIDIA/Groq/Gemini). Matlab card number, balance, account number — sab third-party server pe. Codebase mein `redact`/`mask`/`sanitize` naam ka kuch bhi nahi tha | Naya `tools/redact.py` — card (Luhn **+ brand prefix/length**), OTP/CVV/account (context-based), IFSC. **DEFAULT ON** (ye feature nahi, bug fix hai). Redaction sirf LLM-facing `output` pe lagti hai, device layer RAW rehta hai — warna `tap_text()` ko asli text na milta aur tapping tut jaati |
 | 26 | **`dumpsys notification --noredact`** — `--noredact` ka matlab hai "Android, sensitive content chhupao MAT". Android by default OTP notifications redact karta hai; hum usse **jaan-boojh ke bypass** kar rahe the. Matlab OTP ka SMS padh ke cloud LLM ko bheja ja sakta tha — jabki `safety.py` mein "OTP type nahi karunga" ka HARD BLOCK hai. **Seedha contradiction** | Flag hata diya. Ab Android ki apni redaction chalti hai (layer 1) aur uske baad `redact.py` (layer 2) |
 | 27 | **Agent kisi bhi banking app ko khol sakta tha** — koi app blocklist nahi thi. Paytm, PhonePe, ICICI, HDFC, SBI — sab khul jaate the | Naya `tools/banking.py` — `SAARTHI_BANKING_LOCK` (**default OFF**, kyunki ON karne se "paytm kholo" band ho jaata hai) + `SAARTHI_BLOCKED_APPS`. Package name pe **fail-CLOSED substring** match (`com.icicibank.x` mein "bank" alag shabd nahi hai — word boundary se MISS ho jaata tha), friendly naam pe **word boundary** (BUG#1 ka sabak) |
+| 28 | **Banking screenshot lock PHONE device pe CHUP-CHAAP kaam nahi karta tha** — `banking.py` `getattr(dev, "current_app", None)` se method dhoondhta hai. `AndroidDevice` (ADB) pe wo hai, par naye `AccessibilityDevice` (Phase 4A) pe NAHI tha. To `getattr` `None` deta tha, `current` khali reh jaata tha, aur `screenshot_allowed("")` ALLOW kar deta tha. **Banking lock ON hone ke baad bhi phone pe banking screen ka screenshot ban jaata tha — koi error, koi warning nahi.** Ye sabse khatarnak kism ki failure hai: dikhta hai protection lagi hai, par lagi nahi hoti | `AccessibilityDevice.current_app()` add kiya — `/health` se `current_app` field padhta hai. Field na aaye to **jhoothi success nahi**, saaf failure (warna khali string se lock dobara bypass ho jaata). Behaviour test: asli `screenshot_lo` tool fake phone ke saath chalta hai |
+| 29 | **HTTP phone (Phase 4A) ka koi DIAGNOSTIC nahi tha** — ADB ke liye `--phone` tha, par WiFi wale phone ke liye kuch nahi. User ko sirf agent ke andar se "connection nahi hua" milta aur pata nahi chalta ki galti URL mein hai, token mein, WiFi mein, ya app band hai | `check_phone_http()` — URL/token/connection/`current_app`/`ui_tree` sab check karta hai. Token ki **VALUE kabhi print nahi** hoti (report user copy-paste karke bhejta hai), sirf length. URL set na ho to **SKIP, FAIL nahi** (ADB users ke liye wo optional hai) |
 
 ### ⚠️ Jo galti MAINE (AI ne) ki thi — isse seekh
 

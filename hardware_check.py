@@ -1377,6 +1377,107 @@ def check_speaker(interactive: bool = True) -> None:
 # ----------------------------------------------------------------------
 
 
+def check_phone_http() -> None:
+    """
+    Phase 4A ka phone (HTTP/WiFi) check karo — ADB wala nahi.
+
+    KYUN YE ZARURI HAI:
+        Phase 4A ke baad phone ADB ke bina bhi chal sakta hai — app ek
+        HTTP server chalata hai. Par uske liye koi diagnostic NAHI tha.
+        User ko sirf agent ke andar se error milta ("connection nahi
+        hua") aur pata nahi chalta ki galti kahan hai — URL, token,
+        WiFi, ya app band hai.
+
+        Is project ka niyam hai: guess mat karo, MEASURE karo.
+    """
+    section("6b  Phone (HTTP / WiFi — Phase 4A)")
+
+    url = os.getenv("SAARTHI_PHONE_URL", "").strip()
+    token = os.getenv("SAARTHI_PHONE_TOKEN", "").strip()
+
+    if not url:
+        result("Phone URL set hai", None,
+               "SAARTHI_PHONE_URL nahi hai — ye optional hai (ADB se kaam chalega)")
+        say("   Phone app use karna ho to .env mein daal:", "muted")
+        say("       SAARTHI_PHONE_URL=http://<phone-ka-IP>:8080", "muted")
+        say("       SAARTHI_PHONE_TOKEN=<app mein dikhne wala token>", "muted")
+        return
+
+    result("Phone URL set hai", True, url)
+
+    # Token ki VALUE kabhi print nahi — sirf mila ya nahi
+    if not token:
+        result("Phone token", False, "SAARTHI_PHONE_TOKEN nahi hai")
+        say("   Bina token phone koi command accept nahi karega (401).", "warn")
+        say("   App ki screen pe token dikhta hai — usse copy kar.", "warn")
+        return
+    result("Phone token", True, f"mil gaya ({len(token)} chars)")
+
+    if len(token) < 16:
+        say(f"   Dhyan: token sirf {len(token)} character ka hai. Chhota "
+            f"token guess kiya ja sakta hai — app se naya generate kar.", "warn")
+
+    # Asli connection
+    try:
+        from saarthi.devices.accessibility import AccessibilityDevice
+    except Exception as exc:  # noqa: BLE001
+        result("Phone module import", False, str(exc))
+        return
+
+    import asyncio
+
+    device = AccessibilityDevice(name="phone", base_url=url, token=token)
+
+    try:
+        info = asyncio.run(device.info())
+    except Exception as exc:  # noqa: BLE001
+        result("Phone se connection", False, f"{type(exc).__name__}: {exc}")
+        return
+
+    if not info.ok:
+        result("Phone se connection", False, info.error)
+        say("   Ye check kar:", "warn")
+        say("   1. Phone app khula hai aur server ON hai?", "warn")
+        say("   2. Laptop aur phone SAME WiFi pe hain?", "warn")
+        say("   3. IP badal gaya? (WiFi reconnect pe badal jaata hai)", "warn")
+        say("   4. Token app wala hi hai?", "warn")
+        return
+
+    result("Phone se connection", True, info.output)
+
+    # current_app — banking screenshot lock isi pe depend karta hai
+    try:
+        current = asyncio.run(device.current_app())
+    except Exception as exc:  # noqa: BLE001
+        current = None
+        say(f"   current_app check fail: {exc}", "muted")
+
+    if current is not None:
+        result(
+            "current_app support",
+            current.ok,
+            current.data.get("package", "") if current.ok else current.error,
+        )
+        if not current.ok:
+            say("   Iske bina BANKING SCREENSHOT LOCK kaam nahi karega —", "warn")
+            say("   agent banking screen ka screenshot le sakta hai.", "warn")
+            say("   Phone app update kar (health mein current_app chahiye).", "warn")
+
+    # ui_tree — ye sabse zaroori capability hai
+    try:
+        tree = asyncio.run(device.ui_tree())
+        count = len(tree.data.get("elements", []) or [])
+        result("Screen padh sakte hain (ui_tree)", tree.ok,
+               f"{count} elements" if tree.ok else tree.error)
+        if tree.ok and count == 0:
+            say("   0 elements aaye — Accessibility permission di hai?", "warn")
+    except Exception as exc:  # noqa: BLE001
+        result("Screen padh sakte hain (ui_tree)", False, str(exc))
+
+    say("")
+    say("Dhyan: ye script phone pe KOI TAP nahi karti — sirf padhti hai.", "muted")
+
+
 def check_phone() -> None:
     section("6  Phone (ADB)")
 
@@ -1595,6 +1696,7 @@ def main() -> int:
 
     if run_all or "--phone" in only:
         check_phone()
+        check_phone_http()
 
     if run_all or "--browser" in only:
         check_browser()
