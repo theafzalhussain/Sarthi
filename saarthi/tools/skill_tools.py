@@ -265,6 +265,117 @@ class DeleteSkillTool(Tool):
         return ActionResult.failure(f"'{name}' naam ki skill nahi mili")
 
 
+class PhoneSeSkillTool(Tool):
+    """
+    Phone pe record hue actions se skill banao — Phase 4 ka ASLI INAAM.
+
+    User phone pe manually kaam karta hai (app kholta, button dabata),
+    phone ka AccessibilityService sab record karta hai, phir ye tool
+    wo actions laakar Skill bana deta hai.
+
+    Ye Dikha Do Mode ka NAYA SOURCE hai — ab user ko agent ke through
+    kaam nahi karna padta, KHUD phone pe kar sakta hai aur SAARTHI
+    yaad kar lega.
+    """
+
+    name = "phone_se_seekho"
+    description = (
+        "Phone pe user ke manually kiye kaam se skill banao. Phone app "
+        "mein 'Dikha Do' mode ON hona chahiye. User jab phone pe kaam "
+        "dikha chuka ho aur bole 'phone se seekh le' — to ye use kar."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Skill ka naam, jaise 'bijli ka bill'",
+            },
+            "description": {
+                "type": "string",
+                "description": "Ye skill kya karti hai (chhota description)",
+            },
+        },
+        "required": ["name"],
+    }
+
+    async def run(
+        self, ctx: ToolContext, name: str, description: str = ""
+    ) -> ActionResult:
+        if ctx.skills is None:
+            return ActionResult.failure("Skill store available nahi hai")
+
+        # Phone device dhoondo (AccessibilityDevice)
+        from ..devices.accessibility import AccessibilityDevice
+
+        phone = None
+        for device in ctx.devices.devices.values():
+            if isinstance(device, AccessibilityDevice):
+                phone = device
+                break
+
+        if phone is None:
+            return ActionResult.failure(
+                "Phone (AccessibilityDevice) registered nahi hai. "
+                "SAARTHI_PHONE_URL aur SAARTHI_PHONE_TOKEN .env mein set kar."
+            )
+
+        # Phone se recorded actions laao
+        result = await phone.get_recorded_actions()
+        if not result.ok:
+            return result
+
+        actions = result.data.get("actions", [])
+        if not actions:
+            return ActionResult.failure(
+                "Phone pe kuch record nahi hua. Pehle phone app mein "
+                "'Dikha Do' mode ON kar, kaam kar, phir ye tool chala."
+            )
+
+        # Actions ko SkillStep mein convert karo
+        from ..skills.store import Skill, SkillStep, parameterize_steps
+
+        steps: list[SkillStep] = []
+        for action_data in actions:
+            # target_coords: list -> tuple ya None
+            raw_coords = action_data.get("target_coords")
+            coords = None
+            if isinstance(raw_coords, (list, tuple)) and len(raw_coords) >= 2:
+                coords = (int(raw_coords[0]), int(raw_coords[1]))
+
+            steps.append(SkillStep(
+                action=action_data.get("action", ""),
+                params=action_data.get("params", {}),
+                target_text=action_data.get("target_text", ""),
+                target_coords=coords,
+                notes=action_data.get("notes", ""),
+            ))
+
+        # Parameterize — reusable banao
+        steps, params = parameterize_steps(steps)
+
+        skill = Skill(
+            name=name.strip().lower(),
+            description=description or f"Phone se seekhi — {len(steps)} steps",
+            device_kind="android",
+            steps=steps,
+            params=list(dict.fromkeys(params)),
+        )
+
+        saved = await ctx.skills.save(skill)
+
+        lines = [f"Skill save ho gayi: '{saved.name}' ({len(saved.steps)} steps)"]
+        needed = saved.required_params()
+        if needed:
+            lines.append(f"Agli baar ye batana padega: {', '.join(sorted(needed))}")
+        lines.append("")
+        lines.append("Steps:")
+        for i, step in enumerate(saved.steps, 1):
+            lines.append(f"  {i}. {step}")
+
+        return ActionResult.success("\n".join(lines))
+
+
 def skill_tools() -> list[Tool]:
     return [
         StartLearningTool(),
@@ -275,4 +386,5 @@ def skill_tools() -> list[Tool]:
         RunSkillTool(),
         ExplainSkillTool(),
         DeleteSkillTool(),
+        PhoneSeSkillTool(),
     ]

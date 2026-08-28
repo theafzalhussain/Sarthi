@@ -552,7 +552,7 @@ class Settings:
             # ho jaata tha aur ittefaq se desktop pe gir jaata tha.
             default_device=_env_choice(
                 "SAARTHI_DEFAULT_DEVICE",
-                ("desktop", "android", "browser"),
+                ("desktop", "android", "browser", "phone"),
                 "desktop",
             ),
             browser_mode=_env_choice(

@@ -38,7 +38,7 @@ def make_ctx(confirm=None, **setting_overrides):
 
 class Registry(SaarthiTestCase):
     def test_39_tools_hain(self):
-        self.assertEqual(len(default_registry()), 39)
+        self.assertEqual(len(default_registry()), 40)
 
     def test_zaroori_tools_maujood_hain(self):
         registry = default_registry()

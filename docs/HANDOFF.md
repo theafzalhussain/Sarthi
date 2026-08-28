@@ -6,12 +6,12 @@
 > kaunsi galtiyan mat karna.
 >
 > **Repo:** https://github.com/theafzalhussain/Sarthi
-> **Last updated:** August 2026 · 16 commits
-> **Status:** Phase 1 ✅ · Phase 2 ✅ · Phase 3 🟡 (part 1 done) · Phase 4-5 ⬜
+> **Last updated:** August 2026 · 17 commits
+> **Status:** Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4A ✅ · Phase 4B 🎯 · Phase 5 ⬜
 >
-> **Ek line mein abhi ka haal:** 8 LLM providers, 39 tools, 110 Indian apps,
+> **Ek line mein abhi ka haal:** 9 LLM providers, 40 tools, 110 Indian apps,
 > professional English interface (par baat user ki bhasha mein), browser
-> automation, aur **386 tests jo `python run_tests.py` se chalte hain.**
+> automation, phone control via HTTP (no USB needed), aur **415 tests jo `python run_tests.py` se chalte hain.**
 
 ---
 
@@ -582,7 +582,39 @@ Aur verified:
 
 ⚠️ Honest: CAPTCHA aur bot-detection real hain. ~90% websites chalengi.
 
-### ⬜ Phase 4 — Android App (SABSE BADA MILESTONE)
+### ✅ Phase 4A — Python Side (HO GAYA)
+
+HTTP-based phone control — ADB/USB cable ki zarurat khatam.
+
+**Architecture (phone = SERVER, laptop = CLIENT):**
+```
+   LAPTOP (Python agent)                    PHONE (Kotlin app)
+   ─────────────────────                    ──────────────────
+   AccessibilityDevice(Device)  ──HTTP──>   HTTP server (localhost:8080)
+     .tap(x, y)                 POST /tap        │
+     .ui_tree()                 GET  /ui_tree    ▼
+     .tap_text("Send")                      AccessibilityService
+                                              (asli tap karta hai)
+```
+
+**Kyun ye direction (laptop=client, phone=server):**
+- ADB ka exact mirror hai — laptop se phone ko command
+- Agent, tools, skills, self-healing — kisi mein ek line nahi badli
+- Python side pe koi naya dependency nahi (httpx already tha)
+- Ulta karne se latency aur complexity dono badhti
+
+**Security:**
+- Token auth (32+ char, `secrets.compare_digest` constant-time compare)
+- Token missing → request jaati hi nahi
+- SHELL capability NAHI — pura phone kholne ke barabar hota
+- Password/OTP fields ka text mask hota hai (phone side pe)
+
+**Files:**
+- `saarthi/devices/accessibility.py` — AccessibilityDevice class
+- `saarthi/tools/skill_tools.py` — `phone_se_seekho` tool added
+- `tests/test_phase4a.py` — 29 tests (contract + security + registration)
+
+### 🎯 Phase 4B — Android App (Kotlin) — NEXT
 | Kaam | Tech |
 |---|---|
 | App | Kotlin + Jetpack Compose |
@@ -593,7 +625,7 @@ Aur verified:
 
 **Asli inaam:** Abhi recorder **agent ke apne** actions record karta hai.
 Accessibility Service ke baad **user ke MANUAL taps** record honge — matlab sach
-mein "dikha do" mode.
+mein "dikha do" mode. Phase 4A ka `phone_se_seekho` tool already ye data accept karta hai.
 
 **Achhi khabar:** `skills/store.py` ka data format **same rahega**. Store aur
 runner dobara nahi likhna padega. Sirf naya recorder source.
@@ -783,8 +815,10 @@ aur unko fix karna naya feature banane se zyada valuable hai.
 | **Max steps** | 25 |
 | **Phase 1** | ✅ Complete — foundation |
 | **Phase 2** | ✅ Complete — voice |
-| **Phase 3** | 🟡 Part 1 done — BrowserDevice + tab discipline |
-| **Phase 4-5** | ⬜ Pending — Android app, vector memory |
+| **Phase 3** | ✅ Complete — BrowserDevice + phone polish |
+| **Phase 4A** | ✅ Complete — Python HTTP adapter + 29 tests |
+| **Phase 4B** | 🎯 Next — Kotlin Android app |
+| **Phase 5** | ⬜ Pending — vector memory, skill chaining |
 | **Real hardware test** | ❌ Pending — **`python hardware_check.py`** |
 
 ### Naye AI ke liye 60-second summary

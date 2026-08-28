@@ -29,6 +29,7 @@ Use:
     await phone.tap_text("Recharge")
 """
 
+from .accessibility import AccessibilityDevice
 from .android import AndroidDevice
 from .base import (
     ActionResult,
@@ -49,6 +50,7 @@ __all__ = [
     "UIElement",
     "DeviceError",
     # Implementations
+    "AccessibilityDevice",
     "AndroidDevice",
     "DesktopDevice",
     "BrowserDevice",

@@ -78,6 +78,36 @@ Playwright se — DOM hi `ui_tree` ban jaata hai, isliye `tap_text` aur **self-h
 
 Abhi laptop ki zarurat hai. Iske baad phone khud chalega.
 
+### ✅ Phase 4A — Python Side (HO GAYA)
+
+USB cable / ADB ke bina phone control — HTTP-based AccessibilityDevice adapter.
+
+| Kaam | Status |
+|---|---|
+| `AccessibilityDevice` class (httpx HTTP client) | ✅ |
+| Token-based auth (constant-time compare, `secrets.compare_digest`) | ✅ |
+| No SHELL capability (security rule) | ✅ |
+| DeviceManager registration (`phone` + `android` alias) | ✅ |
+| `phone_se_seekho` tool (phone se recorded actions → Skill) | ✅ |
+| 29 contract + security + registration tests | ✅ |
+| HTTP contract defined (Kotlin app isi ko implement karega) | ✅ |
+
+**Architecture (phone = SERVER, laptop = CLIENT):**
+```
+   LAPTOP (Python agent)                    PHONE (Kotlin app)
+   ─────────────────────                    ──────────────────
+   AccessibilityDevice(Device)  ──HTTP──>   HTTP server (localhost:8080)
+     .tap(x, y)                 POST /tap        │
+     .ui_tree()                 GET  /ui_tree    ▼
+     .tap_text("Send")                      AccessibilityService
+                                              (asli tap karta hai)
+```
+
+Kyun ye direction: ADB ka exact mirror — laptop se phone ko command. Agent,
+tools, skills, self-healing — kisi mein ek line nahi badli.
+
+### 🎯 Phase 4B — Android App (Kotlin) — NEXT
+
 | Kaam | Tech |
 |---|---|
 | App | Kotlin + Jetpack Compose |
@@ -88,7 +118,7 @@ Abhi laptop ki zarurat hai. Iske baad phone khud chalega.
 
 ### Asli inaam: user ke taps sunna
 
-Abhi recorder **agent ke apne** actions record karta hai. Accessibility Service ke baad **tere manual taps** record honge — matlab sach mein "dikha do" mode.
+Abhi recorder **agent ke apne** actions record karta hai. Accessibility Service ke baad **tere manual taps** record honge — matlab sach mein "dikha do" mode. Phase 4A ka `phone_se_seekho` tool already ye data accept karta hai.
 
 Achhi khabar: `skills/store.py` ka data format **same rahega**. Store aur runner dobara nahi likhna padega. Sirf ek naya recorder source.
 
@@ -126,7 +156,8 @@ Achhi khabar: `skills/store.py` ka data format **same rahega**. Store aur runner
 1. ✅ Phase 1 (Foundation)    <- HO GAYA
 2. ✅ Phase 2 (Voice)         <- HO GAYA
 3. ✅ Phase 3 (Browser+Polish) <- HO GAYA (v2.0)
-4. 🎯 Phase 4 (Android app)   <- NEXT — sabse bada kaam, sabse bada inaam
+4. ✅ Phase 4A (Python side)   <- HO GAYA — HTTP contract + tests
+   🎯 Phase 4B (Kotlin app)   <- NEXT — phone pe Android app
 5. 🎯 Phase 5 (Powerful)      <- polish + advanced features
 ```
 

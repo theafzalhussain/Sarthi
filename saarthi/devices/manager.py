@@ -16,6 +16,7 @@ import logging
 
 from ..config import Settings, settings as default_settings
 from ..lang.lexicon import detect_target_device
+from .accessibility import AccessibilityDevice
 from .android import AndroidDevice, list_adb_serials
 from .base import ActionResult, Capability, Device
 from .browser import BrowserDevice
@@ -127,6 +128,38 @@ class DeviceManager:
                 self._multi_phone_serials = serials
 
         self.register(BrowserDevice(name="browser"))
+
+        # --- AccessibilityDevice (phone HTTP server) ---
+        # SAARTHI_PHONE_URL set ho to register karo. URL set na ho to
+        # KUCH NA BADLE — purana behaviour bilkul same rahe.
+        #
+        # ⚠️ setup_defaults() SYNC hai. Yahan koi network call NAHI —
+        # availability lazily is_available() mein check hogi. Startup
+        # slow karna mana hai (Phase 3 mein yahi galti se bacha gaya tha).
+        import os
+
+        phone_url = os.getenv("SAARTHI_PHONE_URL", "").strip()
+        phone_token = os.getenv("SAARTHI_PHONE_TOKEN", "").strip()
+
+        if phone_url:
+            phone_device = AccessibilityDevice(
+                name="phone",
+                base_url=phone_url,
+                token=phone_token,
+            )
+            self.register(phone_device)
+
+            # Agar koi ADB phone nahi mila aur PHONE_URL set hai, to
+            # "android" alias bhi de do — backward compatibility ke liye.
+            # User "phone pe paytm khol" bole to kaam kare.
+            if "android" not in self.devices:
+                # Koi ADB phone nahi tha — android naam pe AccessibilityDevice daalo
+                alias_device = AccessibilityDevice(
+                    name="android",
+                    base_url=phone_url,
+                    token=phone_token,
+                )
+                self.register(alias_device)
 
     # ------------------------------------------------------------------
     #  Lookup
