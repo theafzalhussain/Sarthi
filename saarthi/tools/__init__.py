@@ -20,6 +20,7 @@ Jitne tools add karega, utna capable agent banega.
 """
 
 from .base import Tool, ToolContext, simple_tool
+from .creative_tools import creative_tools
 from .device_tools import device_tools
 from .file_tools import file_tools
 from .memory_tools import memory_tools
@@ -51,6 +52,7 @@ def default_registry() -> ToolRegistry:
     registry.register_all(file_tools())     # file likhna/padhna
     registry.register_all(memory_tools())   # yaaddasht
     registry.register_all(skill_tools())    # DIKHA DO MODE
+    registry.register_all(creative_tools()) # image + video generation
     return registry
 
 
@@ -62,6 +64,7 @@ __all__ = [
     "simple_tool",
     "default_registry",
     # Tool groups
+    "creative_tools",
     "device_tools",
     "file_tools",
     "web_tools",

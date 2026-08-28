@@ -28,6 +28,7 @@ import asyncio
 import logging
 import sys
 import time
+import threading
 from pathlib import Path
 
 # Project root ko path mein daalo — taaki kahin se bhi chal jaaye
@@ -82,6 +83,64 @@ async def ask_confirmation(action: str, details: dict) -> bool:
 
 
 # ----------------------------------------------------------------------
+#  Thinking Spinner — user ko dikhao ki kaam ho raha hai
+# ----------------------------------------------------------------------
+
+
+class ThinkingSpinner:
+    """
+    Animated spinner jo tab tak chale jab tak pehla token na aaye.
+
+    Jab user message bhejta hai, turant ye shuru hota hai.
+    Pehla stream token aate hi band ho jaata hai.
+    """
+
+    _FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    _FRAMES_ASCII = ["|", "/", "-", "\\"]
+
+    def __init__(self, label: str = "thinking"):
+        self._label = label
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._use_unicode = "utf" in (getattr(sys.stdout, "encoding", "") or "").lower()
+        self._frames = self._FRAMES if self._use_unicode else self._FRAMES_ASCII
+
+    def start(self) -> None:
+        """Spinner shuru karo."""
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Spinner band karo aur line saaf karo."""
+        if not self._running:
+            return
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1)
+            self._thread = None
+        # Clear the spinner line
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
+
+    def _spin(self) -> None:
+        """Background thread mein animation."""
+        idx = 0
+        while self._running:
+            frame = self._frames[idx % len(self._frames)]
+            sys.stdout.write(f"\r  \033[96m{frame}\033[0m  \033[90m{self._label}\033[0m")
+            sys.stdout.flush()
+            idx += 1
+            time.sleep(0.08)
+
+
+# Global spinner instance
+_spinner = ThinkingSpinner()
+
+
+# ----------------------------------------------------------------------
 #  Agent ka live output
 # ----------------------------------------------------------------------
 
@@ -97,6 +156,9 @@ def make_output_handler(verbose: bool, state: dict | None = None):
             return
 
         if kind == "stream":
+            # Pehla token aaya — spinner band karo
+            _spinner.stop()
+
             # REAL-TIME streaming — token by token print karo
             if not streaming["active"]:
                 streaming["active"] = True
@@ -117,8 +179,10 @@ def make_output_handler(verbose: bool, state: dict | None = None):
                 import sys
                 sys.stdout.write("\n")
                 sys.stdout.flush()
-            ui.activity("thinking", text.strip())
+            # Spinner already chal raha hai — extra line nahi chahiye
+            # Just update the label if needed
         elif kind == "tool":
+            _spinner.stop()
             if streaming["active"]:
                 streaming["active"] = False
                 import sys
@@ -135,6 +199,7 @@ def make_output_handler(verbose: bool, state: dict | None = None):
                 first = text.splitlines()[0] if text else ""
                 ui.activity("result", first[:150])
         elif kind == "error":
+            _spinner.stop()
             if streaming["active"]:
                 streaming["active"] = False
                 import sys
@@ -154,43 +219,20 @@ def make_output_handler(verbose: bool, state: dict | None = None):
 
 
 async def show_startup(agent: Agent) -> None:
-    """Boot screen — brain, devices, aur kya missing hai."""
-    ui.section("Brain")
-    ui.brain_table(agent.brain)
-    ui.blank()
-
-    ui.section("Devices")
+    """Boot screen - compact, professional. Details are in /status."""
+    # Compact one-shot status (provider summary + devices)
     status = await agent.devices.check_availability()
-    hints = ui.devices_table(agent.devices, status)
-    ui.blank()
+    ui.compact_status(agent.brain, status, agent.devices)
 
-    # Kya missing hai — ek compact line. Detail /devices pe milegi,
-    # startup pe screen bharna nahi chahiye.
-    if hints:
-        missing = ", ".join(name for name, _ in hints)
-        ui.muted(f"Not connected: {missing}  —  run /devices for setup steps")
+    # Disconnected devices - subtle one-liner
+    disconnected = [
+        name for name, device in agent.devices.devices.items()
+        if not status.get(name, False)
+    ]
+    if disconnected:
+        ui.muted(f"  Not connected: {', '.join(disconnected)}  \u00b7  /devices for setup")
 
-    if not agent.brain.has_vision:
-        ui.muted("No vision provider — screenshots cannot be analysed (/models)")
-
-    # Multi-phone detected — tell user
-    if agent.devices._multi_phone_serials:
-        serials = agent.devices._multi_phone_serials
-        ui.blank()
-        ui.hint(
-            f"{len(serials)} phones detected:\n"
-            + "\n".join(f"  {i+1}. {s}" for i, s in enumerate(serials))
-            + f"\n\nDefault: {serials[0]}\n"
-            "To pin a specific phone, set in .env:\n"
-            f"  SAARTHI_ANDROID_SERIAL={serials[0]}",
-            title="multiple phones",
-        )
-
-    # .env mein purana provider order pada hai?
-    #
-    # Ye ek chup-chaap trap hai: user ne pehle order likha tha, baad mein
-    # naye (smarter) models add hue — wo automatically SABSE AAKHIR chale
-    # gaye. User ko lagta hai naya model use ho raha hai, par nahi ho raha.
+    # Provider order warning (keep - it is important)
     if settings.order_is_explicit and settings.order_missing:
         ui.blank()
         ui.hint(
@@ -204,20 +246,14 @@ async def show_startup(agent: Agent) -> None:
 
     if settings.auto_approve:
         ui.hint(
-            "Risky actions will run WITHOUT asking you first.\n\n"
-            "Hard blocks still apply and cannot be bypassed:\n"
-            "  OTP / PIN / password / CVV entry\n"
-            "  rm -rf /, mkfs, fork bombs, curl | bash\n"
-            "  pressing a final payment button\n\n"
-            "Turn it off with /auto",
+            "Risky actions will run WITHOUT asking you first.\n"
+            "Run /auto to turn off.",
             title="full access enabled",
         )
 
     ui.blank()
     ui.line(
-        f"  Ready.   {ui.sym['bullet']}   Streaming"
-        f"   {ui.sym['bullet']}   Type in any language"
-        f"   {ui.sym['bullet']}   /help",
+        "  Ready  \u00b7  /help for commands  \u00b7  type in any language",
         OK,
     )
     ui.blank()
@@ -657,15 +693,18 @@ async def main() -> int:
 
         # --- Agent ko kaam do ---
         state["streamed_reply"] = False
+        _spinner.start()
         started = time.monotonic()
         try:
             result = await agent.run_turn(user_input)
         except KeyboardInterrupt:
+            _spinner.stop()
             ui.blank()
             ui.error("Interrupted.")
             ui.blank()
             continue
         except Exception as exc:  # noqa: BLE001 — CLI kabhi crash na ho
+            _spinner.stop()
             ui.blank()
             ui.reply_error(f"Something went wrong: {exc}")
             ui.blank()
@@ -675,19 +714,22 @@ async def main() -> int:
                 traceback.print_exc()
             continue
 
+        _spinner.stop()
+
         elapsed = time.monotonic() - started
 
         ui.blank()
         if result.error:
             ui.reply_error(result.error)
         else:
-            # Meta line — kitna kaam laga. Debugging mein bahut kaam aata hai.
+            # Meta line — compact, professional
             meta = ""
             if state["verbose"]:
-                bits = [f"{result.steps_used} steps", f"{elapsed:.1f}s"]
+                parts = []
                 if result.tool_calls:
-                    bits.insert(1, ", ".join(result.tool_calls))
-                meta = f"  {ui.sym['bullet']}  ".join(bits)
+                    parts.append(", ".join(result.tool_calls))
+                parts.append(f"{elapsed:.1f}s")
+                meta = "  ·  ".join(parts)
             # Agar reply streaming se already print ho chuka to skip
             if state.get("streamed_reply"):
                 if meta:

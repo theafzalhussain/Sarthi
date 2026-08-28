@@ -35,6 +35,12 @@ class GeminiProvider(LLMProvider):
 
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
+        # Persistent client for connection reuse
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=90.0, write=10.0, pool=5.0),
+            limits=httpx.Limits(max_keepalive_connections=2, max_connections=3, keepalive_expiry=120),
+            follow_redirects=True,
+        )
 
     # ------------------------------------------------------------------
     #  Message conversion (Gemini ka apna format hai)
@@ -167,8 +173,7 @@ class GeminiProvider(LLMProvider):
         url = f"{API_BASE}/models"
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url, params={"key": self.config.api_key})
+            resp = await self._client.get(url, params={"key": self.config.api_key})
         except httpx.RequestError as exc:
             raise BrainError(f"gemini: models list nahi mili — {exc}") from exc
 
@@ -221,13 +226,12 @@ class GeminiProvider(LLMProvider):
         url = f"{API_BASE}/models/{self.model}:generateContent"
 
         try:
-            async with httpx.AsyncClient(timeout=90.0) as client:
-                resp = await client.post(
-                    url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    params={"key": self.config.api_key},
-                )
+            resp = await self._client.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                params={"key": self.config.api_key},
+            )
         except httpx.RequestError as exc:
             raise BrainError(f"gemini: network problem — {exc}") from exc
 

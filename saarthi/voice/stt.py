@@ -91,11 +91,11 @@ except ImportError:
 # ----------------------------------------------------------------------
 
 MODEL_INFO: dict[str, str] = {
-    "tiny": "~1GB RAM, bahut tez, accuracy kaam chalau",
-    "base": "~1GB RAM, tez, accuracy theek — 4GB laptop ke liye",
-    "small": "~2GB RAM, medium speed, acchi accuracy — recommended",
-    "medium": "~5GB RAM, dheemi, bahut acchi accuracy",
-    "large-v3": "~10GB RAM, GPU chahiye, best accuracy",
+    "tiny": "~1GB RAM, fastest, basic accuracy",
+    "base": "~1GB RAM, fast, decent accuracy — for 4GB laptops",
+    "small": "~2GB RAM, balanced speed, good accuracy — recommended",
+    "medium": "~5GB RAM, slower, high accuracy",
+    "large-v3": "~10GB RAM, GPU required, best accuracy",
 }
 
 
@@ -729,25 +729,25 @@ class WhisperSTT:
         # --- Quality checks ---
         if not raw_text:
             result.is_usable = False
-            result.reject_reason = "kuch sunai nahi diya"
+            result.reject_reason = "Nothing was heard"
             return result
 
         if looks_like_garbage(raw_text):
             result.is_usable = False
-            result.reject_reason = f"bakwas output ('{raw_text}') — shayad shor tha"
+            result.reject_reason = f"Unclear output ('{raw_text}') — possibly noise"
             return result
 
         if no_speech > self.MAX_NO_SPEECH_PROB:
             result.is_usable = False
             result.reject_reason = (
-                f"no_speech_prob {no_speech:.2f} bahut zyada — koi bola nahi lagta"
+                f"no_speech_prob {no_speech:.2f} too high — no speech detected"
             )
             return result
 
         if logprobs and avg_logprob < self.MIN_LOGPROB:
             result.is_usable = False
             result.reject_reason = (
-                f"confidence kam hai (logprob {avg_logprob:.2f}) — dobara bol"
+                f"Low confidence (logprob {avg_logprob:.2f}) — try speaking again"
             )
             return result
 
@@ -774,11 +774,11 @@ class WhisperSTT:
         return self.transcribe(str(file_path), extra_words=extra_words)
 
     def status(self) -> str:
-        """CLI ke liye status."""
+        """Status for CLI display."""
         if not HAS_WHISPER:
-            return "  STT: available nahi (pip install faster-whisper)"
+            return "  STT: not available (pip install faster-whisper)"
 
         loaded = (
-            f"loaded ({self._load_time:.1f}s)" if self.is_loaded else "load nahi hua"
+            f"loaded ({self._load_time:.1f}s)" if self.is_loaded else "not loaded"
         )
         return f"  STT: {self.config.describe()}\n       {loaded}"

@@ -107,8 +107,8 @@ class AudioConfig:
 
     # --- Silence detection tuning ---
 
-    # Background noise se kitna zyada loud ho tab "bolna" maana jaaye
-    noise_multiplier: float = 2.5
+    # How much louder than background noise counts as speech
+    noise_multiplier: float = 1.5
 
     # Minimum threshold — bilkul silent room mein bhi itna chahiye
     # (int16 scale pe, 0-32767)
@@ -117,14 +117,14 @@ class AudioConfig:
     # Bolna shuru hua maanne ke liye kitne consecutive loud chunks
     speech_start_chunks: int = 3
 
-    # Bolna khatam — kitni der ka silence
-    silence_duration: float = 1.0
+    # Speech end detection — how long silence before stopping
+    silence_duration: float = 0.8
 
     # Zyada se zyada kitna record karna hai (safety)
     max_duration: float = 30.0
 
-    # Bolna shuru hi na ho to kitni der wait karein
-    start_timeout: float = 10.0
+    # How long to wait for speech to begin
+    start_timeout: float = 5.0
 
     # Noise floor calibrate karne ka time
     calibration_duration: float = 0.5

@@ -150,18 +150,18 @@ class VoiceSession:
 
     def readiness(self) -> tuple[bool, list[str]]:
         """
-        Voice mode chal sakta hai?
+        Can voice mode run?
 
         Returns: (ready, problems)
         """
         problems: list[str] = []
 
         if not is_audio_available():
-            problems.append("Mic available nahi hai")
+            problems.append("Microphone not available")
         if not is_stt_available():
-            problems.append("faster-whisper install nahi hai")
+            problems.append("faster-whisper not installed")
         if not self.agent.brain.is_ready:
-            problems.append("Koi LLM API key nahi hai")
+            problems.append("No LLM API key configured")
 
         return (len(problems) == 0, problems)
 
@@ -239,23 +239,15 @@ class VoiceSession:
 
         if state == ListenState.CALIBRATING:
             if first_time:
-                self.on_event("calibrating", "shor naap raha hun (aadha second)...")
+                self.on_event("calibrating", "Calibrating ambient noise...")
 
         elif state == ListenState.WAITING:
             if first_time:
-                self.on_event("listening", "AB BOL — sun raha hun")
-            elif status.loudness > status.threshold * 0.4:
-                # Awaaz aa rahi hai par threshold se kam — user ko batao
-                self.on_event(
-                    "quiet",
-                    f"awaaz aa rahi hai par kam hai "
-                    f"({status.loudness:.0f} / chahiye {status.threshold:.0f}) "
-                    f"— zor se bol",
-                )
+                self.on_event("listening", "Listening — speak now")
 
         elif state == ListenState.SPEAKING:
             if first_time:
-                self.on_event("listening", "sun raha hun...")
+                self.on_event("listening", "Listening...")
 
     async def listen_once(self) -> str | None:
         """
@@ -277,43 +269,36 @@ class VoiceSession:
 
         if audio is None:
             if status.state == ListenState.TIMEOUT:
-                self.on_event("quiet", "kuch sunai nahi diya")
+                self.on_event("quiet", "Nothing heard")
 
-            # BUG#22 — ye TIMEOUT se ALAG hai aur farq batana zaroori hai.
-            #
-            # NO_AUDIO matlab mic stream ne sirf zeros bheje. User ki
-            # awaaz ki koi galti nahi hai. Pehle usko bhi "kuch sunai
-            # nahi diya" milta tha, to wo zor se bolta tha aur mic paas
-            # laata tha — bekaar, kyunki problem uske bolne mein nahi
-            # thi. Galat diagnosis dene se accha hai sach batao.
             elif status.state == ListenState.NO_AUDIO:
                 self.on_event(
                     "error",
-                    "Mic se audio nahi aa raha (sirf zeros) — teri awaaz "
-                    "ki galti nahi hai, audio pipeline ka issue hai.\n"
-                    "    Ye chala: python hardware_check.py --mic-stream",
+                    "No audio from microphone (receiving zeros) — "
+                    "this is not a volume issue, check your audio pipeline.\n"
+                    "    Run: python hardware_check.py --mic-stream",
                 )
             return None
 
         if status.state == ListenState.TOO_LONG:
-            self.on_event("info", "bahut lamba bola, jitna suna usi pe kaam karta hun")
+            self.on_event("info", "Utterance too long — processing what was captured")
 
-        # --- Transcribe (blocking -> thread mein) ---
-        self.on_event("thinking", "samajh raha hun...")
+        # --- Transcribe (blocking -> thread) ---
+        self.on_event("thinking", "Processing speech...")
 
         try:
             result = await asyncio.to_thread(
                 self.stt.transcribe, audio, self._extra_words
             )
         except Exception as exc:  # noqa: BLE001
-            self.on_event("error", f"Samajh nahi paya: {exc}")
+            self.on_event("error", f"Transcription failed: {exc}")
             return None
 
-        # Debug: correction dikhao
+        # Debug: show correction
         if result.correction and result.correction.changes:
             self.on_event(
                 "corrected",
-                f'suna: "{result.raw_text}" -> samjha: "{result.text}"',
+                f'heard: "{result.raw_text}" -> understood: "{result.text}"',
             )
 
         if not result.is_usable:
@@ -338,18 +323,15 @@ class VoiceSession:
 
     async def voice_confirm(self, action: str, details: dict) -> bool:
         """
-        Risky kaam ki confirmation — bolke.
+        Voice confirmation for risky actions.
 
-        Agent puchega, tu "haan" ya "nahi" bolega.
-
-        FAIL SAFE: samajh na aaye to NAHI. Do baar try karta hai,
-        phir mana kar deta hai. Chup-chaap paise nahi jaane chahiye.
+        Agent asks, user says "yes" or "no".
+        FAIL SAFE: if unclear, default is NO.
         """
-        # Sawaal banao
-        question_parts = [f"Ruk ja. {action}."]
+        question_parts = [f"Hold on. {action}."]
         for key, value in list(details.items())[:3]:
-            question_parts.append(f"{key} {value}.")
-        question_parts.append("Karu? Haan ya nahi bol.")
+            question_parts.append(f"{key}: {value}.")
+        question_parts.append("Should I proceed? Say yes or no.")
         question = " ".join(question_parts)
 
         self.on_event("confirm", question)
@@ -360,32 +342,32 @@ class VoiceSession:
 
             if answer is None:
                 if attempt + 1 < self.config.max_retries:
-                    await self.speak("Sunai nahi diya. Haan ya nahi bol.")
+                    await self.speak("Didn't catch that. Say yes or no.")
                 continue
 
             lowered = answer.strip().lower()
 
-            # Saaf mana
+            # Clear denial
             if any(
                 word in lowered
-                for word in ("nahi", "nahin", "mat", "ruk", "cancel", "no", "band")
+                for word in ("nahi", "nahin", "mat", "ruk", "cancel", "no", "band", "stop", "don't")
             ):
-                self.on_event("denied", "nahi kar raha")
-                await self.speak("Theek hai, nahi kar raha.")
+                self.on_event("denied", "Action cancelled")
+                await self.speak("Got it, cancelled.")
                 return False
 
-            # Saaf haan
+            # Clear approval
             if is_affirmative(answer):
-                self.on_event("approved", "kar raha hun")
+                self.on_event("approved", "Proceeding")
                 return True
 
-            # Kuch aur bola — dobara pucho
+            # Unclear — ask again
             if attempt + 1 < self.config.max_retries:
-                await self.speak("Samajh nahi aaya. Saaf haan ya nahi bol.")
+                await self.speak("Didn't understand. Please say yes or no clearly.")
 
         # FAIL SAFE
-        self.on_event("denied", "confirmation nahi mili, isliye nahi kiya")
-        await self.speak("Confirm nahi hua, isliye nahi kar raha.")
+        self.on_event("denied", "No confirmation received — action skipped")
+        await self.speak("No confirmation, skipping.")
         return False
 
     # ------------------------------------------------------------------
@@ -415,16 +397,16 @@ class VoiceSession:
 
         # Model pehle load kar lo — warna pehli command pe user
         # 30 second wait karega aur lagega hang ho gaya
-        self.on_event("info", "Whisper model load ho raha hai...")
+        self.on_event("info", "Loading Whisper model...")
         try:
             await asyncio.to_thread(self.stt.load)
         except Exception as exc:  # noqa: BLE001
-            self.on_event("error", f"Model load nahi hua: {exc}")
+            self.on_event("error", f"Model failed to load: {exc}")
             return
 
         self.running = True
-        self.on_event("ready", "Bol bhai, sun raha hun.")
-        await self.speak("Ready hun bhai.")
+        self.on_event("ready", "Ready. Listening...")
+        await self.speak("Ready.")
 
         while self.running:
             try:
@@ -438,16 +420,16 @@ class VoiceSession:
                 if text is None:
                     continue
 
-                # --- Band karne wale shabd ---
+                # --- Stop commands ---
                 if text.strip().lower().strip(".!?") in (
                     "band karo", "bandh karo", "band kar", "quit", "exit",
-                    "bye", "khatam", "stop", "ruk ja",
+                    "bye", "khatam", "stop", "ruk ja", "stop listening",
                 ):
-                    await self.speak("Theek hai, bye bhai.")
+                    await self.speak("Goodbye.")
                     break
 
-                # --- 3. Agent se kaam karwao ---
-                self.on_event("working", "kaam kar raha hun...")
+                # --- 3. Process with agent ---
+                self.on_event("working", "Processing...")
                 result = await self.agent.run_turn(text)
 
                 # --- 4. Jawab bolo ---
@@ -466,16 +448,16 @@ class VoiceSession:
                 self.agent.trim_history()
 
             except KeyboardInterrupt:
-                self.on_event("info", "rok diya")
+                self.on_event("info", "Stopped")
                 break
-            except Exception as exc:  # noqa: BLE001 — session kabhi crash na ho
-                log.exception("Voice loop mein problem")
-                self.on_event("error", f"Kuch gadbad: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Voice loop error")
+                self.on_event("error", f"Error: {exc}")
                 continue
 
         self.running = False
         self.wake.close()
-        self.on_event("info", "Voice session band")
+        self.on_event("info", "Voice session ended")
 
     def stop(self) -> None:
         """Loop rok do."""
@@ -486,7 +468,7 @@ class VoiceSession:
     # ------------------------------------------------------------------
 
     def status(self) -> str:
-        """CLI ke liye voice status."""
+        """Voice status for CLI display."""
         lines = ["VOICE:"]
         lines.append(self.stt.status())
         lines.append(self.tts.status())
@@ -497,11 +479,11 @@ class VoiceSession:
             lines.append(f"        ({reason})")
 
         lines.append(
-            f"  Mic: {'available' if is_audio_available() else 'available nahi'}"
+            f"  Mic: {'available' if is_audio_available() else 'not available'}"
         )
 
         if self._extra_words:
             preview = ", ".join(self._extra_words[:6])
-            lines.append(f"  Vocabulary boost: {preview} ...")
+            lines.append(f"  Vocabulary: {preview} ...")
 
         return "\n".join(lines)

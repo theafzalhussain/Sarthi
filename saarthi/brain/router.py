@@ -97,7 +97,7 @@ class Brain:
     #  Provider health
     # ------------------------------------------------------------------
 
-    COOLDOWN_SECONDS = 90
+    COOLDOWN_SECONDS = 30
 
     def _say(self, kind: str, text: str) -> None:
         """UI ko batao (agar koi sun raha hai)."""

@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 """
-SAARTHI Voice CLI — bolke agent chalao.
+SAARTHI Voice CLI — control your agent with voice.
 
-Chalane ke liye:
+Usage:
     python voice_cli.py
 
-Pehle setup check kar:
+Run setup check first:
     python voice_cli.py --check
 
-Ek baar sun ke test kar (loop nahi):
+Single-shot test (no loop):
     python voice_cli.py --once
-
-Look ka pura code `saarthi/ui.py` mein hai — text CLI ke saath
-bilkul same theme rehta hai.
 """
 
 from __future__ import annotations
@@ -43,14 +40,13 @@ from saarthi.voice.tts import TTSEngine  # noqa: E402
 
 ui = Ui()
 
-TAGLINE = "Personal AI Agent"
+TAGLINE = "Voice Agent"
 
 
 # ----------------------------------------------------------------------
 #  Event display
 # ----------------------------------------------------------------------
 
-# Voice session ke events -> (nishaan, rang)
 EVENT_STYLE: dict[str, tuple[str, str]] = {
     "calibrating": ("think", MUTED),
     "listening": ("mic", BRAND),
@@ -71,21 +67,21 @@ EVENT_STYLE: dict[str, tuple[str, str]] = {
 
 
 def handle_event(kind: str, text: str) -> None:
-    """Voice session ke events dikhao."""
+    """Display voice session events."""
     if not text:
         return
 
     symbol_key, color = EVENT_STYLE.get(kind, ("bullet", TEXT))
     mark = ui.sym.get(symbol_key, ui.sym["bullet"])
 
-    # Reply ko panel mein — wo sabse important hai
+    # Reply gets a panel — it's the most important output
     if kind == "reply":
         ui.blank()
         ui.reply(text)
         ui.blank()
         return
 
-    # Multi-line (setup help waghairah) — box mein
+    # Multi-line content in a box
     if "\n" in text:
         ui.hint(text, title=kind)
         return
@@ -99,14 +95,14 @@ def handle_event(kind: str, text: str) -> None:
 
 
 async def run_check() -> int:
-    """Voice setup check karo aur batao kya missing hai."""
+    """Run voice setup diagnostics and show what's missing."""
     ui.banner(__version__, TAGLINE, mode="setup check")
 
     problems: list[str] = []
     hints: list[tuple[str, str]] = []
 
     # --- 1. LLM ---
-    ui.section("1  Brain (LLM providers)")
+    ui.section("1  Brain")
     agent = Agent()
     if agent.brain.is_ready:
         ui.brain_table(agent.brain)
@@ -116,13 +112,13 @@ async def run_check() -> int:
         hints.append(("brain", settings.setup_help()))
     ui.blank()
 
-    # --- 2. Mic ---
-    ui.section("2  Microphone (input)")
+    # --- 2. Microphone ---
+    ui.section("2  Microphone")
     if is_audio_available():
         devices = list_input_devices()
         ui.table(
             ["", "input device"],
-            [[ui.badge(True), str(d)] for d in devices[:6]] or [[ui.badge(False), "—"]],
+            [[ui.badge(True), str(d)] for d in devices[:6]] or [[ui.badge(False), "\u2014"]],
         )
         if len(devices) > 6:
             ui.muted(f"  ... and {len(devices) - 6} more devices")
@@ -132,16 +128,16 @@ async def run_check() -> int:
         hints.append(("microphone", audio_setup_help()))
     ui.blank()
 
-    # --- 3. STT ---
-    ui.section("3  Speech-to-text (Whisper)")
+    # --- 3. Speech-to-Text ---
+    ui.section("3  Speech-to-Text (Whisper)")
     if is_stt_available():
         suggested = recommend_model_size()
         ui.table(
-            ["", "cheez", "value"],
+            ["", "component", "value"],
             [
                 [ui.badge(True), "faster-whisper", "ready"],
-                [ui.badge(True), "recommended model for your RAM", suggested],
-                [ui.badge(True), "add to .env", f"WHISPER_MODEL={suggested}"],
+                [ui.badge(True), "recommended model", suggested],
+                [ui.badge(True), "config (.env)", f"WHISPER_MODEL={suggested}"],
             ],
         )
     else:
@@ -150,8 +146,8 @@ async def run_check() -> int:
         hints.append(("speech-to-text", stt_setup_help()))
     ui.blank()
 
-    # --- 4. TTS ---
-    ui.section("4  Text-to-speech (output)")
+    # --- 4. Text-to-Speech ---
+    ui.section("4  Text-to-Speech")
     engine = TTSEngine()
     ui.table(
         ["", "backend", "quality"],
@@ -160,7 +156,7 @@ async def run_check() -> int:
             for name, available, quality in TTSEngine.available_backends()
         ],
     )
-    ui.muted(f"  selected: {engine.backend.name}")
+    ui.muted(f"  active: {engine.backend.name}")
     if not engine.has_voice:
         hints.append(
             (
@@ -171,8 +167,8 @@ async def run_check() -> int:
         )
     ui.blank()
 
-    # --- 5. Wake ---
-    ui.section("5  Wake mode (how to trigger)")
+    # --- 5. Wake Mode ---
+    ui.section("5  Wake Mode")
     ui.table(
         ["", "mode", "description"],
         [
@@ -182,7 +178,7 @@ async def run_check() -> int:
     )
     ui.blank()
 
-    # --- Verdict ---
+    # --- Result ---
     for title, hint in hints:
         ui.hint(hint, title=title)
 
@@ -219,23 +215,19 @@ async def main() -> int:
             level=logging.DEBUG, format="%(levelname)s [%(name)s] %(message)s"
         )
     else:
-        # Raw warnings ko stderr pe chhapne se roko — wo voice ke
-        # output ke beech mein aa ke look tod dete hain.
-        # (Detail cli.py mein likhi hai.)
         saarthi_log = logging.getLogger("saarthi")
         saarthi_log.addHandler(logging.NullHandler())
         saarthi_log.setLevel(logging.ERROR)
 
     once = "--once" in args
-    ui.banner(__version__, TAGLINE, mode="voice test" if once else "voice mode")
+    ui.banner(__version__, TAGLINE, mode="voice test" if once else "voice")
 
     # --- Agent + session ---
-    # Voice session khud output handle karta hai, isliye agent chup rahega
     agent = Agent(on_output=lambda kind, text: None)
     config = VoiceConfig.from_env()
     session = VoiceSession(agent, config, on_event=handle_event)
 
-    # --- Readiness ---
+    # --- Readiness check ---
     ready, problems = session.readiness()
     if not ready:
         ui.hint(
@@ -245,19 +237,18 @@ async def main() -> int:
         )
         return 1
 
-    # --- Status ---
-    ui.section("Voice setup")
+    # --- Compact status ---
+    ui.section("Voice")
     ui.block(session.status(), MUTED)
     ui.blank()
 
     if not session.tts.has_voice:
-        ui.muted("No voice output available — replies will be printed (install espeak-ng)")
-
-    ui.blank()
+        ui.muted("No voice output \u2014 replies will be printed (install espeak-ng)")
 
     # --- Single-shot test mode ---
     if once:
-        ui.muted("--once mode: listening for a single utterance")
+        ui.blank()
+        ui.muted("Listening for a single utterance...")
         ui.blank()
         await asyncio.to_thread(session.stt.load)
         await session.refresh_vocabulary()
@@ -267,9 +258,9 @@ async def main() -> int:
         ui.blank()
         return 0
 
+    ui.blank()
     ui.line(
-        f"  Listening.   {ui.sym['bullet']}   Speak in any language"
-        f"   {ui.sym['bullet']}   say 'stop' or press Ctrl+C to exit",
+        f"  Listening  \u00b7  speak in any language  \u00b7  say 'stop' or Ctrl+C to exit",
         OK,
     )
     ui.blank()

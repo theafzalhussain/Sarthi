@@ -80,6 +80,24 @@ class OpenAICompatProvider(LLMProvider):
                 f"BASE_URLS mein add kar."
             )
 
+        # PERSISTENT HTTP CLIENT — connection pooling + keep-alive
+        # Har request pe naya TCP+TLS handshake nahi hoga = 200-500ms saved
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=5.0,   # Dead server detect in 5s (not 90s)
+                read=90.0,     # LLM response ke liye wait
+                write=10.0,    # Request bhejne ke liye
+                pool=5.0,      # Connection pool se lene ke liye
+            ),
+            limits=httpx.Limits(
+                max_keepalive_connections=3,
+                max_connections=5,
+                keepalive_expiry=120,  # 2 min keep-alive
+            ),
+            follow_redirects=True,
+            http2=True,  # HTTP/2 multiplexing — faster parallel
+        )
+
     # ------------------------------------------------------------------
     #  Message conversion
     # ------------------------------------------------------------------
@@ -173,8 +191,7 @@ class OpenAICompatProvider(LLMProvider):
         headers = {"Authorization": f"Bearer {self.config.api_key}"}
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url, headers=headers)
+            resp = await self._client.get(url, headers=headers)
         except httpx.RequestError as exc:
             raise BrainError(f"{self.name}: models list nahi mili — {exc}") from exc
 
@@ -248,8 +265,7 @@ class OpenAICompatProvider(LLMProvider):
         url = f"{self.base_url}/chat/completions"
 
         try:
-            async with httpx.AsyncClient(timeout=90.0) as client:
-                resp = await client.post(url, json=payload, headers=headers)
+            resp = await self._client.post(url, json=payload, headers=headers)
         except httpx.RequestError as exc:
             # Ollama band ho to actionable error — "ollama serve" chalao
             if self.name == "ollama":
@@ -356,10 +372,9 @@ class OpenAICompatProvider(LLMProvider):
         completion_tokens = 0
 
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream(
-                    "POST", url, json=payload, headers=headers
-                ) as resp:
+            async with self._client.stream(
+                "POST", url, json=payload, headers=headers,
+            ) as resp:
                     if resp.status_code >= 400:
                         # Error — read body and raise
                         body = await resp.aread()

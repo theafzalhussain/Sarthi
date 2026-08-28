@@ -111,16 +111,13 @@ _WORDMARK = [
     "╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝",
 ]
 
-# Upar se neeche halka -> gehra. Isse logo mein depth aata hai.
+# Single brand color — clean professional look (no rainbow gradient)
 _WORDMARK_GRADIENT = [
-    "#7dd3fc", "#38bdf8", "#0ea5e9", "#0284c7", "#0369a1", "#075985",
+    "#38bdf8", "#38bdf8", "#0ea5e9", "#0ea5e9", "#0284c7", "#0284c7",
 ]
 
 # Chhoti terminal ya no-unicode ke liye
 _WORDMARK_SMALL = "S A A R T H I"
-
-# Tagline for v2
-_V2_BADGE = "streaming | parallel | multi-task"
 
 
 # ======================================================================
@@ -337,10 +334,9 @@ class Ui:
 
     def banner(self, version: str, tagline: str = "", mode: str = "") -> None:
         """
-        Startup wordmark.
+        Startup wordmark — clean and professional.
 
-        Chhoti terminal ya no-unicode ho to chhota version dikhata hai —
-        toota-foota ASCII art se accha hai ki saaf text ho.
+        Chhoti terminal ya no-unicode ho to chhota version dikhata hai.
         """
         self.blank()
 
@@ -356,21 +352,13 @@ class Ui:
         else:
             self.line("  " + _WORDMARK_SMALL, BRAND, bold=True)
 
-        # Tagline strip
-        bits = []
+        self.blank()
+
+        # Single clean tagline
         if tagline:
-            bits.append(tagline)
-        bits.append(f"v{version}")
-        if mode:
-            bits.append(mode)
-
-        sep = f"  {self.sym['bullet']}  "
-        self.blank()
-        self.line("  " + sep.join(bits), MUTED)
-
-        # v2 features badge
-        self.line(f"  {_V2_BADGE}", ACCENT)
-        self.blank()
+            self.line(f"  {tagline}  ·  v{version}", MUTED)
+        else:
+            self.line(f"  v{version}", MUTED)
 
     # ------------------------------------------------------------------
     #  Tables
@@ -453,15 +441,19 @@ class Ui:
 
     def prompt(self, label: str = "you") -> str:
         """
-        `input()` ko dene wala prompt string.
+        Professional input prompt.
 
-            you ❯
+            ┃ you ›
         """
+        gutter = "│" if self.unicode else "|"
+        arrow = "›" if self.unicode else ">"
         return (
-            "  "
+            "\n  "
+            + self.paint(gutter, MUTED)
+            + " "
             + self.paint(label, BRAND, bold=True)
             + " "
-            + self.paint(self.sym["prompt"], BRAND)
+            + self.paint(arrow, BRAND)
             + " "
         )
 
@@ -706,6 +698,52 @@ class Ui:
 
         self.line(f"  error {self.sym['prompt']}", ERR, bold=True)
         self.block(text, ERR, indent=4)
+
+    # ------------------------------------------------------------------
+    #  Compact startup — professional minimal look
+    # ------------------------------------------------------------------
+
+    def compact_status(self, brain, device_status: dict, manager) -> None:
+        """
+        One-shot compact status for startup — no verbose tables.
+        Shows: provider summary, primary model, device readiness.
+        """
+        dash = "─" if self.unicode else "-"
+        self.line("  " + dash * max(0, self.width - 4), MUTED)
+        self.blank()
+
+        # Brain summary — one line
+        total = len(brain.providers)
+        primary = brain.providers[0] if brain.providers else None
+        primary_name = f"{primary.name}/{primary.model}" if primary else "none"
+        vision = "on" if brain.has_vision else "off"
+        self.line(
+            f"  {self.sym['on']}  {total} providers loaded  ·  primary: {primary_name}",
+            TEXT,
+        )
+        self.line(
+            f"     streaming: on  ·  tools: on  ·  vision: {vision}",
+            MUTED,
+        )
+        self.blank()
+
+        # Devices — one compact line per device
+        for name, device in manager.devices.items():
+            connected = bool(device_status.get(name, False))
+            caps_count = len(device.capabilities)
+            if connected:
+                self.line(
+                    f"  {self.sym['on']}  {name} ({device.kind})  ·  ready  ·  {caps_count} actions",
+                    OK,
+                )
+            else:
+                self.line(
+                    f"  {self.sym['off']}  {name} ({device.kind})  ·  not connected",
+                    MUTED,
+                )
+
+        self.blank()
+        self.line("  " + dash * max(0, self.width - 4), MUTED)
 
 
 # ----------------------------------------------------------------------

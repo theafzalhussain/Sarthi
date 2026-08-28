@@ -158,9 +158,9 @@ class WakeDetector(ABC):
         if self.is_available():
             return ""
         if not is_audio_available():
-            return "mic available nahi hai"
+            return "microphone not available"
         if not HAS_NUMPY:
-            return "numpy install nahi hai"
+            return "numpy not installed"
         return "setup adhoora hai"
 
     @abstractmethod
@@ -177,7 +177,7 @@ class WakeDetector(ABC):
         raise NotImplementedError
 
     def setup_help(self) -> str:
-        return f"{self.name} available nahi hai."
+        return f"{self.name} is not available."
 
     def close(self) -> None:
         """Resources free karo."""
@@ -205,18 +205,18 @@ class PushToTalkWake(WakeDetector):
     """
 
     name = "push_to_talk"
-    description = "Enter dabao aur bolo (zero setup)"
+    description = "Press Enter and speak (zero setup)"
 
     def is_available(self) -> bool:
         return True
 
     def wait_for_wake(self) -> bool:
         try:
-            answer = input("\n  [Enter dabao aur bolo, ya 'q' se band karo] ")
+            answer = input("\n  [Press Enter to speak, or 'q' to quit] ")
         except (EOFError, KeyboardInterrupt):
             return False
 
-        if answer.strip().lower() in ("q", "quit", "exit", "band", "bye"):
+        if answer.strip().lower() in ("q", "quit", "exit", "band", "bye", "stop"):
             return False
         return True
 
@@ -235,14 +235,14 @@ class EnergyWake(WakeDetector):
     """
 
     name = "energy"
-    description = "Koi bhi tez awaaz (no setup, par false alarms hote hain)"
+    description = "Any loud sound triggers (no setup, may have false alarms)"
 
     def is_available(self) -> bool:
         return is_audio_available() and HAS_NUMPY
 
     def wait_for_wake(self) -> bool:
         if not self.is_available():
-            log.warning("Energy wake available nahi: %s", self.unavailable_reason())
+            log.warning("Energy wake not available: %s", self.unavailable_reason())
             return False
 
         loud_streak = 0
@@ -274,7 +274,7 @@ class EnergyWake(WakeDetector):
 
     def setup_help(self) -> str:
         return (
-            "Energy wake ke liye mic chahiye:\n"
+            "Energy wake requires a microphone:\n"
             "    pip install sounddevice numpy\n"
             "    + PortAudio (sudo apt install libportaudio2)"
         )
@@ -293,7 +293,7 @@ class PorcupineWake(WakeDetector):
     """
 
     name = "porcupine"
-    description = 'Asli wake word ("jarvis") — free key chahiye'
+    description = 'Wake word ("jarvis") — free key required'
 
     def __init__(
         self,
@@ -317,11 +317,11 @@ class PorcupineWake(WakeDetector):
         self._checked = True
 
         if not HAS_PORCUPINE:
-            self._error = f"pvporcupine install nahi hai ({PORCUPINE_ERROR})"
+            self._error = f"pvporcupine not installed ({PORCUPINE_ERROR})"
             return False
 
         if not self.config.access_key:
-            self._error = "PORCUPINE_ACCESS_KEY nahi mila"
+            self._error = "PORCUPINE_ACCESS_KEY not found"
             return False
 
         kwargs: dict = {
@@ -374,9 +374,9 @@ class PorcupineWake(WakeDetector):
         if self._error:
             problems.append(self._error.splitlines()[0])
         if not is_audio_available():
-            problems.append("mic available nahi hai")
+            problems.append("microphone not available")
         if not HAS_NUMPY:
-            problems.append("numpy install nahi hai")
+            problems.append("numpy not installed")
 
         return "; ".join(problems) or "setup adhoora hai"
 

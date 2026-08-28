@@ -259,9 +259,9 @@ PIPER_VOICES_URL = "https://huggingface.co/rhasspy/piper-voices"
 
 # Ye voices Hinglish ke liye theek hain
 PIPER_RECOMMENDED = {
-    "en_US-amy-medium": "English female, saaf — Hinglish ke liye theek",
+    "en_US-amy-medium": "English female, clear — good for Hinglish",
     "en_GB-alan-medium": "English male",
-    "hi_IN-pratham-medium": "Hindi male (Devanagari text ke liye)",
+    "hi_IN-pratham-medium": "Hindi male (for Devanagari text)",
 }
 
 
@@ -269,7 +269,7 @@ class PiperTTS(TTSBackend):
     """Piper — offline neural TTS. Sabse acchi quality."""
 
     name = "piper"
-    quality = "bahut acchi"
+    quality = "excellent"
 
     def __init__(self, config: TTSConfig | None = None):
         super().__init__(config)
@@ -286,7 +286,7 @@ class PiperTTS(TTSBackend):
             path = Path(self.config.piper_model).expanduser()
             if path.exists():
                 return path
-            self._error = f"PIPER_MODEL set hai par file nahi mili: {path}"
+            self._error = f"PIPER_MODEL is set but file not found: {path}"
             return None
 
         # 2. Standard jagahon pe dhoondo
@@ -317,21 +317,21 @@ class PiperTTS(TTSBackend):
         try:
             from piper import PiperVoice
         except ImportError as exc:
-            self._error = f"piper-tts install nahi hai ({exc})"
+            self._error = f"piper-tts not installed ({exc})"
             return False
 
         model_path = self._find_model()
         if model_path is None:
             if not self._error:
-                self._error = "Koi Piper voice model (.onnx) nahi mila"
+                self._error = "No Piper voice model (.onnx) found"
             return False
 
         try:
             self._voice = PiperVoice.load(str(model_path))
-            log.info("Piper voice load ho gayi: %s", model_path.name)
+            log.info("Piper voice loaded: %s", model_path.name)
             return True
         except Exception as exc:  # noqa: BLE001
-            self._error = f"Piper voice load nahi hui: {exc}"
+            self._error = f"Piper voice failed to load: {exc}"
             return False
 
     # ------------------------------------------------------------------
@@ -402,7 +402,7 @@ class EspeakTTS(TTSBackend):
     """espeak-ng — robotic awaaz, par bahut halka aur reliable."""
 
     name = "espeak"
-    quality = "robotic par samajh aata hai"
+    quality = "robotic but clear"
 
     def _binary(self) -> str | None:
         for candidate in ("espeak-ng", "espeak"):
@@ -476,7 +476,7 @@ class MacSayTTS(TTSBackend):
     """macOS ka built-in `say` — Mac pe kuch install nahi karna."""
 
     name = "say"
-    quality = "acchi"
+    quality = "good"
 
     def is_available(self) -> bool:
         return sys.platform == "darwin" and shutil.which("say") is not None
@@ -499,7 +499,7 @@ class MacSayTTS(TTSBackend):
             return False
 
     def setup_help(self) -> str:
-        return "macOS `say` sirf Mac pe chalta hai."
+        return "macOS `say` only works on Mac."
 
 
 # ======================================================================
@@ -511,25 +511,57 @@ class Pyttsx3TTS(TTSBackend):
     """pyttsx3 — Windows/Linux/Mac, system voices use karta hai."""
 
     name = "pyttsx3"
-    quality = "theek"
+    quality = "decent"
 
     def __init__(self, config: TTSConfig | None = None):
         super().__init__(config)
         self._checked = False
         self._works = False
+        self._engine = None
+        self._voice_set = False
+
+    def _get_engine(self):
+        """Get or create cached engine instance."""
+        if self._engine is None:
+            import pyttsx3
+            self._engine = pyttsx3.init()
+            self._voice_set = False
+        return self._engine
+
+    def _setup_voice(self, engine):
+        """Set female voice and speed (once)."""
+        if self._voice_set:
+            return
+        try:
+            # Set female voice
+            voices = engine.getProperty("voices")
+            female_voice = None
+            for voice in voices:
+                name_lower = (voice.name or "").lower()
+                if any(kw in name_lower for kw in ("female", "zira", "hazel", "susan", "woman", "girl")):
+                    female_voice = voice
+                    break
+            if female_voice is None and len(voices) > 1:
+                female_voice = voices[1]
+            if female_voice:
+                engine.setProperty("voice", female_voice.id)
+
+            # Speed — faster for real-time feel
+            current = engine.getProperty("rate") or 200
+            engine.setProperty("rate", int(current * self.config.speed))
+            self._voice_set = True
+        except Exception:  # noqa: BLE001
+            self._voice_set = True  # Don't retry on failure
 
     def is_available(self) -> bool:
         if self._checked:
             return self._works
         self._checked = True
         try:
-            import pyttsx3
-
-            engine = pyttsx3.init()
-            engine.stop()
+            self._get_engine()
             self._works = True
         except Exception as exc:  # noqa: BLE001
-            log.debug("pyttsx3 available nahi: %s", exc)
+            log.debug("pyttsx3 not available: %s", exc)
             self._works = False
         return self._works
 
@@ -537,20 +569,16 @@ class Pyttsx3TTS(TTSBackend):
         if not text or not self.is_available():
             return False
         try:
-            import pyttsx3
-
-            engine = pyttsx3.init()
-            try:
-                current = engine.getProperty("rate") or 200
-                engine.setProperty("rate", int(current * self.config.speed))
-            except Exception:  # noqa: BLE001
-                pass
+            engine = self._get_engine()
+            self._setup_voice(engine)
             engine.say(text)
             engine.runAndWait()
-            engine.stop()
             return True
         except Exception as exc:  # noqa: BLE001
             log.warning("pyttsx3 fail: %s", exc)
+            # Reset engine on failure
+            self._engine = None
+            self._voice_set = False
             return False
 
     def setup_help(self) -> str:
@@ -571,18 +599,18 @@ class NullTTS(TTSBackend):
     """
 
     name = "null"
-    quality = "koi awaaz nahi (text print hota hai)"
+    quality = "no audio (text only)"
 
     def is_available(self) -> bool:
         return True
 
     def speak(self, text: str) -> bool:
         if text:
-            print(f"  [awaaz nahi hai, ye bolna tha] {text}")
+            print(f"  [no voice output] {text}")
         return True
 
     def setup_help(self) -> str:
-        return "Ye fallback hai — hamesha chalta hai."
+        return "This is the fallback — always works."
 
 
 # ======================================================================
@@ -630,7 +658,7 @@ class TTSEngine:
             backend_class = BACKENDS_BY_NAME.get(requested)
             if backend_class is None:
                 log.warning(
-                    "TTS_BACKEND '%s' unknown hai. Available: %s",
+                    "TTS_BACKEND '%s' unknown. Available: %s",
                     requested,
                     ", ".join(BACKENDS_BY_NAME),
                 )
@@ -639,7 +667,7 @@ class TTSEngine:
                 if backend.is_available():
                     return backend
                 log.warning(
-                    "TTS backend '%s' available nahi hai, auto pe ja raha hun.\n%s",
+                    "TTS backend '%s' not available, falling back to auto.\n%s",
                     requested,
                     backend.setup_help(),
                 )
@@ -649,7 +677,7 @@ class TTSEngine:
             backend = backend_class(self.config)
             try:
                 if backend.is_available():
-                    log.info("TTS backend chuna gaya: %s", backend.name)
+                    log.info("TTS backend selected: %s", backend.name)
                     return backend
             except Exception as exc:  # noqa: BLE001
                 log.debug("%s check fail: %s", backend_class.__name__, exc)
@@ -692,7 +720,7 @@ class TTSEngine:
         try:
             return self.backend.speak(speech_text)
         except Exception as exc:  # noqa: BLE001 — awaaz fail ho to agent na ruke
-            log.warning("TTS fail (agent chalta rahega): %s", exc)
+            log.warning("TTS failed (agent continues): %s", exc)
             return False
 
     def save(self, text: str, path: str | Path) -> Path | None:
@@ -705,14 +733,14 @@ class TTSEngine:
     # ------------------------------------------------------------------
 
     def status(self) -> str:
-        """CLI ke liye status."""
+        """Status for CLI display."""
         backend = self.backend
         lines = [f"  TTS: {backend.name} ({backend.quality})"]
 
         if not self.has_voice:
-            lines.append("       Awaaz chahiye to inme se koi setup kar:")
+            lines.append("       For voice output, install one of:")
             lines.append("         piper  -> best quality")
-            lines.append("         espeak -> sudo apt install espeak-ng (halka)")
+            lines.append("         espeak -> sudo apt install espeak-ng (lightweight)")
 
         return "\n".join(lines)
 
