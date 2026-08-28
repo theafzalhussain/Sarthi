@@ -330,6 +330,7 @@ Detail: **[HARDWARE_TEST.md](docs/HARDWARE_TEST.md)**
 **[HANDOFF.md](docs/HANDOFF.md) — naya developer/AI ho to YE pehle padho (pura context)** ·
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) — code kaise organize hai ·
 [HARDWARE_TEST.md](docs/HARDWARE_TEST.md) — mic/speaker/phone test ·
+**[PHONE_SETUP.md](docs/PHONE_SETUP.md) — 📱 phone pe kaise chalayein (ADB ya app)** ·
 [VOICE.md](docs/VOICE.md) — voice setup + Hinglish tuning ·
 [DEPLOYMENT.md](docs/DEPLOYMENT.md) — server, bijli, hardware ·
 [ROADMAP.md](docs/ROADMAP.md) — aage kya

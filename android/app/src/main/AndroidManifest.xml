@@ -40,10 +40,27 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!--
+            ServerService — HTTP server chalane wala foreground service.
+
+            ⚠️ `<property>` tag ZARURI hai, optional nahi.
+
+            Android 14 (API 34) se, jo bhi service `specialUse` type use
+            karti hai usko ye property declare karni padti hai — warna
+            `startForeground()` platform pe fail ho sakta hai. Hamara
+            targetSdk 34 hai, to ye rule lagta hai.
+
+            Ye pehli baar app chalane pe hi tootne wali cheez hai, isliye
+            pehle se daal di.
+        -->
         <service
             android:name=".service.ServerService"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local HTTP server on private WiFi so the user's own laptop agent can control this phone. User starts it manually and it stops with the app." />
+        </service>
 
         <service
             android:name=".service.SaarthiNotificationListener"
