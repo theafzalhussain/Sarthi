@@ -385,6 +385,13 @@ class AccessibilityDevice(Device):
         return result
 
     async def close_app(self, app: str) -> ActionResult:
+        """App band karo (best-effort).
+
+        LIMITATION: AccessibilityService se force-stop NAHI hota. Ye sirf
+        home button dabata hai — app background mein reh sakti hai. Ye
+        Android ki limitation hai, bug nahi. Full force-stop ke liye root
+        ya ADB chahiye jo yahan available nahi hai.
+        """
         from ..lang.lexicon import resolve_app
 
         package = app if "." in app else (resolve_app(app) or app)

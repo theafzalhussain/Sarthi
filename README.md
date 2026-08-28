@@ -99,30 +99,42 @@ Detail: [docs/VOICE.md](docs/VOICE.md)
 
 ---
 
-## Phone control (optional, Phase 3)
+## Phone control (optional)
 
-Laptop se phone chalane ke liye ADB setup:
+### Option A: ADB (USB/WiFi)
 
 ```bash
 # 1. Phone pe: Settings > About phone > Build number pe 7 baar tap
-#    (Developer Options unlock ho jaayega)
 # 2. Settings > Developer options > USB Debugging ON
 # 3. USB cable laga
-# 4. Check kar:
-adb devices
-#    Phone pe popup aayega -> Allow
-
-# 5. Test — tera phone khud tap karega:
-adb shell input tap 500 500
+adb devices   # phone pe popup aayega -> Allow
+adb shell input tap 500 500   # test tap
 ```
 
-Cable ke bina (WiFi):
+Cable ke bina: `adb tcpip 5555 && adb connect <phone-ip>:5555`
+
+### Option B: SAARTHI Phone App (Phase 4B — WiFi, no ADB needed)
+
+Android app sideload karo → WiFi pe laptop se phone control. ADB ki zarurat nahi.
+
 ```bash
-adb tcpip 5555
-adb connect <phone-ka-ip>:5555
+# Build karo (Android Studio ya CLI)
+cd android && ./gradlew assembleDebug
+adb install app/build/outputs/apk/debug/app-debug.apk
+
+# App mein: Permissions ON → START SERVER → Token copy
+# Laptop pe .env mein:
+SAARTHI_PHONE_URL=http://192.168.x.x:8080
+SAARTHI_PHONE_TOKEN=<app-se-copy-kiya-token>
+
+# Verify:
+python hardware_check.py --phone
+python cli.py   # → "phone pe chrome kholo"
 ```
 
-Phir SAARTHI mein: `/devices` — android "connected" dikhega.
+> **Google Play pe publish NAHI ho sakta.** Google ki policy autonomous
+> accessibility agents ko allow nahi karti. Personal use / sideload only.
+> Ye PERSONAL tool hai, product nahi.
 
 ---
 
