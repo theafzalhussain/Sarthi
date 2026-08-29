@@ -221,12 +221,93 @@ class BrowserDevice(Device):
             lines.append(f"\n  Abhi ka error: {PLAYWRIGHT_ERROR}")
         return "\n".join(lines)
 
+    def _context_alive(self) -> bool:
+        """
+        Browser context abhi bhi zinda hai?
+
+        ⚠️ YE FIX EK ASLI CRASH SE AAYA HAI.
+
+        Error tha: "BrowserContext.new_page: Target page, context or
+        browser has been closed".
+
+        Kyun hua: user ne agent ki browser window BAND kar di (ya
+        browser crash ho gaya). Playwright ka context object phir bhi
+        `self._context` mein reference reh gaya — par wo DEAD hai.
+        `_ensure_browser` sirf `self._page is not None` check karta tha,
+        isliye lagta tha browser theek hai. Baad mein `new_page()`/
+        `goto()` dead context pe chala aur HAR command fail hone lagi
+        — session bhar ke liye browser tut jaata tha.
+
+        Ab hum context/page ki LIVENESS check karte hain. Dead ho to
+        state reset karke fresh relaunch hota hai.
+        """
+        if self._context is None or self._page is None:
+            return False
+        try:
+            # Page band ho gaya? (user ne tab/window band ki)
+            if self._page.is_closed():
+                return False
+            # Context ke live pages? Ek bhi na ho to context mar chuka
+            live = [p for p in self._context.pages if not p.is_closed()]
+            return len(live) > 0
+        except Exception:  # noqa: BLE001 — context object hi dead ho sakta hai
+            return False
+
+    @staticmethod
+    def _looks_like_dead_context(exc: Exception) -> bool:
+        """
+        Ye error 'browser/context/page band ho gaya' wala hai?
+
+        In errors pe recover + retry karna safe hai. Baaki errors
+        (timeout, DNS, 404) pe recover karna bekaar — wo asli page
+        problem hain.
+        """
+        msg = str(exc).lower()
+        needles = (
+            "has been closed",
+            "target closed",
+            "browser has been closed",
+            "context or browser has been closed",
+            "connection closed",
+        )
+        return any(n in msg for n in needles)
+
+    async def _reset_dead_state(self) -> None:
+        """
+        Dead browser ka state saaf karo — bina exception phenke.
+
+        `close()` khud purane (already-dead) context ko band karne ki
+        koshish karta hai; wo exception ko andar hi nigal leta hai.
+        Yahan hum sirf references None kar dete hain taaki agla
+        `_ensure_browser` fresh launch kare.
+        """
+        try:
+            await self.close()
+        except Exception:  # noqa: BLE001
+            pass
+        # close() ye sab None kar deta hai, par defensive rehte hain
+        self._playwright = None
+        self._context = None
+        self._page = None
+        self._agent_pages = []
+        self._agent_url = None
+
     async def _ensure_browser(self) -> ActionResult | None:
         """
         Browser start karo (lazy). Problem ho to ActionResult return karo.
+
+        Agar browser pehle se khula hai PAR uska context/page mar chuka
+        hai (user ne window band ki / crash), to purana state saaf karke
+        fresh relaunch karte hain — warna dead context pe har command
+        fail hoti rehti hai.
         """
         if self._page is not None:
-            return None
+            if self._context_alive():
+                return None
+            # Page reference hai par context DEAD hai — reset karke
+            # neeche fresh launch hone do.
+            log.warning("Browser context dead mila — reset karke dobara launch kar raha hun")
+            await self._reset_dead_state()
 
         if not HAS_PLAYWRIGHT:
             # setup_error=True -> caller ko pata chalta hai ki ye "setup
@@ -242,21 +323,14 @@ class BrowserDevice(Device):
             # persistent_context use kar rahe hain (normal launch nahi) —
             # isse cookies aur login state save rehti hai. User ko
             # baar-baar login nahi karna padta.
-            self._context = await self._playwright.chromium.launch_persistent_context(
-                user_data_dir=str(self.profile_dir),
-                headless=self.headless,
-                viewport={"width": 1280, "height": 800},
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    # Pehli baar khulte waqt ka shor kam karo — "restore
-                    # pages?" bubble, default-browser prompt, infobars.
-                    # Inme se koi bhi popup user ka dhyan tod deta hai.
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    "--disable-session-crashed-bubble",
-                    "--disable-infobars",
-                ],
-            )
+            #
+            # RETRY: profile "locked"/"existing session" ho to launch
+            # fail hota hai (ye user ki machine pe hua tha — lockfile +
+            # Singleton files bache reh gaye the ek purane/crashed run se).
+            # Aisa ho to lock clear karke dobara try karte hain, aur phir
+            # bhi na chale to fresh temp profile pe — taaki browser HAMESHA
+            # chale aur controllable rahe (system browser pe girne ke bajaye).
+            self._context = await self._launch_context(str(self.profile_dir))
 
             pages = self._context.pages
             self._page = pages[0] if pages else await self._context.new_page()
@@ -279,6 +353,79 @@ class BrowserDevice(Device):
             return ActionResult.failure(
                 f"Browser start nahi hua: {exc}", setup_error=True
             )
+
+    def _launch_args(self) -> list[str]:
+        return [
+            "--disable-blink-features=AutomationControlled",
+            # Pehli baar khulte waqt ka shor kam karo — "restore
+            # pages?" bubble, default-browser prompt, infobars.
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-session-crashed-bubble",
+            "--disable-infobars",
+        ]
+
+    def _clear_profile_locks(self, profile: str) -> None:
+        """
+        Purane lock files hatao jo launch ko rok rahe hain.
+
+        Chromium ek crashed/purane run ke baad `lockfile`, `SingletonLock`,
+        `SingletonCookie`, `SingletonSocket` chhod jaata hai. Inki wajah
+        se agla launch "Opening in existing browser session" error deta
+        hai. Ye sirf lock files hain — cookies/login state (jo alag files
+        hain) safe rehti hain.
+        """
+        import contextlib
+        from pathlib import Path as _P
+
+        prof = _P(profile)
+        for name in ("lockfile", "SingletonLock", "SingletonCookie",
+                     "SingletonSocket", "SingletonLockfile"):
+            with contextlib.suppress(Exception):
+                target = prof / name
+                if target.exists():
+                    target.unlink()
+
+    async def _launch_context(self, profile: str):
+        """
+        Persistent context launch karo — lock/session error pe retry.
+
+        1) Seedha try.
+        2) Fail (lock/session) -> lock files clear karke dobara try.
+        3) Phir bhi fail -> ek fresh TEMP profile pe (login state bina,
+           par browser CHALEGA aur controllable rahega — system browser
+           pe girne se behtar).
+        """
+        pw = self._playwright.chromium
+
+        async def _try(user_data_dir: str):
+            return await pw.launch_persistent_context(
+                user_data_dir=user_data_dir,
+                headless=self.headless,
+                viewport={"width": 1280, "height": 800},
+                args=self._launch_args(),
+            )
+
+        # 1) Normal
+        try:
+            return await _try(profile)
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc).lower()
+            log.warning("Browser launch fail (try 1): %s", str(exc)[:120])
+
+        # 2) Lock clear karke retry
+        self._clear_profile_locks(profile)
+        try:
+            return await _try(profile)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Browser launch fail (try 2, lock cleared): %s", str(exc)[:120])
+
+        # 3) Fresh temp profile — login state chali jaayegi par browser
+        #    chalega aur controllable rahega
+        import tempfile
+        temp_dir = tempfile.mkdtemp(prefix="saarthi_browser_")
+        log.warning("Temp profile use kar raha hun: %s (login state is run mein nahi)", temp_dir)
+        return await _try(temp_dir)
 
     # ------------------------------------------------------------------
     #  TAB MANAGEMENT — "mera tab switch ho gaya" ka ilaaj
@@ -356,7 +503,18 @@ class BrowserDevice(Device):
         try:
             page = await self._context.new_page()
         except Exception as exc:  # noqa: BLE001
-            return ActionResult.failure(f"Naya tab khul nahi paya: {exc}")
+            # Context beech mein die ho gaya (user ne window band ki /
+            # crash). Ek baar reset + relaunch karke dobara try karo —
+            # taaki command fail na ho aur browser controllable rahe.
+            log.warning("new_page fail (%s) — browser recover karke dobara try kar raha hun", str(exc)[:100])
+            await self._reset_dead_state()
+            relaunch_error = await self._ensure_browser()
+            if relaunch_error:
+                return relaunch_error
+            try:
+                page = await self._context.new_page()
+            except Exception as exc2:  # noqa: BLE001
+                return ActionResult.failure(f"Naya tab khul nahi paya: {exc2}")
 
         page.set_default_timeout(20_000)
         self._page = page
@@ -483,7 +641,22 @@ class BrowserDevice(Device):
             await asyncio.sleep(0.3)
             title = await self._page.title()
         except Exception as exc:  # noqa: BLE001
-            return ActionResult.failure(f"'{target}' khul nahi paya: {exc}")
+            # "Target ... has been closed" jaisa error = context beech mein
+            # mar gaya. Ek baar recover karke dobara try karo.
+            if self._looks_like_dead_context(exc):
+                log.warning("goto pe context dead mila — recover karke dobara try kar raha hun")
+                await self._reset_dead_state()
+                relaunch_error = await self._page_for_navigation()
+                if relaunch_error:
+                    return relaunch_error
+                try:
+                    await self._page.goto(target, wait_until="domcontentloaded")
+                    await asyncio.sleep(0.3)
+                    title = await self._page.title()
+                except Exception as exc2:  # noqa: BLE001
+                    return ActionResult.failure(f"'{target}' khul nahi paya: {exc2}")
+            else:
+                return ActionResult.failure(f"'{target}' khul nahi paya: {exc}")
 
         self._remember_url()
 
@@ -659,12 +832,37 @@ class BrowserDevice(Device):
             (searchText) => {
                 const lower = searchText.toLowerCase();
 
+                // YouTube: Shorts (60s clips) ko avoid karo — user ko
+                // aksar poora gaana/video chahiye hota hai. Regular
+                // watch?v= link prefer karo.
+                const isShorts = (el) => {
+                    const a = el.closest('a') || el;
+                    const href = (a.getAttribute && a.getAttribute('href')) || '';
+                    return href.includes('/shorts/');
+                };
+
+                // Strategy 0 (YouTube): text match wala PEHLA REGULAR video
+                // (shorts nahi). Isse gaana chalane pe poora video khulta hai.
+                if (location.hostname.includes('youtube')) {
+                    const vids = document.querySelectorAll("ytd-video-renderer a#video-title, a#video-title, a.yt-simple-endpoint[href*='/watch?v=']");
+                    for (const el of vids) {
+                        const elText = (el.innerText || el.textContent || el.getAttribute('title') || '').toLowerCase().trim();
+                        const href = el.getAttribute('href') || '';
+                        if (href.includes('/watch?v=') && (!lower || elText.includes(lower))) {
+                            el.click();
+                            return true;
+                        }
+                    }
+                }
+
                 // Strategy 1: Search ALL elements with text (covers YouTube's
                 // custom <ytd-video-renderer>, <yt-formatted-string>, etc.)
                 const allElements = document.querySelectorAll('a, [role=link], [role=button], button, [onclick], h3, span[role], yt-formatted-string, ytd-video-renderer #video-title');
                 for (const el of allElements) {
                     const elText = (el.innerText || el.textContent || '').toLowerCase().trim();
                     if (elText && elText.includes(lower)) {
+                        // Shorts skip karo agar behtar (regular) option ho
+                        if (isShorts(el)) continue;
                         const rect = el.getBoundingClientRect();
                         if (rect.width > 5 && rect.height > 5 && rect.top >= 0 && rect.top < window.innerHeight) {
                             // Find the closest clickable parent if this element isn't clickable

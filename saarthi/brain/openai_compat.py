@@ -84,14 +84,19 @@ class OpenAICompatProvider(LLMProvider):
         # Har request pe naya TCP+TLS handshake nahi hoga = 200-500ms saved
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(
-                connect=5.0,   # Dead server detect in 5s (not 90s)
-                read=90.0,     # LLM response ke liye wait
+                connect=4.0,   # Dead server 4s mein detect (90s nahi)
+                # read: pehla byte aane ka wait. 30s kaafi hai — koi
+                # provider itna slow ho to usse chhod ke fast fallback
+                # behtar hai (muse ~28s leta tha aur poori request block
+                # kar deta tha). Streaming mein har token ke beech ka
+                # gap bhi isi ke andar hona chahiye.
+                read=30.0,
                 write=10.0,    # Request bhejne ke liye
-                pool=5.0,      # Connection pool se lene ke liye
+                pool=4.0,      # Connection pool se lene ke liye
             ),
             limits=httpx.Limits(
-                max_keepalive_connections=3,
-                max_connections=5,
+                max_keepalive_connections=5,
+                max_connections=10,
                 keepalive_expiry=120,  # 2 min keep-alive
             ),
             follow_redirects=True,

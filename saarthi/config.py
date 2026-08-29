@@ -14,7 +14,11 @@ from pathlib import Path
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
+    # override=True: .env HAMESHA jeete. Warna agar koi purana
+    # SAARTHI_PROVIDER_ORDER (ya koi bhi var) shell/OS env mein set ho
+    # to .env ki nayi value IGNORE ho jaati hai — user .env badalta hai
+    # par asar nahi dikhta. .env hi source of truth hai.
+    load_dotenv(override=True)
 except ImportError:  # dotenv install nahi hua to bhi chalega
     pass
 
@@ -92,6 +96,13 @@ DEFAULT_MODELS: dict[str, str] = {
     # nahi hai. Isliye default mein tools OFF hain (neeche dekh).
     "gemma": "google/diffusiongemma-26b-a4b-it",
 
+    # KIRO — subprocess provider (kiro-cli). Bade models: Claude Opus 5,
+    # GPT-5.6, Qwen3 Coder, DeepSeek, GLM-5. "auto" = task ke hisaab se
+    # best model. Ye HTTP nahi, kiro-cli ko headless chalata hai.
+    # Sirf BADE kaam ke liye (coding/web-search/complex) — escalation
+    # se aata hai, har chhoti baat pe nahi (credits + slow).
+    "kiro": "auto",
+
     # --- OLLAMA — on-device, free, private ---
     # qwen2.5:7b choose kiya kyunki:
     #   - Tool calling SUPPORT karta hai (SAARTHI ke liye zaroori)
@@ -152,19 +163,17 @@ TIGHT_RATE_LIMIT_PROVIDERS: dict[str, str] = {
 
 
 DEFAULT_PROVIDER_ORDER: list[str] = [
-    "muse",        # FASTEST (0.6s) + vision + tools, no tight TPM limit
-    "opencode",    # Laguna S 2.1 Free — 256K context, coding optimized
-    "bluesminds",  # gateway (gpt-4o/gpt-5.6/glm) — fast + vision
-    "nvidia",      # nemotron ultra — smart, agentic
-    "groq",        # Very fast BUT 8000 TPM free limit (short queries only)
-    "deepseek",    # 1.6T MoE, 1M context — SABSE SMART par slow (backup)
+    "bluesminds",  # ~1.5s, gpt-4o — fast + vision + full tool schema OK
+    "opencode",    # ~3s, coding optimized
+    "gemini",      # aankh (screenshot) — vision kaam iske paas jaata hai
+    "nvidia",      # nemotron ultra — smart backup
+    "groq",        # FAST (~1s) par 8000 TPM tools ke saath choke (413).
+                   # Isliye peeche — chhoti requests pe hi kaam karega.
     "openrouter",  # free models ka router
-    "gemini",      # aankh (screenshot)
-    "ollama",      # LOCAL — zero rate limit, par user ne install kiya ho tabhi
-                   # Aakhir ke paas ISLIYE: jab tak user ne `ollama serve` nahi
-                   # chalaya, iska request fail hoga. OLLAMA_ENABLED=true se
-                   # on hota hai — bina uske available_providers mein aayega
-                   # hi nahi, to order matter nahi karta.
+    "muse",        # SLOW (~28s, reasoning). Peeche.
+    "deepseek",    # SLOW (1.6T MoE reasoning). Peeche.
+    "kiro",        # kiro-cli — BADE models. Escalation se front (big task).
+    "ollama",      # LOCAL — zero rate limit, user install kare tabhi
     "gemma",       # SABSE AAKHIR — tool calling bharosemand nahi
 ]
 
@@ -545,6 +554,26 @@ class Settings:
                 # Laguna S 2.1 tool calling support karta hai
                 supports_tools=_env_bool("OPENCODE_TOOLS", True),
                 **_provider_tuning("opencode"),
+            ),
+            # --- KIRO — subprocess provider (kiro-cli headless) ---
+            #
+            # Kiro ki ksk_ key OpenAI-compatible NAHI hai — HTTP se call
+            # nahi hoti. KiroProvider `kiro-cli` ko subprocess ke roop
+            # mein chalata hai. Andar bade models hain (Claude Opus 5,
+            # GPT-5.6, Qwen3 Coder) — coding/web-search/complex ke liye
+            # best.
+            #
+            # supports_tools=False: Kiro apne tools use karta hai, SAARTHI
+            # ke tap_karo/app_kholo nahi. Isliye ye SAARTHI-tool calls
+            # return nahi karta — sirf text reasoning/coding/search deta
+            # hai. Device-control wale kaam doosre providers karte hain.
+            ProviderConfig(
+                name="kiro",
+                api_key=os.getenv("KIRO_API_KEY"),
+                model=os.getenv("KIRO_MODEL", DEFAULT_MODELS["kiro"]),
+                supports_vision=False,
+                supports_tools=False,
+                **_provider_tuning("kiro"),
             ),
             # --- OLLAMA — on-device LLM, local, free, private ---
             #

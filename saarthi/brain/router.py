@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator
 from ..config import Settings, settings as default_settings
 from .base import LLMProvider
 from .gemini import GeminiProvider
+from .kiro import KiroProvider
 from .openai_compat import BASE_URLS, OpenAICompatProvider
 from .types import (
     AllProvidersFailedError,
@@ -44,6 +45,11 @@ def _build_provider(config) -> LLMProvider | None:
     """
     if config.name == "gemini":
         return GeminiProvider(config)
+
+    # Kiro — subprocess provider (kiro-cli). HTTP nahi, isliye BASE_URLS
+    # mein nahi hai. Bade models coding/web-search/complex ke liye.
+    if config.name == "kiro":
+        return KiroProvider(config)
 
     # OpenAI-compatible: groq, openrouter, nvidia
     if config.name in BASE_URLS:
@@ -240,6 +246,7 @@ class Brain:
         temperature: float = 0.3,
         max_tokens: int | None = None,
         need_vision: bool = False,
+        prefer: list[str] | None = None,
     ) -> LLMResponse:
         """
         Sochne ka kaam. Provider fail ho to agla try karega.
@@ -250,6 +257,10 @@ class Brain:
             temperature: Creativity
             max_tokens: Jawab ki max length
             need_vision: Screenshot samajhna hai? (to sirf vision providers)
+            prefer: In providers ko SABSE PEHLE try karo (naam ki list).
+                    BIG task escalation ke liye — e.g. ["kiro"] taaki
+                    coding/web-search/complex kaam bade model se ho.
+                    Ye tools-first sorting ko OVERRIDE karta hai.
 
         Raises:
             NoProviderError: Koi provider hi nahi hai
@@ -298,6 +309,18 @@ class Brain:
             if with_tools:
                 candidates = with_tools + without_tools
 
+        # --- ESCALATION: prefer wale providers sabse aage ---
+        #
+        # BIG task (coding/web-search/complex) pe agent ["kiro"] prefer
+        # karta hai. Ye tools-first sorting ko OVERRIDE karta hai —
+        # warna kiro (supports_tools=False) hamesha peeche chala jaata.
+        if prefer:
+            preferred = [p for p in candidates if p.name in prefer]
+            rest = [p for p in candidates if p.name not in prefer]
+            # prefer list ke order mein rakho
+            preferred.sort(key=lambda p: prefer.index(p.name))
+            candidates = preferred + rest
+
         # Dead / cooldown wale providers hata do — inko try karna sirf
         # waqt barbaad karna hai
         healthy = [p for p in candidates if self._is_usable(p)]
@@ -317,6 +340,8 @@ class Brain:
         for index, provider in enumerate(healthy):
             try:
                 log.debug("Trying provider: %s", provider.name)
+                # SAAF SIGNAL — kaunsa model ab chal raha hai (spinner label)
+                self._say("model", f"{provider.name}|{provider.model}")
                 response = await provider.chat(
                     messages=messages,
                     tools=tools,
@@ -452,6 +477,10 @@ class Brain:
         for index, provider in enumerate(healthy):
             try:
                 log.debug("Streaming from provider: %s", provider.name)
+
+                # SAAF SIGNAL — user ko batao kaunsa model ab chal raha hai.
+                # Ye spinner ka label update karta hai: "thinking (muse)".
+                self._say("model", f"{provider.name}|{provider.model}")
 
                 # Start streaming — ek baar shuru ho to complete karo
                 async for chunk in provider.chat_stream(

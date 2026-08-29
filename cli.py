@@ -98,8 +98,9 @@ class ThinkingSpinner:
     _FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     _FRAMES_ASCII = ["|", "/", "-", "\\"]
 
-    def __init__(self, label: str = "thinking"):
+    def __init__(self, label: str = "working"):
         self._label = label
+        self._default_label = label
         self._running = False
         self._thread: threading.Thread | None = None
         self._use_unicode = "utf" in (getattr(sys.stdout, "encoding", "") or "").lower()
@@ -109,9 +110,15 @@ class ThinkingSpinner:
         """Spinner shuru karo."""
         if self._running:
             return
+        # Har naye turn pe label reset — pichle model ka naam na dikhe
+        self._label = self._default_label
         self._running = True
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
+
+    def set_label(self, label: str) -> None:
+        """Chalte spinner ka label badlo (e.g. 'thinking (muse)')."""
+        self._label = label
 
     def stop(self) -> None:
         """Spinner band karo aur line saaf karo."""
@@ -209,6 +216,30 @@ def make_output_handler(verbose: bool, state: dict | None = None):
             ui.activity("error", first[:200])
         elif kind == "debug":
             ui.activity("debug", text.strip())
+        elif kind == "model":
+            # Format: "provider|model" — spinner label update karo taaki
+            # user ko dikhe kaunsa model abhi kaam kar raha hai.
+            raw = text.strip()
+            provider_name, _, model_name = raw.partition("|")
+            provider_name = provider_name.strip() or "model"
+            model_name = model_name.strip()
+
+            # Sirf model naam spinner label mein — koi "thinking" word nahi.
+            # e.g. spinner dikhega: "⠹  muse"
+            _spinner.set_label(provider_name)
+
+            # Same model bar-bar (multi-step loop) — visible line ek hi
+            # baar dikhao, spam se bachao. Spinner label phir bhi update.
+            last = state.get("last_model") if state is not None else None
+            if raw != last:
+                if state is not None:
+                    state["last_model"] = raw
+                # Streaming ke beech na aaye
+                if not streaming["active"]:
+                    label = provider_name
+                    if model_name:
+                        label += f"  \u00b7  {model_name}"
+                    ui.activity("model", label)
 
     return handle
 
@@ -693,6 +724,7 @@ async def main() -> int:
 
         # --- Agent ko kaam do ---
         state["streamed_reply"] = False
+        state["last_model"] = None
         _spinner.start()
         started = time.monotonic()
         try:

@@ -54,6 +54,66 @@ _SEQUENTIAL_TOOLS = frozenset({
 })
 
 
+# ----------------------------------------------------------------------
+#  BIG TASK detection — Kiro escalation ke liye
+# ----------------------------------------------------------------------
+#
+# Kiro (kiro-cli) ke andar bade models hain (Claude Opus 5, GPT-5.6,
+# Qwen coder). Wo coding / web-search / complex reasoning ke liye best
+# hai — PAR slow aur credit-mehenga. Isliye har chhoti baat pe nahi,
+# sirf BADE kaam pe use karte hain.
+#
+# Ye detection device-control kaam ko CHHOD deta hai (app kholo, tap
+# karo, gaana chala) — wo SAARTHI ke apne tools se hota hai, Kiro se
+# nahi. Kiro ko sirf "dimaag" wala kaam milta hai.
+
+# Coding / technical
+_BIG_CODING = (
+    "code", "coding", "program", "programming", "script", "function",
+    "debug", "bug fix", "error fix", "refactor", "algorithm", "leetcode",
+    "python", "javascript", "java ", "c++", "html", "css", "sql", "react",
+    "api ", "regex", "compile", "stack trace", "exception",
+    "likh de code", "code likh", "program bana", "script bana",
+)
+# Web search / research
+_BIG_SEARCH = (
+    "search the web", "web search", "research", "latest news", "find online",
+    "look up", "internet pe search", "web pe dhoondh", "online dhoondh",
+    "compare ", "explain in detail", "detail mein samjha", "vistaar se",
+)
+# Complex / long
+_BIG_COMPLEX = (
+    "write an essay", "essay likh", "write a blog", "blog likh",
+    "detailed plan", "step by step guide", "analyze", "analysis",
+    "summarize this", "poora samjha", "in depth",
+)
+
+_BIG_TASK_MARKERS = _BIG_CODING + _BIG_SEARCH + _BIG_COMPLEX
+
+
+def _looks_like_big_task(text: str) -> bool:
+    """
+    User ka command BADA kaam hai? (coding / web-search / complex)
+
+    Sirf tabhi True jab clearly technical/research/complex ho. Rozmarra
+    ki baat ("mausam", "gaana chala", "app kholo") pe False — wo fast
+    providers + device tools se hoti hai.
+    """
+    lowered = (text or "").lower().strip()
+    if not lowered:
+        return False
+
+    # Short device commands are NOT big tasks even if a keyword slips in
+    if any(marker in lowered for marker in _BIG_TASK_MARKERS):
+        return True
+
+    # Bahut lamba/tafseeli sawaal (device command nahi) — bada maano
+    if len(lowered.split()) >= 40:
+        return True
+
+    return False
+
+
 @dataclass
 class TurnResult:
     """Ek user command ka result."""
@@ -216,6 +276,19 @@ class Agent:
 
         # Memory mein log karo
         await self.memory.log_turn(self.session_id, "user", user_input)
+
+        # --- KIRO ESCALATION: bade kaam bade model se ---
+        #
+        # Coding / web-search / complex reasoning ho aur Kiro available
+        # ho, to us turn ke liye Kiro (bade model) se seedha jawab lo.
+        # Ye device-control nahi karta (tools nahi) — sirf dimaag wala
+        # kaam. Fail ho to normal loop pe gir jaate hain.
+        if self._should_use_kiro(user_input):
+            kiro_result = await self._answer_with_kiro()
+            if kiro_result is not None:
+                return kiro_result
+            # Kiro fail — normal providers se karo (graceful fallback)
+            self.on_output("debug", "kiro se nahi hua — normal providers try kar raha hun")
 
         ctx = self._build_context()
         tool_schemas = self.tools.schemas(available_only_for=ctx)
@@ -398,6 +471,84 @@ class Agent:
             steps_used=steps,
             tool_calls=used_tools,
             error="max steps limit",
+        )
+
+    # ------------------------------------------------------------------
+    #  Kiro escalation — bade kaam bade model se
+    # ------------------------------------------------------------------
+
+    def _should_use_kiro(self, user_input: str) -> bool:
+        """
+        Is turn ke liye Kiro (bada model) use karein?
+
+        Haan tab jab: (1) Kiro available hai, aur (2) ye BADA kaam hai
+        (coding / web-search / complex). Chhoti baat aur device-control
+        normal fast providers + tools se hoti hai.
+        """
+        has_kiro = any(
+            p.name == "kiro" for p in self.brain.providers
+            if self.brain._is_usable(p)
+        )
+        if not has_kiro:
+            return False
+        return _looks_like_big_task(user_input)
+
+    async def _answer_with_kiro(self) -> TurnResult | None:
+        """
+        Kiro se seedha text jawab lo (bina SAARTHI tools ke).
+
+        Coding / web-search / complex reasoning ke liye. Kiro apne andar
+        ke bade model + apne tools use karta hai. Yahan hum use SAARTHI
+        ke tools NAHI dete — sirf ek accha text jawab chahiye.
+
+        Returns:
+            TurnResult jab jawab mil gaya, warna None (caller normal
+            providers pe gir jaaye).
+        """
+        # Kaunsa Kiro model chalega ye .env (KIRO_MODEL) se aata hai
+        kiro_model = "auto"
+        for p in self.brain.providers:
+            if p.name == "kiro":
+                kiro_model = p.model or "auto"
+                break
+
+        # SAAF SIGNAL — user ko live pata chale ki Kiro (bada model)
+        # kyun aur kaunsa chal raha hai.
+        self.on_output(
+            "tool",
+            f"Bada kaam detect hua -> Kiro use kar raha hun (model: {kiro_model})",
+        )
+
+        try:
+            # tools=None taaki Kiro pure text reasoning kare.
+            # prefer=["kiro"] taaki wo sabse pehle try ho.
+            response = await self.brain.think(
+                messages=self.messages,
+                tools=None,
+                prefer=["kiro"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Kiro escalation fail: %s", exc)
+            return None
+
+        # Kiro se hi jawab aaya na? (fallback se koi aur provider bhi
+        # aa sakta hai — wo bhi theek hai, jawab to mila)
+        reply = (response.text or "").strip()
+        if not reply:
+            return None
+
+        self.on_output("stream", reply)
+        self.messages.append(Message.assistant(reply))
+        await self.memory.log_turn(self.session_id, "assistant", reply)
+
+        provider_used = response.provider or "kiro"
+        # tool_calls tag mein model bhi — CLI verbose mode mein dikhega
+        # (e.g. "kiro:auto"), taaki pata chale kaunsa model chala.
+        tag = f"kiro:{response.model}" if provider_used == "kiro" and response.model else provider_used
+        return TurnResult(
+            reply=reply,
+            steps_used=1,
+            tool_calls=[f"[{tag}]"],
         )
 
     # ------------------------------------------------------------------

@@ -118,8 +118,25 @@ class WhisperConfig:
     # Zyada beam = better accuracy, par dheemi
     beam_size: int = 5
 
-    # Whisper ka andar ka silence filter — hallucination kam karta hai
-    vad_filter: bool = True
+    # Whisper ka andar ka silence filter.
+    #
+    # ⚠️ DEFAULT OFF HAI — ASLI EVIDENCE KI WAJAH SE.
+    #
+    # faster-whisper ka Silero VAD chhoti ya dheemi utterance ko poora
+    # "non-speech" maan ke KAAT deta hai. User ki machine pe mic ka
+    # peak ~764 (bahut dheema) tha; VAD ne poori 0.96s audio delete kar
+    # di:
+    #     "VAD filter removed 00:00.960 of audio"
+    # Nateeja: har baar "Nothing was heard" — chahe user saaf bola ho.
+    #
+    # Humne recording layer mein pehle hi silence detection (apna VAD)
+    # lagaya hua hai jo bolna shuru/khatam pakad leta hai. Isliye
+    # Whisper ka andar wala VAD zaroori nahi — aur ulta nuksaan karta
+    # hai. Hallucination guard neeche alag se hai (no_speech_prob +
+    # logprob + garbage check).
+    #
+    # Saaf mic pe chahiye to: .env mein WHISPER_VAD=true
+    vad_filter: bool = False
 
     # Biasing prompt bhejna hai ya nahi.
     #
@@ -175,7 +192,7 @@ class WhisperConfig:
             compute_type=os.getenv("WHISPER_COMPUTE", "int8").strip(),
             language=None if language.lower() in ("auto", "", "none") else language,
             beam_size=_int("WHISPER_BEAM_SIZE", 5),
-            vad_filter=_bool("WHISPER_VAD", True),
+            vad_filter=_bool("WHISPER_VAD", False),
             biasing=(os.getenv("WHISPER_BIASING", "off").strip().lower()
                      if os.getenv("WHISPER_BIASING", "off").strip().lower()
                      in ("off", "vocab") else "off"),

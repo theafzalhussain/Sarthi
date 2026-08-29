@@ -475,6 +475,7 @@ class Ui:
             "result": (self.sym["ok"], MUTED),
             "error": (self.sym["fail"], ERR),
             "debug": (self.sym["bullet"], MUTED),
+            "model": (self.sym["run"], ACCENT),
         }
         mark, color = styles.get(kind, (self.sym["bullet"], MUTED))
 

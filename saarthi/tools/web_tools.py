@@ -466,7 +466,10 @@ class OpenWebsiteTool(Tool):
 
 # Aam kaam -> ready URL. LLM ko ye help karta hai sahi URL banane mein.
 COMMON_URLS: dict[str, str] = {
-    "youtube search": "https://www.youtube.com/results?search_query={q}",
+    # &sp=EgIQAQ%3D%3D = "Video" type filter — Shorts/channels/playlists
+    # hata deta hai, sirf regular videos. Isse gaana chalane pe poora
+    # video khulta hai, 60s ka Short nahi.
+    "youtube search": "https://www.youtube.com/results?search_query={q}&sp=EgIQAQ%3D%3D",
     "youtube": "https://www.youtube.com",
     "google search": "https://www.google.com/search?q={q}",
     "whatsapp web": "https://web.whatsapp.com",

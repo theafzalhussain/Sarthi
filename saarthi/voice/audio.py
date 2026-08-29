@@ -105,26 +105,60 @@ class AudioConfig:
     #          "high" bade buffer deta hai — dheema par reliable.
     latency: str | None = None
 
+    # --- Auto-gain (dheemi mic ka structural fix) ---
+    #
+    # User ki machine pe mic ka peak sirf ~764 out of 32767 aa raha tha
+    # (healthy speech ~5000-15000). Itni dheemi audio pe Whisper kuch
+    # nahi pakadta aur VAD to poora kaat deta hai.
+    #
+    # `gain`:
+    #   "auto"  -> recording ke baad audio ko `gain_target_peak` tak
+    #              amplify karo (clipping se bachte hue). Default.
+    #   1.0     -> koi gain nahi (jaisa mic deta hai)
+    #   2.5     -> fixed 2.5x
+    #
+    # .env: SAARTHI_MIC_GAIN=auto | 1 | 2.5 ...
+    gain: str | float = "auto"
+
+    # auto-gain kis peak tak le jaaye (int16 scale, 0-32767).
+    # 12000 = healthy speech level, thoda headroom clipping se bachne ko.
+    gain_target_peak: float = 12000.0
+
+    # auto-gain zyada se zyada kitna badha sakta hai (shor amplify na ho)
+    gain_max: float = 15.0
+
+    # Isse dheemi audio ko amplify karne ka koi fayda nahi — sirf shor
+    # badhega. (int16 peak). Iske neeche gain 1.0 rehta hai.
+    gain_floor_peak: float = 40.0
+
     # --- Silence detection tuning ---
 
     # How much louder than background noise counts as speech
-    noise_multiplier: float = 1.5
+    noise_multiplier: float = 2.2
 
     # Minimum threshold — bilkul silent room mein bhi itna chahiye
     # (int16 scale pe, 0-32767)
-    min_threshold: float = 300.0
+    # User ki machine pe mic bahut dheema hai (bolne pe bhi peak ~764).
+    # 300 pe bolna "loud" register hi nahi hota tha -> detector WAITING
+    # mein atka -> timeout -> "Nothing heard". 120 pe dheemi awaaz bhi
+    # speech ke roop mein pakdi jaati hai.
+    min_threshold: float = 60.0
 
     # Bolna shuru hua maanne ke liye kitne consecutive loud chunks
     speech_start_chunks: int = 3
 
-    # Speech end detection — how long silence before stopping
-    silence_duration: float = 0.8
+    # Speech end detection — how long silence before stopping.
+    # 0.8s chhota tha: bolne ke beech ka saas-lene wala pause utterance
+    # ko kaat deta tha. 1.1s zyada natural hai.
+    silence_duration: float = 1.1
 
     # Zyada se zyada kitna record karna hai (safety)
     max_duration: float = 30.0
 
-    # How long to wait for speech to begin
-    start_timeout: float = 5.0
+    # How long to wait for speech to begin.
+    # 5s kam tha — Enter dabane, sochne aur bolna shuru karne mein user
+    # aksar 5s cross kar jaata tha -> timeout. 8s aaram se.
+    start_timeout: float = 8.0
 
     # Noise floor calibrate karne ka time
     calibration_duration: float = 0.5
@@ -192,6 +226,25 @@ class AudioConfig:
         if raw_latency in ("low", "high"):
             config.latency = raw_latency
 
+        raw_gain = os.getenv("SAARTHI_MIC_GAIN", "").strip().lower()
+        if raw_gain:
+            if raw_gain in ("auto", "on", "true", "yes"):
+                config.gain = "auto"
+            elif raw_gain in ("off", "none", "false", "no"):
+                config.gain = 1.0
+            else:
+                try:
+                    config.gain = max(1.0, float(raw_gain))
+                except ValueError:
+                    pass
+
+        raw_target = os.getenv("SAARTHI_MIC_GAIN_TARGET", "").strip()
+        if raw_target:
+            try:
+                config.gain_target_peak = float(raw_target)
+            except ValueError:
+                pass
+
         return config
 
     @property
@@ -235,6 +288,55 @@ def rms(chunk) -> float:
         return 0.0
     total = sum(float(v) * float(v) for v in values)
     return (total / len(values)) ** 0.5
+
+
+def apply_gain(audio, config: "AudioConfig"):
+    """
+    Dheemi mic ki audio ko amplify karo — VAD/Whisper ko clean signal
+    mile. int16 audio in, int16 audio out (clipping ke saath).
+
+    config.gain:
+        "auto" -> peak ko config.gain_target_peak tak le jaao
+        1.0    -> kuch nahi
+        n      -> fixed n-x
+
+    Bahut dheemi audio (peak < gain_floor_peak) amplify nahi karte —
+    wo digital silence/shor hai, amplify karne se sirf shor badhega.
+    """
+    if audio is None:
+        return audio
+
+    gain_setting = getattr(config, "gain", 1.0)
+
+    # numpy nahi hai to gain skip (fallback path bahut rare)
+    if not (HAS_NUMPY and hasattr(audio, "astype")):
+        return audio
+    if audio.size == 0:
+        return audio
+
+    samples = audio.astype("float64")
+    peak = float(np.abs(samples).max())
+
+    if peak <= 0:
+        return audio
+
+    if gain_setting == "auto":
+        if peak < config.gain_floor_peak:
+            return audio  # bas shor hai — chhod do
+        factor = config.gain_target_peak / peak
+        factor = max(1.0, min(config.gain_max, factor))
+    else:
+        try:
+            factor = max(1.0, float(gain_setting))
+        except (TypeError, ValueError):
+            return audio
+
+    if factor <= 1.0:
+        return audio
+
+    amplified = np.clip(samples * factor, -32768, 32767)
+    log.debug("Auto-gain: peak %.0f x%.1f -> %.0f", peak, factor, peak * factor)
+    return amplified.astype("int16")
 
 
 # ----------------------------------------------------------------------
@@ -888,6 +990,10 @@ class Recorder:
             audio = np.concatenate(collected)
         else:
             audio = [sample for part in collected for sample in part]
+
+        # Dheemi mic ko amplify karo — warna Whisper ko kuch sunai nahi
+        # deta (user ki machine pe peak ~764 tha).
+        audio = apply_gain(audio, self.config)
 
         return audio, final_status
 
