@@ -12,6 +12,23 @@
 
 सारथी = rath chalane wala. Jo raasta jaanta hai aur khud chalata hai.
 
+---
+
+## ⚡ 1-Minute Install (kisi bhi Windows system pe)
+
+PowerShell kholo aur bas **ye ek line** chalao:
+
+```powershell
+irm https://raw.githubusercontent.com/theafzalhussain/Sarthi/main/install.ps1 | iex
+```
+
+Ye khud sab kar dega: code download → dependencies install → `.env` banao → chalu.
+Sirf ek baar apni free API key ([Groq](https://console.groq.com)) `.env` mein daalni hai.
+
+> Zaroori: Python ([python.org](https://python.org), install ke waqt "Add to PATH" tick) pehle se hona chahiye. Baaki sab script sambhal legi.
+
+Install ke baad chalane ke liye — folder ke andar **`Sarthi.bat`** pe double-click, ya `python cli.py`.
+
 ```
 tu     > bhai paytm khol ke dhai hazaar ka bijli ka bill bhar de
 saarthi> Paytm khol diya. Electricity section pe hun.
