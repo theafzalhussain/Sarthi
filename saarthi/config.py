@@ -11,14 +11,26 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Central config directory — like `kiro`, keys live on the DEVICE once,
+# not in every project. Path: ~/.saarthi/.env
+GLOBAL_CONFIG_DIR = Path.home() / ".saarthi"
+GLOBAL_ENV_FILE = GLOBAL_CONFIG_DIR / ".env"
+
 try:
     from dotenv import load_dotenv
 
-    # override=True: .env HAMESHA jeete. Warna agar koi purana
-    # SAARTHI_PROVIDER_ORDER (ya koi bhi var) shell/OS env mein set ho
-    # to .env ki nayi value IGNORE ho jaati hai — user .env badalta hai
-    # par asar nahi dikhta. .env hi source of truth hai.
-    load_dotenv(override=True)
+    # Keys are loaded from THREE places (priority order). This is what
+    # makes SAARTHI feel like `kiro`: put your keys in ~/.saarthi/.env
+    # ONCE per device, and `saarthi` works from ANY folder without a local
+    # .env and without re-adding keys. A project can still override with
+    # its own ./.env if it has one.
+    #   1. ./.env (current folder)   -> per-project override (optional)
+    #   2. ~/.saarthi/.env           -> DEVICE-WIDE keys (set once)
+    #   3. OS environment variables
+    # override=True makes a loaded file win, so load the device-wide file
+    # FIRST and ./.env LAST — the last write wins.
+    load_dotenv(GLOBAL_ENV_FILE, override=True)  # device-wide keys
+    load_dotenv(override=True)                   # ./.env (project) wins if present
 except ImportError:  # dotenv install nahi hua to bhi chalega
     pass
 

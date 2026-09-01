@@ -116,26 +116,25 @@ saarthi
 
 ### Where does it read your keys from?
 
-The command reads the `.env` file **from the folder you run it in**, or
-from your system environment variables. Two easy ways to make keys work
-everywhere:
+You do NOT need to add keys in every project. `saarthi` looks for keys in
+three places (in this order), and the device-wide file is the easy one:
 
-1. **Simplest:** set your keys as system/user environment variables once
-   (e.g. `NVIDIA_API_KEY`, `GEMINI_API_KEY`). Then `saarthi` works in any
-   folder with no `.env` needed.
-   - Windows (PowerShell, permanent for your user):
-     ```powershell
-     setx NVIDIA_API_KEY "your-key-here"
-     setx GEMINI_API_KEY "your-key-here"
-     ```
-     (open a new terminal after `setx`)
-   - macOS/Linux (add to `~/.bashrc` or `~/.zshrc`):
-     ```bash
-     export NVIDIA_API_KEY="your-key-here"
-     export GEMINI_API_KEY="your-key-here"
-     ```
+1. **`~/.saarthi/.env` — set ONCE per device (recommended, like `kiro`).**
+   Run this once and paste your keys when asked:
+   ```bash
+   saarthi login
+   ```
+   It saves your keys to your home folder (`~/.saarthi/.env`), NOT to the
+   project. After that, `saarthi` works from ANY folder on that device
+   with no local `.env` needed. This is the closest to how `kiro` works.
 
-2. Or keep a `.env` file in whichever project folder you run `saarthi` in.
+2. A `.env` file in the current project folder (optional per-project
+   override).
+
+3. System environment variables (`NVIDIA_API_KEY`, etc.).
+
+You still enter your keys ONCE on each new device (a provider has to
+authenticate somewhere), but never per-project and never per-run.
 
 ### Optional extras with the command install
 
@@ -177,13 +176,14 @@ cd Sarthi
 python -m venv .venv
 # activate it (see step 2 above)
 pip install -e .            # installs deps AND the `saarthi` command
-# set your keys (env vars, or a .env file)
-saarthi                     # run from anywhere
+saarthi login              # paste your keys ONCE (saved to ~/.saarthi/.env)
+saarthi                     # now run from ANY folder
 ```
 
-The only thing that does NOT travel through Git is your keys (`.env` or
-env vars) and the `data/` folder (memory, generated files). That is by
-design — secrets should never be in Git.
+The only thing that does NOT travel through Git is your keys and the
+`data/` folder (memory, generated files). That is by design — secrets
+should never be in Git. `saarthi login` stores keys on the device (in
+your home folder), so you enter them once per device, never per project.
 
 ---
 

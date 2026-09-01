@@ -911,13 +911,115 @@ async def main() -> int:
     return 0
 
 
+def _run_login() -> int:
+    """
+    Save API keys to the device-wide config (~/.saarthi/.env), so `saarthi`
+    works from ANY folder without a local .env — like `kiro`.
+
+    This asks for keys interactively and writes them once per device.
+    Existing keys are kept unless you enter a new value.
+    """
+    from saarthi.config import GLOBAL_CONFIG_DIR, GLOBAL_ENV_FILE
+
+    ui.blank()
+    ui.section("SAARTHI — device login")
+    ui.muted(
+        "Keys are saved to your home folder (not this project), so you only "
+        "do this ONCE per device. After that, `saarthi` runs from any folder."
+    )
+    ui.muted(f"  File: {GLOBAL_ENV_FILE}")
+    ui.blank()
+    ui.muted("Press Enter to skip any key you don't have. All are free:")
+    ui.muted("  NVIDIA (1 key = 4 models): https://build.nvidia.com")
+    ui.muted("  Gemini (for screenshots):  https://aistudio.google.com/apikey")
+    ui.muted("  Groq (fast):               https://console.groq.com")
+    ui.blank()
+
+    # Which keys we ask for. Add more here if needed.
+    key_prompts = [
+        ("NVIDIA_API_KEY", "NVIDIA key (nvapi-...)"),
+        ("GEMINI_API_KEY", "Gemini key"),
+        ("GROQ_API_KEY", "Groq key"),
+        ("OPENROUTER_API_KEY", "OpenRouter key (optional)"),
+        ("BLUESMINDS_API_KEY", "Bluesminds key (optional)"),
+    ]
+
+    # Read existing values so we don't wipe keys the user already saved.
+    existing: dict[str, str] = {}
+    if GLOBAL_ENV_FILE.exists():
+        for line in GLOBAL_ENV_FILE.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                existing[k.strip()] = v.strip()
+
+    collected = dict(existing)
+    entered_any = False
+    for env_key, label in key_prompts:
+        have = " (saved)" if existing.get(env_key) else ""
+        try:
+            value = input(f"  {label}{have}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            ui.blank()
+            ui.error("Cancelled.")
+            return 1
+        if value:
+            collected[env_key] = value
+            entered_any = True
+
+    # Keep only non-empty keys
+    collected = {k: v for k, v in collected.items() if v}
+
+    if not collected:
+        ui.blank()
+        ui.error("No keys entered and none saved before — nothing to write.")
+        return 1
+
+    GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# SAARTHI device-wide keys — created by `saarthi login`.",
+        "# This file is NOT in Git. It lets `saarthi` run from any folder.",
+        "",
+    ]
+    lines += [f"{k}={v}" for k, v in collected.items()]
+    GLOBAL_ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Best-effort: lock down permissions on POSIX (owner read/write only).
+    try:
+        import os as _os
+        import stat as _stat
+
+        if hasattr(_os, "chmod"):
+            _os.chmod(GLOBAL_ENV_FILE, _stat.S_IRUSR | _stat.S_IWUSR)
+    except Exception:  # noqa: BLE001
+        pass
+
+    ui.blank()
+    ui.success(f"Saved {len(collected)} key(s) to {GLOBAL_ENV_FILE}")
+    ui.muted("Now run `saarthi` from any folder — no local .env needed.")
+    ui.blank()
+    return 0
+
+
 def run() -> None:
     """
     Synchronous entry point for the `saarthi` command.
 
     This is what `pyproject.toml`'s [project.scripts] calls, so `saarthi`
     works as a global command from any folder on any device (like `kiro`).
+
+    Subcommands:
+        saarthi            -> start the agent
+        saarthi login      -> save API keys to the device (once per device)
+        saarthi setup      -> alias for login
     """
+    args = sys.argv[1:]
+    if args and args[0] in ("login", "setup", "auth", "key", "keys"):
+        try:
+            sys.exit(_run_login())
+        except KeyboardInterrupt:
+            sys.exit(0)
+
     try:
         sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
