@@ -233,7 +233,7 @@ class Agent:
     #  Main turn — STREAMING + PARALLEL TOOLS
     # ------------------------------------------------------------------
 
-    async def run_turn(self, user_input: str) -> TurnResult:
+    async def run_turn(self, user_input: str, image_b64: str | None = None) -> TurnResult:
         """
         Ek user command process karo — STREAMING ke saath.
 
@@ -243,6 +243,11 @@ class Agent:
         v2: Ab response STREAM hota hai — user ko turant tokens dikhne
         lagte hain. Aur multiple tool calls PARALLEL mein chalte hain
         (jab tak wo independent hain).
+
+        image_b64: User ne koi image/screenshot attach ki ho (base64,
+        bina data-uri prefix). Iske saath user ka message vision-capable
+        provider (Gemini/Muse) ko jaata hai — router khud aisa provider
+        chun leta hai kyunki message mein image hoti hai.
         """
         if not self.messages:
             await self.start_session()
@@ -269,10 +274,33 @@ class Agent:
                 self.on_output("debug", hint)
             self.on_output("debug", f"bhasha: {reply_language}")
 
-        # Structured hints ke saath LLM ko bhejo
+        # Structured hints ke saath LLM ko bhejo.
+        # Image attach hui ho to usi user message ke saath bhejo —
+        # router.py dekh lega ki image hai aur vision provider chunega.
         self.messages.append(
-            Message.user(build_user_message(parsed, reply_language))
+            Message.user(
+                build_user_message(parsed, reply_language),
+                image_b64=image_b64,
+            )
         )
+
+        # --- VISION GUARD ---
+        # User ne image bheji, par koi vision-capable provider (jiske
+        # paas key ho aur jo chalu ho) available nahi? To chup mat raho —
+        # warna text-only model image ko IGNORE kar deta hai aur user ko
+        # lagta hai "kuch hua hi nahi". Saaf batao ki kya karna hai.
+        if image_b64 is not None and not self.brain.has_vision:
+            msg = (
+                "Image toh mil gayi, par abhi koi aisa model chaalu nahi "
+                "hai jo image DEKH sake.\n"
+                "Screenshot samajhne ke liye Gemini (ya Muse/Gemma) chahiye.\n"
+                "Sabse aasaan: .env mein GEMINI_API_KEY daalo "
+                "(free: https://aistudio.google.com/apikey), phir restart."
+            )
+            self.on_output("error", msg)
+            if self.messages and self.messages[-1].has_image:
+                self.messages.pop()
+            return TurnResult(reply="", error=msg)
 
         # Memory mein log karo
         await self.memory.log_turn(self.session_id, "user", user_input)
@@ -283,7 +311,10 @@ class Agent:
         # ho, to us turn ke liye Kiro (bade model) se seedha jawab lo.
         # Ye device-control nahi karta (tools nahi) — sirf dimaag wala
         # kaam. Fail ho to normal loop pe gir jaate hain.
-        if self._should_use_kiro(user_input):
+        #
+        # Image attach ho to Kiro skip — wo vision nahi karta, image
+        # wala kaam Gemini/Muse ko jaana chahiye.
+        if image_b64 is None and self._should_use_kiro(user_input):
             kiro_result = await self._answer_with_kiro()
             if kiro_result is not None:
                 return kiro_result
@@ -512,12 +543,10 @@ class Agent:
                 kiro_model = p.model or "auto"
                 break
 
-        # SAAF SIGNAL — user ko live pata chale ki Kiro (bada model)
-        # kyun aur kaunsa chal raha hai.
-        self.on_output(
-            "tool",
-            f"Bada kaam detect hua -> Kiro use kar raha hun (model: {kiro_model})",
-        )
+        # Note: pehle yahan ek visible "Bada kaam detect hua -> Kiro..."
+        # line dikhti thi. User ko wo shor lagta tha, isliye ab kuch
+        # nahi dikhate — spinner label khud model ka naam dikha deta hai.
+        _ = kiro_model  # (rakha hua hai taaki aage zarurat pe use ho sake)
 
         try:
             # tools=None taaki Kiro pure text reasoning kare.

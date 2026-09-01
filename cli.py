@@ -35,8 +35,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from saarthi import __version__  # noqa: E402
+from saarthi import line_input  # noqa: E402
 from saarthi.agent import Agent  # noqa: E402
 from saarthi.config import settings  # noqa: E402
+from saarthi.image_input import (  # noqa: E402
+    ImageInputError,
+    from_file,
+    from_screenshot,
+)
 from saarthi.tools.safety import format_confirmation, is_affirmative  # noqa: E402
 from saarthi.ui import BRAND, ERR, MUTED, OK, TEXT, WARN, Ui  # noqa: E402
 
@@ -284,7 +290,7 @@ async def show_startup(agent: Agent) -> None:
 
     ui.blank()
     ui.line(
-        "  Ready  \u00b7  /help for commands  \u00b7  type in any language",
+        "  Ready  \u00b7  Ctrl+V/F2 = paste image  \u00b7  Esc = new chat  \u00b7  /help  \u00b7  any language",
         OK,
     )
     ui.blank()
@@ -301,6 +307,10 @@ COMMANDS = [
     ("/skills", "learned skills (Dikha Do Mode)"),
     ("/devices", "connected devices and setup instructions"),
     ("/memory", "everything the agent remembers about you"),
+    ("/paste", "attach image from clipboard (or just press Ctrl+V / F2)"),
+    ("/ss", "capture desktop screenshot and attach it"),
+    ("/img <path>", "attach an image file"),
+    ("/clearimg", "remove the attached image"),
     ("/browser", "how websites open — tab-safety setting"),
     ("/auto", "full access: run risky actions without asking"),
     ("/retry", "re-enable providers that were dropped"),
@@ -654,6 +664,56 @@ async def handle_command(command: str, agent: Agent, state: dict) -> bool:
         ui.muted("Conversation cleared. Saved memory and skills are untouched.")
         return True
 
+    # --- Image attach commands ---
+    # Ek image ko "pending" slot mein rakhte hain. Agla normal (non-slash)
+    # message us image ke saath jaayega. Sabse aasaan tareeka: Ctrl+V ya
+    # F2 seedha prompt par — par ye commands backup ke liye hain.
+    if cmd in ("/paste", "/clip"):
+        try:
+            from saarthi.image_input import from_clipboard
+            state["pending_image"] = from_clipboard()
+            ui.success(
+                "Image clipboard se attach ho gayi. Ab type kar ke bata "
+                "agent ko kya karna hai."
+            )
+        except ImageInputError as exc:
+            ui.error(str(exc))
+        return True
+
+    if cmd == "/ss":
+        try:
+            state["pending_image"] = from_screenshot()
+            ui.success(
+                "Desktop ka screenshot le liya aur attach kar diya. Ab bata "
+                "kya karna hai."
+            )
+        except ImageInputError as exc:
+            ui.error(str(exc))
+        return True
+
+    if cmd.startswith("/img"):
+        raw = command.strip()[len("/img"):].strip()
+        if not raw:
+            ui.error("Path do: /img C:\\path\\to\\image.png")
+            return True
+        try:
+            state["pending_image"] = from_file(raw)
+            ui.success(
+                "Image file attach ho gayi. Ab type kar ke bata agent ko "
+                "kya karna hai."
+            )
+        except ImageInputError as exc:
+            ui.error(str(exc))
+        return True
+
+    if cmd in ("/clearimg", "/noimg"):
+        if state.get("pending_image"):
+            state["pending_image"] = None
+            ui.muted("Attached image hata di.")
+        else:
+            ui.muted("Koi image attach nahi thi.")
+        return True
+
     ui.error(f"Unknown command '{command}'. Try /help")
     return True
 
@@ -686,7 +746,7 @@ async def main() -> int:
 
     ui.banner(__version__, TAGLINE)
 
-    state = {"verbose": True}
+    state = {"verbose": True, "pending_image": None}
 
     agent = Agent(
         confirm=ask_confirmation,
@@ -703,10 +763,30 @@ async def main() -> int:
 
     prompt = ui.prompt("you")
 
+    # Ctrl+V se seedha image paste ke liye custom reader (Windows).
+    # Non-Windows par normal input().
+    use_paste_reader = line_input.supported()
+
     # --- REPL ---
     while True:
+        pasted_image: str | None = None
         try:
-            user_input = await asyncio.to_thread(input, prompt)
+            if use_paste_reader:
+                user_input, pasted_image = await asyncio.to_thread(
+                    line_input.read_line, prompt
+                )
+            else:
+                user_input = await asyncio.to_thread(input, prompt)
+        except line_input.EscPressed:
+            # Khaali prompt par Esc — poori baat bhool ke naya chat
+            ui.blank()
+            agent.reset_conversation()
+            try:
+                await agent.start_session()
+            except Exception:  # noqa: BLE001
+                pass
+            state["pending_image"] = None
+            continue
         except (EOFError, KeyboardInterrupt):
             ui.blank(2)
             ui.line("  Goodbye.", OK)
@@ -714,6 +794,17 @@ async def main() -> int:
             break
 
         user_input = user_input.strip()
+
+        # Ctrl+V (ya F2) se image paste hui? To pending slot mein rakho.
+        if pasted_image:
+            state["pending_image"] = pasted_image
+            if not user_input:
+                ui.success(
+                    "  Image paste ho gayi. Ab type kar ke bata kya karna "
+                    "hai, phir Enter."
+                )
+                continue
+
         if not user_input:
             continue
 
@@ -725,15 +816,23 @@ async def main() -> int:
         # --- Agent ko kaam do ---
         state["streamed_reply"] = False
         state["last_model"] = None
+
+        # Image attach hui thi (Ctrl+V/F2/command)? Is message ke saath
+        # bhejo, phir hata do.
+        attached_image = state.get("pending_image")
+        if attached_image:
+            ui.muted("  (attached image is being sent with your message)")
+
         _spinner.start()
         started = time.monotonic()
         try:
-            result = await agent.run_turn(user_input)
+            result = await agent.run_turn(user_input, image_b64=attached_image)
         except KeyboardInterrupt:
             _spinner.stop()
             ui.blank()
             ui.error("Interrupted.")
             ui.blank()
+            state["pending_image"] = None
             continue
         except Exception as exc:  # noqa: BLE001 — CLI kabhi crash na ho
             _spinner.stop()
@@ -744,7 +843,12 @@ async def main() -> int:
                 import traceback
 
                 traceback.print_exc()
+            state["pending_image"] = None
             continue
+        finally:
+            # Image ek hi baar bhejni thi — bhejne ke baad clear
+            if attached_image:
+                state["pending_image"] = None
 
         _spinner.stop()
 
