@@ -43,5 +43,12 @@ ddgs>=9.0.0                # Web search — FREE, koi API key nahi chahiye
 # --- Optional: Browser control (Phase 3) ---
 # playwright>=1.44.0       # Saari websites ka access
 
+# --- Optional: Desktop screenshot + mouse/keyboard control ---
+# mss>=9.0.0               # Screenshot — tez, bharosemand, cross-platform
+#                          # (pyautogui ka pyscreeze/PIL crash isse bachta hai)
+# Pillow>=10.0.0           # PNG encode (mss ke saath chahiye)
+# pyautogui>=0.9.54        # Mouse/keyboard control (screenshot ke liye zaroori nahi —
+#                          #  mss akela screenshot le leta hai)
+
 # --- Optional: Vector memory (baad mein) ---
 # chromadb>=0.5.0          # Semantic memory

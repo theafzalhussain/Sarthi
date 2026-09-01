@@ -38,6 +38,32 @@ except Exception:  # noqa: BLE001 — headless server pe import bhi fail hota ha
     HAS_GUI = False
 
 
+# mss — screenshot ke liye alag, bharosemand backend.
+#
+# ⚠️ YE FIX EK ASLI BUG SE AAYA HAI:
+#   pyautogui screenshot ke liye pyscreeze use karta hai, jo PIL (Pillow)
+#   pe depend karta hai. User ki machine pe (Python 3.14) Pillow install
+#   nahi tha / support nahi tha, isliye:
+#       "PyAutoGUI was unable to import pyscreeze"
+#   aur DESKTOP screenshot POORA TOOT gaya.
+#
+#   mss ek halka, tez, cross-platform screen-capture hai jo seedha OS
+#   se pixels leta hai. Isse PIL sirf PNG encode ke liye chahiye (jo
+#   ab install hai). mss ho to isko PEHLE use karte hain — pyautogui
+#   sirf fallback.
+try:
+    import mss as _mss
+
+    HAS_MSS = True
+except Exception:  # noqa: BLE001
+    _mss = None  # type: ignore[assignment]
+    HAS_MSS = False
+
+# GUI capability sirf pyautogui pe nahi — mss se bhi screenshot ho sakta
+# hai. Isliye "screenshot le sakte hain" = pyautogui YA mss.
+HAS_SCREENSHOT = HAS_GUI or HAS_MSS
+
+
 # Khatarnak shell commands — inko block karte hain.
 # Ye defence-in-depth hai: LLM galti kare to bhi system safe rahe.
 DANGEROUS_PATTERNS: tuple[str, ...] = (
@@ -88,9 +114,12 @@ class DesktopDevice(Device):
                 Capability.TAP,
                 Capability.TYPE,
                 Capability.KEY,
-                Capability.SCREENSHOT,
                 Capability.SWIPE,
             }
+        # Screenshot pyautogui YA mss se ho sakta hai (mss ko mouse/
+        # keyboard nahi chahiye — headless-ish desktop pe bhi chalta hai)
+        if HAS_SCREENSHOT:
+            caps.add(Capability.SCREENSHOT)
         self.capabilities = caps
 
     # ------------------------------------------------------------------
@@ -302,7 +331,44 @@ class DesktopDevice(Device):
             return ActionResult.failure(f"Key press fail: {exc}")
 
     async def screenshot(self) -> ActionResult:
-        """Screenshot lo — pyautogui se, ya Linux tools se fallback."""
+        """
+        Screenshot lo. Order:
+          1. mss (bharosemand, PIL sirf PNG encode ke liye) — PRIMARY
+          2. pyautogui (agar mss na ho)
+          3. Linux screenshot tools (gnome-screenshot/scrot/...)
+        """
+        # --- 1) mss — sabse bharosemand (pyscreeze/PIL crash se bachata hai) ---
+        if HAS_MSS:
+            try:
+                import io
+
+                from PIL import Image  # ab install hai
+
+                with _mss.mss() as sct:
+                    # monitor[0] = saare monitors ka combined (full screen)
+                    monitor = sct.monitors[0]
+                    shot = sct.grab(monitor)
+                    img = Image.frombytes(
+                        "RGB", shot.size, shot.bgra, "raw", "BGRX"
+                    )
+                    buffer = io.BytesIO()
+                    img.save(buffer, format="PNG")
+                    raw = buffer.getvalue()
+
+                return ActionResult.success(
+                    f"Screenshot liya ({len(raw) // 1024} KB, mss se)",
+                    image_b64=base64.b64encode(raw).decode("ascii"),
+                    image_mime="image/png",
+                )
+            except Exception as exc:  # noqa: BLE001
+                # mss fail hua to pyautogui/Linux fallback pe jao — chup na raho
+                last_err = f"mss fail: {exc}"
+            else:
+                last_err = ""
+        else:
+            last_err = ""
+
+        # --- 2) pyautogui (PIL/pyscreeze chahiye) ---
         if HAS_GUI:
             try:
                 import io
@@ -317,7 +383,7 @@ class DesktopDevice(Device):
                     image_mime="image/png",
                 )
             except Exception as exc:  # noqa: BLE001
-                return ActionResult.failure(f"Screenshot fail: {exc}")
+                last_err = f"{last_err + ' | ' if last_err else ''}pyautogui fail: {exc}"
 
         # Linux fallback — koi bhi available tool try karo
         for tool, command in (
@@ -342,4 +408,10 @@ class DesktopDevice(Device):
                     image_mime="image/png",
                 )
 
+        # Kuch bhi na chala — asli error batao (na ki generic GUI message)
+        if last_err:
+            return ActionResult.failure(
+                f"Screenshot fail: {last_err}\n"
+                "Theek karne ke liye: pip install mss Pillow"
+            )
         return self._need_gui()

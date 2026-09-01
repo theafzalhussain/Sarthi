@@ -96,6 +96,30 @@ DEFAULT_MODELS: dict[str, str] = {
     # nahi hai. Isliye default mein tools OFF hain (neeche dekh).
     "gemma": "google/diffusiongemma-26b-a4b-it",
 
+    # ------------------------------------------------------------------
+    #  KIRA AI (kiraai.vn) — OpenAI-compatible gateway.
+    #  Ye paanch "providers" ek hi URL aur ek hi KIRAAI_API_KEY share
+    #  karte hain. Alag entry isliye hai ki har model ka apna fallback
+    #  slot mile aur user order badal sake.
+    #
+    #  ⚠️ SIRF ye bina VND wallet ke chalte hain (is_partner:false).
+    #  GLM 5.3 / Qwen3.8 / Deepseek-Free jaise partner models HTTP 402
+    #  dete hain (wallet chahiye) — isliye add NAHI kiye.
+    #
+    #  Sab reasoning models hain (reasoning_content bhejte hain).
+    # ------------------------------------------------------------------
+
+    # MiniMax M3 Free — 1M context, multi-agent. Sabse bada free model.
+    "kiraai": "minimax-m3-free",
+    # Kira Mini 1.0 = Deepseek V4 Flash based, 1M context, tez.
+    "kiraai_kira": "kira-mini-1.0",
+    # Tencent Hy3 — agentic coding, 262K context.
+    "kiraai_hy3": "hy3",
+    # Mimo V2.5 — reasoning, 262K context.
+    "kiraai_mimo": "mimo-v2.5",
+    # Kira Mini 2.0 — 120B open-source.
+    "kiraai_k2": "kira-2.0",
+
     # KIRO — subprocess provider (kiro-cli). Bade models: Claude Opus 5,
     # GPT-5.6, Qwen3 Coder, DeepSeek, GLM-5. "auto" = task ke hisaab se
     # best model. Ye HTTP nahi, kiro-cli ko headless chalata hai.
@@ -170,6 +194,11 @@ DEFAULT_PROVIDER_ORDER: list[str] = [
     "groq",        # FAST (~1s) par 8000 TPM tools ke saath choke (413).
                    # Isliye peeche — chhoti requests pe hi kaam karega.
     "openrouter",  # free models ka router
+    "kiraai",      # MiniMax M3 free (1M ctx) — bina wallet chalta hai
+    "kiraai_kira", # Deepseek V4 Flash based (1M ctx)
+    "kiraai_hy3",  # Tencent Hy3 (agentic)
+    "kiraai_mimo", # Mimo V2.5 (reasoning)
+    "kiraai_k2",   # Kira Mini 2.0 (120B)
     "muse",        # SLOW (~28s, reasoning). Peeche.
     "deepseek",    # SLOW (1.6T MoE reasoning). Peeche.
     "kiro",        # kiro-cli — BADE models. Escalation se front (big task).
@@ -443,6 +472,23 @@ class Settings:
     #             DEFAULT — kyunki ye bina setup ke sahi kaam karta hai.
     browser_mode: str = "auto"
 
+    # Agent ka browser kaunsa REAL browser use kare (Playwright channel).
+    #   chromium -> Playwright ka bundled Chromium (DEFAULT, alag profile)
+    #   chrome   -> tumhara installed Google Chrome
+    #   msedge   -> tumhara installed Microsoft Edge
+    # Chrome/msedge use karne ka fayda: tumhare asli browser jaisा dikhega.
+    browser_channel: str = "chromium"
+
+    # Kaunsa PROFILE use kare (login state kahan se aaye):
+    #   default -> agent ka apna profile (data/browser_profile). Ismein
+    #              ek baar login karo, hamesha yaad rehta hai. SAFEST.
+    #   chrome  -> tumhara ASLI Chrome profile (saare logins mil jaate
+    #              hain) — PAR Chrome poori tarah BAND hona chahiye,
+    #              warna "profile locked" error aayega.
+    #   edge    -> tumhara asli Edge profile (Edge band hona chahiye)
+    #   <path>  -> koi custom user-data-dir ka poora path
+    browser_profile: str = "default"
+
     # Agent ka browser dikhe ya nahi.
     # False = dikhega (default — user dekh sakta hai kya ho raha hai,
     #         aur zarurat pade to khud takeover kar sakta hai)
@@ -555,6 +601,58 @@ class Settings:
                 supports_tools=_env_bool("OPENCODE_TOOLS", True),
                 **_provider_tuning("opencode"),
             ),
+            # --- KIRA AI (kiraai.vn) — OpenAI-compatible gateway ---
+            #
+            # Ek KIRAAI_API_KEY se 5 free models. Sab reasoning models
+            # hain (reasoning_content bhejte hain) — openai_compat.py ka
+            # fallback usse handle karta hai.
+            #
+            # ⚠️ Sirf ye is_partner:false models add kiye hain — ye bina
+            # VND wallet chalte hain. GLM 5.3 / Qwen3.8 / Deepseek-Free
+            # jaise partner models HTTP 402 dete hain (wallet chahiye).
+            #
+            # supports_tools default True: MiniMax M3 aur Hy3 agentic
+            # hain. Kisi model pe dikkat aaye to KIRAAI_TOOLS=false.
+            ProviderConfig(
+                name="kiraai",
+                api_key=os.getenv("KIRAAI_API_KEY"),
+                model=os.getenv("KIRAAI_MODEL", DEFAULT_MODELS["kiraai"]),
+                supports_vision=False,
+                supports_tools=_env_bool("KIRAAI_TOOLS", True),
+                **_provider_tuning("kiraai"),
+            ),
+            ProviderConfig(
+                name="kiraai_kira",
+                api_key=os.getenv("KIRAAI_API_KEY"),
+                model=os.getenv("KIRAAI_KIRA_MODEL", DEFAULT_MODELS["kiraai_kira"]),
+                supports_vision=False,
+                supports_tools=_env_bool("KIRAAI_TOOLS", True),
+                **_provider_tuning("kiraai_kira"),
+            ),
+            ProviderConfig(
+                name="kiraai_hy3",
+                api_key=os.getenv("KIRAAI_API_KEY"),
+                model=os.getenv("KIRAAI_HY3_MODEL", DEFAULT_MODELS["kiraai_hy3"]),
+                supports_vision=False,
+                supports_tools=_env_bool("KIRAAI_TOOLS", True),
+                **_provider_tuning("kiraai_hy3"),
+            ),
+            ProviderConfig(
+                name="kiraai_mimo",
+                api_key=os.getenv("KIRAAI_API_KEY"),
+                model=os.getenv("KIRAAI_MIMO_MODEL", DEFAULT_MODELS["kiraai_mimo"]),
+                supports_vision=False,
+                supports_tools=_env_bool("KIRAAI_TOOLS", True),
+                **_provider_tuning("kiraai_mimo"),
+            ),
+            ProviderConfig(
+                name="kiraai_k2",
+                api_key=os.getenv("KIRAAI_API_KEY"),
+                model=os.getenv("KIRAAI_K2_MODEL", DEFAULT_MODELS["kiraai_k2"]),
+                supports_vision=False,
+                supports_tools=_env_bool("KIRAAI_TOOLS", True),
+                **_provider_tuning("kiraai_k2"),
+            ),
             # --- KIRO — subprocess provider (kiro-cli headless) ---
             #
             # Kiro ki ksk_ key OpenAI-compatible NAHI hai — HTTP se call
@@ -649,6 +747,10 @@ class Settings:
             browser_mode=_env_choice(
                 "SAARTHI_BROWSER_MODE", ("auto", "agent", "system"), "auto"
             ),
+            browser_channel=_env_choice(
+                "SAARTHI_BROWSER_CHANNEL", ("chromium", "chrome", "msedge"), "chromium"
+            ),
+            browser_profile=(os.getenv("SAARTHI_BROWSER_PROFILE", "default").strip() or "default"),
             browser_headless=_env_bool("SAARTHI_BROWSER_HEADLESS", False),
         )
 

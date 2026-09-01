@@ -419,6 +419,7 @@ class Brain:
         temperature: float = 0.3,
         max_tokens: int | None = None,
         need_vision: bool = False,
+        prefer: list[str] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """
         Streaming version of think() — tokens jaise aate hain yield karo.
@@ -426,6 +427,10 @@ class Brain:
         Same fallback logic as think(): provider fail ho to agla try.
         Par streaming shuru hone ke baad provider switch nahi hota —
         ek baar stream chalu to wahi complete karo.
+
+        prefer: In providers ko SABSE PEHLE try karo (auto model routing).
+                Task ki size ke hisaab se agent decide karta hai —
+                chhota kaam -> fast providers, bada kaam -> smart providers.
 
         Usage:
             full_text = ""
@@ -463,6 +468,18 @@ class Brain:
             without_tools = [p for p in candidates if not p.supports_tools]
             if with_tools:
                 candidates = with_tools + without_tools
+
+        # --- AUTO MODEL ROUTING: prefer wale providers sabse aage ---
+        #
+        # Agent task ki size dekh ke ye list bhejta hai. Chhota kaam ->
+        # fast providers pehle, bada kaam -> smart providers pehle. Isse
+        # har kaam sahi model ko jaata hai — bar-bar ek hi model par
+        # nahi girta.
+        if prefer:
+            preferred = [p for p in candidates if p.name in prefer]
+            rest = [p for p in candidates if p.name not in prefer]
+            preferred.sort(key=lambda p: prefer.index(p.name))
+            candidates = preferred + rest
 
         healthy = [p for p in candidates if self._is_usable(p)]
         if not healthy:

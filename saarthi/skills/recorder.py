@@ -39,6 +39,14 @@ RECORDABLE_ACTIONS: set[str] = {
     "key_dabao",
     "scroll_karo",
     "command_chalao",
+    # --- Browser / web actions (bina inke browser skill bekaar hai) ---
+    "website_kholo",       # site kholna — skill ka pehla step aksar yahi
+    "file_download_karo",  # download step
+    "login_karo",          # login step (credentials se)
+    # NOTE: field_bharo ka alias 'field_bharo' hai — device_tools mein
+    # tool ka naam yahi hai. Ise bhi record karna zaroori hai (search
+    # box / form bharna).
+    "field_bharo",
 }
 
 # Ye actions record NAHI karne — ye sirf "dekhne" wale hain.
@@ -46,6 +54,7 @@ RECORDABLE_ACTIONS: set[str] = {
 SKIP_ACTIONS: set[str] = {
     "screen_padho",
     "screenshot_lo",
+    "page_padho",          # browser ka read-only content padhna
     "device_ki_jaankari",
     "apps_ki_list",
     "notifications_padho",
@@ -59,6 +68,10 @@ SKIP_ACTIONS: set[str] = {
     "skill_chalao",
     "skill_seekho",
     "skills_ki_list",
+    # Credential management — ye "dekhne"/setup wale hain, skill step nahi
+    "logins_dikhao",
+    "login_save_karo",
+    "login_hata_do",
 }
 
 

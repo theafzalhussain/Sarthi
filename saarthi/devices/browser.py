@@ -186,9 +186,21 @@ class BrowserDevice(Device):
         self.headless = (
             default_settings.browser_headless if headless is None else headless
         )
-        self.profile_dir = Path(
-            profile_dir or (default_settings.data_dir / "browser_profile")
-        )
+
+        # --- Channel: kaunsa REAL browser (chromium/chrome/msedge) ---
+        self.channel = getattr(default_settings, "browser_channel", "chromium")
+
+        # --- Profile: login state kahan se aaye ---
+        # 'default' -> agent ka apna profile
+        # 'chrome'/'edge' -> user ka asli browser profile (band hona chahiye)
+        # <path> -> custom user-data-dir
+        self._profile_choice = getattr(default_settings, "browser_profile", "default")
+        self._using_real_profile = False  # user ke asli browser ka profile?
+
+        if profile_dir is not None:
+            self.profile_dir = Path(profile_dir)
+        else:
+            self.profile_dir = self._resolve_profile_dir(self._profile_choice)
 
         self._playwright = None
         self._context = None
@@ -206,6 +218,45 @@ class BrowserDevice(Device):
     # ------------------------------------------------------------------
     #  Lifecycle
     # ------------------------------------------------------------------
+
+    def _resolve_profile_dir(self, choice: str) -> Path:
+        """
+        User ki choice ko ek asli user-data-dir path mein badlo.
+
+        'default' -> agent ka apna profile (data/browser_profile)
+        'chrome'  -> Google Chrome ka default user-data-dir
+        'edge'    -> Microsoft Edge ka default user-data-dir
+        <path>    -> jaisa diya waisa
+
+        DHYAN: 'chrome'/'edge' profile tabhi khulega jab wo browser
+        POORI TARAH BAND ho. Warna Chromium "profile locked" deta hai.
+        Aisa ho to hum saaf error dete hain (neeche _launch_context mein).
+        """
+        import os
+
+        c = (choice or "default").strip().lower()
+
+        if c in ("", "default", "agent"):
+            self._using_real_profile = False
+            return default_settings.data_dir / "browser_profile"
+
+        if c == "chrome":
+            self._using_real_profile = True
+            local = os.getenv("LOCALAPPDATA", "")
+            if local:
+                return Path(local) / "Google" / "Chrome" / "User Data"
+            return Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "User Data"
+
+        if c in ("edge", "msedge"):
+            self._using_real_profile = True
+            local = os.getenv("LOCALAPPDATA", "")
+            if local:
+                return Path(local) / "Microsoft" / "Edge" / "User Data"
+            return Path.home() / "AppData" / "Local" / "Microsoft" / "Edge" / "User Data"
+
+        # Custom path
+        self._using_real_profile = True
+        return Path(choice)
 
     async def is_available(self) -> bool:
         return HAS_PLAYWRIGHT
@@ -350,6 +401,11 @@ class BrowserDevice(Device):
                     "    playwright install chromium",
                     setup_error=True,
                 )
+            # Chrome/Edge KHULA hai (locked profile) — ye setup_error NAHI
+            # hai. User ko seedha ye message dikhna chahiye (browser band
+            # karne ko bole), chup-chaap system browser pe girna nahi.
+            if self._using_real_profile and ("KHULA hai" in message or "locked" in message.lower()):
+                return ActionResult.failure(message)
             return ActionResult.failure(
                 f"Browser start nahi hua: {exc}", setup_error=True
             )
@@ -386,39 +442,177 @@ class BrowserDevice(Device):
                 if target.exists():
                     target.unlink()
 
+    def _kill_orphan_processes(self, profile: str) -> int:
+        """
+        Is profile ko pakde hue ZOMBIE Playwright chromium processes maaro.
+
+        ⚠️ YE ASLI ROOT CAUSE KA FIX HAI.
+
+        Jab ek Saarthi run crash hota hai (ya window band karke process
+        theek se band nahi hota), to Playwright ka chromium
+        (ms-playwright\\...\\chrome.exe --user-data-dir=<profile>) BACHA
+        REH JAATA hai. Wo profile ko LOCK kiye rehta hai.
+
+        Agla launch: `launch_persistent_context` "success" DETA HAI (context
+        object milta hai) par wo context TURANT mar jaata hai — kyunki
+        profile pehle se kisi zombie ke paas hai. Nateeja wahi error:
+            "Target page, context or browser has been closed"
+
+        Lockfile hatane se kaam nahi chalta — process abhi bhi zinda hai.
+        Isliye SIRF HAMARE profile wale, SIRF ms-playwright wale chromium
+        ko maarte hain. User ka apna Chrome/Edge KABHI nahi chhedte
+        (wo ms-playwright path pe nahi hota).
+
+        Returns: kitne process maare.
+        """
+        import sys
+
+        # Sirf Windows pe process-kill karte hain — wahi environment hai
+        # jahan ye zombie problem dekhi gayi (persistent profile + crash).
+        # Doosre OS pe lockfile clear + temp fallback kaafi hai.
+        if not sys.platform.startswith("win"):
+            return 0
+
+        import contextlib
+        import os
+        import subprocess
+
+        prof_norm = os.path.normcase(os.path.abspath(profile))
+        killed = 0
+
+        try:
+            # WMIC hata diya gaya naye Windows se — PowerShell CIM use karo.
+            # Sirf chrome.exe jinki command line mein HAMARA profile AUR
+            # ms-playwright dono ho.
+            ps = (
+                "Get-CimInstance Win32_Process -Filter \"name='chrome.exe'\" | "
+                "Where-Object { $_.CommandLine -like '*ms-playwright*' -and "
+                f"$_.CommandLine -like '*{os.path.basename(profile)}*' }} | "
+                "ForEach-Object { $_.ProcessId }"
+            )
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps],
+                capture_output=True, text=True, timeout=8,
+            )
+            pids = [p.strip() for p in (out.stdout or "").splitlines() if p.strip().isdigit()]
+            for pid in pids:
+                with contextlib.suppress(Exception):
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", pid],
+                        capture_output=True, timeout=5,
+                    )
+                    killed += 1
+        except Exception as exc:  # noqa: BLE001
+            log.debug("orphan kill fail (koi baat nahi): %s", exc)
+
+        if killed:
+            log.warning("%d zombie browser process maare (profile lock chhuda)", killed)
+        return killed
+
+    async def _context_is_launchable(self, context) -> bool:
+        """
+        Abhi-abhi launch kiye context ke saath sach mein kaam ho sakta hai?
+
+        `launch_persistent_context` zombie-locked profile pe bhi ek
+        context OBJECT de deta hai jo turant marta hai. Isliye hum ek
+        halka sa operation karke confirm karte hain ki wo zinda hai —
+        warna "success" maan ke baad har command fail hoti hai.
+        """
+        try:
+            pages = context.pages
+            page = pages[0] if pages else await context.new_page()
+            # Ek trivial evaluate — dead context yahan exception dega
+            await page.evaluate("1")
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
     async def _launch_context(self, profile: str):
         """
-        Persistent context launch karo — lock/session error pe retry.
+        Persistent context launch karo — lock/session/zombie pe recover.
 
-        1) Seedha try.
-        2) Fail (lock/session) -> lock files clear karke dobara try.
-        3) Phir bhi fail -> ek fresh TEMP profile pe (login state bina,
-           par browser CHALEGA aur controllable rahega — system browser
-           pe girne se behtar).
+        DO MODE:
+
+        (A) Agent ka apna profile (default) — pehle jaisa robust flow:
+            1) Seedha try (+ liveness verify).
+            2) Fail/dead -> ZOMBIE process maaro + lock clear -> retry.
+            3) Phir bhi na chale -> fresh TEMP profile (login bina, par
+               browser chalega).
+
+        (B) User ka ASLI browser profile (chrome/edge/custom) —
+            yahan hum uska Chrome/Edge KABHI kill nahi karte aur temp
+            profile pe bhi nahi girte (warna login ka poora point khatam).
+            Sirf try karte hain; band na ho to SAAF error dete hain:
+            "pehle Chrome poori tarah band kar".
         """
+        import contextlib
+
         pw = self._playwright.chromium
 
         async def _try(user_data_dir: str):
-            return await pw.launch_persistent_context(
+            kwargs = dict(
                 user_data_dir=user_data_dir,
                 headless=self.headless,
                 viewport={"width": 1280, "height": 800},
                 args=self._launch_args(),
             )
+            # channel = chrome/msedge -> installed browser use karo.
+            # chromium (default) -> Playwright ka bundled Chromium.
+            if self.channel and self.channel != "chromium":
+                kwargs["channel"] = self.channel
+            return await pw.launch_persistent_context(**kwargs)
 
-        # 1) Normal
+        # ---- MODE B: user ka asli browser profile ----
+        if self._using_real_profile:
+            try:
+                ctx = await _try(profile)
+                if await self._context_is_launchable(ctx):
+                    log.info("User ke asli browser profile se chal raha hai: %s", profile)
+                    return ctx
+                with contextlib.suppress(Exception):
+                    await ctx.close()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Asli profile launch fail: %s", str(exc)[:160])
+
+            # Yahan pahunche matlab profile locked hai (browser khula hai)
+            browser_name = "Chrome" if "chrome" in self.channel.lower() or "Chrome" in str(profile) else "browser"
+            raise RuntimeError(
+                f"Tumhara {browser_name} abhi KHULA hai, isliye agent uske "
+                f"profile ko use nahi kar sakta (ek profile ek hi browser "
+                f"use kar sakta hai).\n\n"
+                f"Do raaste:\n"
+                f"  1. {browser_name} POORI TARAH band kar (saari windows), "
+                f"phir dobara command bhej.\n"
+                f"  2. Ya .env mein SAARTHI_BROWSER_PROFILE=default kar de — "
+                f"agent apni alag window use karega. Ek baar us window mein "
+                f"login kar lena, phir hamesha yaad rahega."
+            )
+
+        # ---- MODE A: agent ka apna profile (robust recover) ----
+        # 1) Normal — launch AUR verify (dead context ko success mat maano)
         try:
-            return await _try(profile)
+            ctx = await _try(profile)
+            if await self._context_is_launchable(ctx):
+                return ctx
+            log.warning("Launch #1 ne dead context diya (profile lock lagta hai)")
+            with contextlib.suppress(Exception):
+                await ctx.close()
         except Exception as exc:  # noqa: BLE001
-            msg = str(exc).lower()
             log.warning("Browser launch fail (try 1): %s", str(exc)[:120])
 
-        # 2) Lock clear karke retry
+        # 2) ZOMBIE process maaro + lock clear karke retry
+        #    (yahi asli fix hai — lock file kaafi nahi tha)
+        self._kill_orphan_processes(profile)
         self._clear_profile_locks(profile)
         try:
-            return await _try(profile)
+            ctx = await _try(profile)
+            if await self._context_is_launchable(ctx):
+                return ctx
+            log.warning("Launch #2 ne bhi dead context diya — temp profile pe ja raha hun")
+            with contextlib.suppress(Exception):
+                await ctx.close()
         except Exception as exc:  # noqa: BLE001
-            log.warning("Browser launch fail (try 2, lock cleared): %s", str(exc)[:120])
+            log.warning("Browser launch fail (try 2, zombie+lock cleared): %s", str(exc)[:120])
 
         # 3) Fresh temp profile — login state chali jaayegi par browser
         #    chalega aur controllable rahega
@@ -569,6 +763,46 @@ class BrowserDevice(Device):
         self._agent_pages = []
         self._agent_url = None
 
+    async def _wait_for_content(self, min_elements: int = 5, timeout_s: float = 6.0) -> None:
+        """
+        Page ka content settle hone ka intezaar karo (JS render).
+
+        ⚠️ YE FIX EK ASLI PROBLEM SE AAYA HAI.
+
+        YouTube/Gmail/Instagram jaisi site JS se render hoti hain.
+        `goto(domcontentloaded)` ke turant baad DOM khali hota hai —
+        `ui_tree` pe 0 elements, `read_page` pe [], screenshot BLANK
+        (4 KB) aata hai. Agent ko lagta hai "page load nahi hua" aur
+        haar maan leta hai.
+
+        Ye helper thodi der (chhote intervals mein) intezaar karta hai
+        jab tak page pe kaafi interactive elements na aa jaayein, ya
+        network idle na ho jaaye. Content aate hi turant aage badh
+        jaata hai — bekaar wait nahi karta.
+        """
+        if self._page is None:
+            return
+
+        # Pehle network idle try karo (SPA ke pehle paint ke liye accha)
+        try:
+            await self._page.wait_for_load_state("networkidle", timeout=int(timeout_s * 1000))
+        except Exception:  # noqa: BLE001 — timeout theek hai, neeche element-poll karenge
+            pass
+
+        # Phir elements poll karo — jab tak content na aa jaaye
+        import time as _t
+        deadline = _t.monotonic() + timeout_s
+        while _t.monotonic() < deadline:
+            try:
+                count = await self._page.evaluate(
+                    "() => document.querySelectorAll('a[href],button,input,[role=button],[role=link]').length"
+                )
+                if count and count >= min_elements:
+                    return
+            except Exception:  # noqa: BLE001
+                return  # page dead — caller handle karega
+            await asyncio.sleep(0.4)
+
     # ------------------------------------------------------------------
     #  Info
     # ------------------------------------------------------------------
@@ -637,8 +871,9 @@ class BrowserDevice(Device):
 
         try:
             await self._page.goto(target, wait_until="domcontentloaded")
-            # Thoda ruk jao — JS content load ho jaaye
-            await asyncio.sleep(0.3)
+            # JS-heavy site (YouTube/Gmail) ka content settle hone do —
+            # warna DOM khali rehta hai aur agent ko blank page milta hai.
+            await self._wait_for_content()
             title = await self._page.title()
         except Exception as exc:  # noqa: BLE001
             # "Target ... has been closed" jaisa error = context beech mein
@@ -651,7 +886,7 @@ class BrowserDevice(Device):
                     return relaunch_error
                 try:
                     await self._page.goto(target, wait_until="domcontentloaded")
-                    await asyncio.sleep(0.3)
+                    await self._wait_for_content()
                     title = await self._page.title()
                 except Exception as exc2:  # noqa: BLE001
                     return ActionResult.failure(f"'{target}' khul nahi paya: {exc2}")
@@ -694,6 +929,10 @@ class BrowserDevice(Device):
         error = await self._ensure_browser()
         if error:
             return error
+
+        # Content settle hone do — JS render hone se pehle padha to 0
+        # elements milte the (YouTube/Gmail pe blank page ka bug).
+        await self._wait_for_content()
 
         try:
             raw = await self._page.evaluate(_EXTRACT_ELEMENTS_JS)
@@ -740,6 +979,8 @@ class BrowserDevice(Device):
         if error:
             return error
 
+        await self._wait_for_content()
+
         try:
             text = await self._page.inner_text("body")
             title = await self._page.title()
@@ -759,6 +1000,9 @@ class BrowserDevice(Device):
         error = await self._ensure_browser()
         if error:
             return error
+
+        # Blank/4KB screenshot ka fix — render hone tak ruk jao
+        await self._wait_for_content()
 
         try:
             raw = await self._page.screenshot(type="png")
@@ -800,6 +1044,9 @@ class BrowserDevice(Device):
         error = await self._ensure_browser()
         if error:
             return error
+
+        # Content ready hone do — warna jaldi mein "text nahi mila"
+        await self._wait_for_content()
 
         query = text.strip()
 
@@ -1006,6 +1253,288 @@ class BrowserDevice(Device):
             return ActionResult.success(f"{key} press kiya")
         except Exception as exc:  # noqa: BLE001
             return ActionResult.failure(f"Key press fail: {exc}")
+
+    # ------------------------------------------------------------------
+    #  Login — website pe user ki taraf se sign in
+    # ------------------------------------------------------------------
+
+    # Common field selectors — zyadatar sites in patterns pe fit hote hain.
+    # Broad se specific tak, pehla jo mile use hota hai.
+    _USERNAME_SELECTORS = (
+        "input[type='email']",
+        "input[name='email']",
+        "input[id*='email' i]",
+        "input[autocomplete='username']",
+        "input[name='username']",
+        "input[id*='user' i]",
+        "input[name='login']",
+        "input[id*='login' i]",
+        "input[type='text']",
+        "input[type='tel']",
+    )
+    _PASSWORD_SELECTORS = (
+        "input[type='password']",
+        "input[name='password']",
+        "input[id*='pass' i]",
+        "input[autocomplete='current-password']",
+    )
+    _SUBMIT_SELECTORS = (
+        "button[type='submit']",
+        "input[type='submit']",
+        "button[name*='login' i]",
+        "button[id*='login' i]",
+        "button[id*='signin' i]",
+        "button:has-text('Sign in')",
+        "button:has-text('Log in')",
+        "button:has-text('Login')",
+        "button:has-text('Continue')",
+        "button:has-text('Next')",
+    )
+
+    async def _fill_first(self, selectors, value: str) -> bool:
+        """Diye gaye selectors mein se pehla VISIBLE field bharo."""
+        for sel in selectors:
+            try:
+                locator = self._page.locator(sel)
+                count = await locator.count()
+                for i in range(min(count, 5)):
+                    el = locator.nth(i)
+                    try:
+                        if await el.is_visible():
+                            await el.fill(value, timeout=5000)
+                            return True
+                    except Exception:  # noqa: BLE001
+                        continue
+            except Exception:  # noqa: BLE001
+                continue
+        return False
+
+    async def _click_first(self, selectors) -> bool:
+        """Diye gaye selectors mein se pehla VISIBLE button click karo."""
+        for sel in selectors:
+            try:
+                locator = self._page.locator(sel)
+                count = await locator.count()
+                for i in range(min(count, 5)):
+                    el = locator.nth(i)
+                    try:
+                        if await el.is_visible():
+                            await el.click(timeout=5000)
+                            return True
+                    except Exception:  # noqa: BLE001
+                        continue
+            except Exception:  # noqa: BLE001
+                continue
+        return False
+
+    async def login(
+        self,
+        username: str,
+        password: str,
+        login_url: str = "",
+    ) -> ActionResult:
+        """
+        Website pe login karo — user ki taraf se.
+
+        FLOW (do-step logins bhi handle karta hai, jaise Google/GitHub):
+          1. login_url diya ho to wahan jao (warna current page)
+          2. username/email field bharo
+          3. password field mil jaaye to bharo; na mile to "Next"
+             dabao (Google style) aur phir password field dhoondo
+          4. submit/sign-in button dabao
+          5. Result batao — par LOGIN HUA YA NAHI, ye page se confirm
+             karna caller ka kaam hai (screenshot/page_padho se)
+
+        SECURITY:
+          - Password Playwright `fill()` se seedha DOM mein jaata hai,
+            keystroke stream se nahi — screen recorders/keyloggers ke
+            liye kam surface.
+          - OTP/2FA yahan handle NAHI hota — wo user khud daalega.
+          - Password kabhi log ya return string mein nahi aata.
+        """
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        # 1. Login page pe jao (agar diya hai)
+        if login_url:
+            nav = await self.launch_app(login_url)
+            if not nav.ok:
+                return nav
+        await self._wait_for_content(min_elements=2)
+
+        steps: list[str] = []
+
+        # 2. Username / email bharo
+        if username:
+            got_user = await self._fill_first(self._USERNAME_SELECTORS, username)
+            if got_user:
+                steps.append("username/email bhar diya")
+            else:
+                return ActionResult.failure(
+                    "Login field (email/username) nahi mila is page pe. "
+                    "page_padho se dekh ke bata kaunsa field hai, ya "
+                    "login_url do."
+                )
+
+        # 3. Password bharo — do-step login handle karo
+        got_pass = await self._fill_first(self._PASSWORD_SELECTORS, password)
+
+        if not got_pass:
+            # Google/Microsoft style: pehle "Next", phir password page
+            if await self._click_first(self._SUBMIT_SELECTORS):
+                steps.append("'Next' dabaya (do-step login)")
+                await self._wait_for_content(min_elements=2)
+                await asyncio.sleep(1.0)
+                got_pass = await self._fill_first(self._PASSWORD_SELECTORS, password)
+
+        if got_pass:
+            steps.append("password bhar diya")
+        else:
+            # Sirf username step tak pahunche — user ko batao
+            self._remember_url()
+            return ActionResult.success(
+                "Username bhar diya, par password field abhi nahi mila. "
+                "Ho sakta hai OTP/verification aaya ho ya do-step login "
+                "hai — screenshot lekar dekh, aage user ko daalne de.\n"
+                + " -> ".join(steps),
+                needs_verification=True,
+            )
+
+        # 4. Submit
+        submitted = await self._click_first(self._SUBMIT_SELECTORS)
+        if not submitted:
+            # Button na mile to Enter dabao
+            try:
+                await self._page.keyboard.press("Enter")
+                submitted = True
+            except Exception:  # noqa: BLE001
+                pass
+
+        if submitted:
+            steps.append("sign-in dabaya")
+
+        # Page settle hone do (login redirect)
+        await asyncio.sleep(2.0)
+        try:
+            await self._page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:  # noqa: BLE001
+            pass
+
+        self._remember_url()
+
+        return ActionResult.success(
+            "Login steps chala diye: " + " -> ".join(steps) + ".\n"
+            "Ab screenshot_lo ya page_padho (device='browser') se confirm "
+            "kar ki login hua ya OTP/2FA maang raha hai.",
+            url=self._current_url(),
+        )
+
+    # ------------------------------------------------------------------
+    #  Download — file download karna
+    # ------------------------------------------------------------------
+
+    async def download(
+        self,
+        link_text: str = "",
+        url: str = "",
+        save_dir: str = "",
+    ) -> ActionResult:
+        """
+        Browser se file download karo.
+
+        DO TAREEKE:
+          1. url diya ho -> seedha us URL ko download karo
+          2. link_text diya ho -> current page pe us text wale
+             link/button pe click karo aur download capture karo
+
+        File `data/downloads/` (ya diye gaye save_dir) mein save hoti
+        hai. Playwright ka `expect_download` use hota hai — modal/
+        button-triggered downloads bhi capture ho jaate hain.
+        """
+        error = await self._ensure_browser()
+        if error:
+            return error
+
+        from pathlib import Path as _P
+
+        target_dir = _P(save_dir) if save_dir else (self.profile_dir.parent / "downloads")
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            return ActionResult.failure(f"Download folder bana nahi paya: {exc}")
+
+        try:
+            async with self._page.expect_download(timeout=60_000) as dl_info:
+                if url:
+                    # Direct URL download — ek naye download-trigger se
+                    await self._page.evaluate(
+                        """(u) => {
+                            const a = document.createElement('a');
+                            a.href = u; a.download = '';
+                            document.body.appendChild(a); a.click(); a.remove();
+                        }""",
+                        url,
+                    )
+                elif link_text:
+                    clicked = await self._click_download_link(link_text)
+                    if not clicked:
+                        return ActionResult.failure(
+                            f"'{link_text}' naam ka download link/button nahi mila. "
+                            f"page_padho se dekh page pe kya hai."
+                        )
+                else:
+                    return ActionResult.failure(
+                        "Download ke liye ya to 'url' de ya 'link_text' (kispe click karun)."
+                    )
+
+            download = await dl_info.value
+            suggested = download.suggested_filename or "download"
+            dest = target_dir / suggested
+            await download.save_as(str(dest))
+
+            size_kb = 0
+            try:
+                size_kb = dest.stat().st_size // 1024
+            except Exception:  # noqa: BLE001
+                pass
+
+            self._remember_url()
+            return ActionResult.success(
+                f"Download ho gaya: {dest} ({size_kb} KB)",
+                path=str(dest),
+                filename=suggested,
+            )
+
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            if "Timeout" in msg or "timeout" in msg:
+                return ActionResult.failure(
+                    "Download shuru nahi hua (timeout). Ho sakta hai click se "
+                    "download trigger na hua ho — page_padho se sahi "
+                    "download button dhoondh ke link_text badal."
+                )
+            return ActionResult.failure(f"Download fail: {exc}")
+
+    async def _click_download_link(self, link_text: str) -> bool:
+        """Download button/link dhoondh ke click karo."""
+        query = link_text.strip()
+        attempts = [
+            self._page.get_by_role("link", name=query, exact=False),
+            self._page.get_by_role("button", name=query, exact=False),
+            self._page.get_by_text(query, exact=False),
+            self._page.locator(f"a[download]:has-text('{query}')"),
+            self._page.locator("a[download]"),
+        ]
+        for locator in attempts:
+            try:
+                if await locator.count() == 0:
+                    continue
+                await locator.first.click(timeout=6000)
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+        return False
 
     async def swipe(
         self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300

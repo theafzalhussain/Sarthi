@@ -127,9 +127,16 @@ def _web_fallback_hint(app: str) -> str:
 DEVICE_PARAM = {
     "device": {
         "type": "string",
+        "enum": ["browser", "android", "phone", "desktop"],
         "description": (
-            "Kis device pe kaam karna hai: 'android' (phone) ya 'desktop' "
-            "(laptop). Na do to default use hoga."
+            "Kis device pe kaam karna hai:\n"
+            "- 'browser' -> jo website tune website_kholo se kholi (YouTube, "
+            "Gmail, WhatsApp Web, koi bhi site). WEBSITE KHOLNE KE BAAD PADHNE/"
+            "TAP KARNE KE LIYE HAMESHA 'browser' USE KAR — 'desktop' NAHI.\n"
+            "- 'android' / 'phone' -> connected phone.\n"
+            "- 'desktop' -> laptop ki poori screen (desktop apps ke liye, "
+            "browser page ke liye NAHI).\n"
+            "Na do to default use hoga."
         ),
     }
 }

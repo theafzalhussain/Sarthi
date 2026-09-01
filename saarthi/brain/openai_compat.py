@@ -51,6 +51,27 @@ BASE_URLS: dict[str, str] = {
     # Key: https://opencode.ai/zen (API Keys section)
     "opencode": "https://opencode.ai/zen/v1",
 
+    # Kira AI (kiraai.vn) — OpenAI-compatible gateway, Vietnam.
+    # Ek key se bahut models: MiniMax M3, Deepseek V4 Flash, Tencent Hy3,
+    # Mimo, Kira Mini. Key "kira_" se shuru hoti hai.
+    #
+    # ⚠️ DHYAN: "Free" tag wale partner models (glm-5.3, qwen3.8-flash,
+    # deepseek-v4-flash-free) actually VND wallet maangte hain (HTTP 402).
+    # Sirf is_partner:false wale free models bina wallet chalte hain:
+    #   minimax-m3-free, kira-mini-1.0, hy3, mimo-v2.5, kira-2.0
+    # Ye sab reasoning models hain (reasoning_content bhejte hain) —
+    # neeche wala reasoning_content fallback inke liye zaroori hai.
+    # Key: https://kiraai.vn -> Dashboard -> API Keys
+    #
+    # Saare kiraai_* variants ek hi endpoint pe chalte hain — sirf
+    # `model` field alag hota hai. Alag naam isliye taaki fallback +
+    # order-control mile (NVIDIA-hosted models jaisa pattern).
+    "kiraai": "https://kiraai.vn/api/v1",       # minimax-m3-free
+    "kiraai_kira": "https://kiraai.vn/api/v1",  # kira-mini-1.0
+    "kiraai_hy3": "https://kiraai.vn/api/v1",   # hy3
+    "kiraai_mimo": "https://kiraai.vn/api/v1",  # mimo-v2.5
+    "kiraai_k2": "https://kiraai.vn/api/v1",    # kira-2.0
+
     # --- NVIDIA NIM pe hosted models ---
     # Ye chaar "providers" ek hi URL aur ek hi NVIDIA_API_KEY use karte
     # hain. Alag entry isliye hai ki har model ka apna fallback slot

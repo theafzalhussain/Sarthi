@@ -205,6 +205,14 @@ class AudioConfig:
         raw_device = os.getenv("SAARTHI_MIC_DEVICE", "").strip()
         if raw_device:
             config.device = resolve_device(raw_device)
+        else:
+            # User ne mic nahi chuna — khud accha wala dhoondo.
+            # (Windows ka MME "Sound Mapper" default aksar bekaar/dheema
+            # hota hai; WASAPI Realtek mic 14x loud aata hai.)
+            try:
+                config.device = pick_best_input_device()
+            except Exception:  # noqa: BLE001 — fail ho to PortAudio default
+                config.device = None
 
         raw_min = os.getenv("SAARTHI_MIC_MIN_THRESHOLD", "").strip()
         if raw_min:
@@ -677,6 +685,98 @@ def list_input_devices() -> list[str]:
     return [f"[{d['index']}] {d['name']}" for d in input_devices()]
 
 
+def pick_best_input_device() -> int | None:
+    """
+    Ek accha input device khud chuno (jab user ne SAARTHI_MIC_DEVICE
+    set nahi kiya).
+
+    ⚠️ YE FIX EK ASLI BUG SE AAYA HAI.
+
+    Windows ka DEFAULT input aksar "Microsoft Sound Mapper - Input"
+    (legacy MME wrapper) hota hai. Us device se recording BAHUT DHEEMI
+    aati hai — user ki machine pe default se peak ~513, jabki asli
+    WASAPI Realtek mic (device 5) se peak ~7146 (14x zyada). Dheemi
+    audio pe VAD/Whisper kuch nahi pakadta, aur stream kabhi kabhi
+    atak bhi jaata hai — "Enter dabane par kuch nahi hota".
+
+    Strategy (score, sabse accha chuno):
+      + WASAPI / DirectSound / WDM-KS host API ko prefer karo (MME/
+        "Sound Mapper" ko peeche)
+      + "microphone"/"mic"/"array" naam wale ko thoda boost
+      + jo device sach mein OPEN ho (16kHz mono) — warna skip
+      - "sound mapper", "primary sound capture", "stereo mix",
+        "what u hear" ko peeche/skip
+
+    Returns: device index, ya None (koi accha na mile to PortAudio
+    default — behaviour pehle jaisa).
+    """
+    if not HAS_SOUNDDEVICE:
+        return None
+
+    devices = input_devices()
+    if not devices:
+        return None
+
+    def _openable(index: int) -> bool:
+        """Ye device 16kHz mono pe khul sakta hai?"""
+        try:
+            sd.check_input_settings(
+                device=index, samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="int16"
+            )
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    # Host API preference (zyada score = behtar)
+    api_score = {
+        "wasapi": 40,
+        "windows wasapi": 40,
+        "directsound": 30,
+        "windows directsound": 30,
+        "wdm-ks": 25,
+        "windows wdm-ks": 25,
+        "mme": 5,
+        "windows mme": 5,
+    }
+
+    best_index: int | None = None
+    best_score = -1.0
+
+    for dev in devices:
+        name = (dev.get("name") or "").lower()
+        api = (dev.get("api") or "").lower()
+
+        # Ye device kaam ke nahi — skip
+        if any(bad in name for bad in (
+            "sound mapper", "primary sound capture", "stereo mix",
+            "what u hear", "wave out mix", "pc speaker",
+        )):
+            continue
+
+        if not _openable(dev["index"]):
+            continue
+
+        score = float(api_score.get(api, 10))
+
+        # Asli mic jaise naam ko boost
+        if any(good in name for good in ("microphone", "mic ", "mic input", "array", "headset")):
+            score += 8
+        # Bluetooth hands-free aksar bekaar quality — thoda peeche
+        if "hands-free" in name or "hands free" in name:
+            score -= 5
+        # System default ko halka sa boost (agar wo waise hi accha ho)
+        if dev.get("is_default"):
+            score += 2
+
+        if score > best_score:
+            best_score = score
+            best_index = dev["index"]
+
+    if best_index is not None:
+        log.info("Auto-selected mic device: %s", describe_device(best_index))
+    return best_index
+
+
 def resolve_device(value: object) -> int | None:
     """
     User ki di hui device setting ko index mein badlo.
@@ -915,6 +1015,16 @@ class Recorder:
         collected: list = []
         final_status = DetectorStatus(state=ListenState.WAITING)
 
+        # --- WALL-CLOCK HANG GUARD ---
+        # chunk-count limit kaafi nahi tha: agar stream ADHE-ADHURE ya
+        # dheeme chunks bhejta rahe (Windows MME device pe hota hai), to
+        # loop bahut der chal ke "atka hua" lagta hai — user ka
+        # "Enter dabane par kuch nahi hota". Ye ek pakka time cap hai.
+        import time as _time
+        wall_deadline = _time.monotonic() + (
+            self.config.max_duration + self.config.start_timeout + 3.0
+        )
+
         def finish_no_audio(reason: str, count: int):
             log.error(
                 "Mic stream se audio nahi aa raha (%s, %d chunks, device=%s) "
@@ -943,6 +1053,14 @@ class Recorder:
 
         while total_chunks < hard_limit:
             total_chunks += 1
+
+            # Wall-clock cap — stream chahe kuch bhi kare, atakne nahi denge
+            if _time.monotonic() > wall_deadline:
+                if saw_any_audio and collected and final_status.state == ListenState.SPEAKING:
+                    # Bol raha tha par ruka nahi — jo mila usse kaam chala
+                    final_status = DetectorStatus(state=ListenState.TOO_LONG)
+                    break
+                return finish_no_audio("time cap (stream atka)", total_chunks)
 
             try:
                 chunk = next_chunk()

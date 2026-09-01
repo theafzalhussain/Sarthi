@@ -261,7 +261,26 @@ def resolve_target(url: str, search: str = "") -> str:
         if direct and "{q}" in direct:
             return direct.replace("{q}", quote_plus(query))
 
-        # Site ka naam pata nahi — Google pe site ke saath dhoondh lo
+        # Known site hai par search-template nahi (jaise moviezone) —
+        # us site ko SEEDHA kholo. Agent site ke ANDAR apne search bar
+        # se dhoondhega. Google pe bhejna galat hai (site pe pahunchta
+        # hi nahi tha).
+        if direct and "{q}" not in direct:
+            return direct
+
+        # ⚠️ User ne ek KHAAS site di hai (poora URL ya domain), aur
+        # us site ka search-template hume nahi pata. Aise mein dono ko
+        # Google mein DHAKELNA GALAT hai — "moviezone.dev" + "toxic
+        # movie" -> Google search kholta tha, aur agent site pe pahunchta
+        # hi nahi tha. Behtar: SEEDHA WO SITE KHOLO, phir agent uski apni
+        # search/navigation se movie dhoondhega (page_padho + text_pe_tap).
+        if raw.startswith(("http://", "https://")):
+            return _normalize_url(raw)
+        if _looks_like_domain(raw):
+            return _normalize_url(raw)
+
+        # Site ka naam bhi nahi (sirf "youtube" jaisa alias jo template
+        # mein nahi mila) — Google pe site ke saath dhoondh lo
         term = f"{raw} {query}".strip() if raw else query
         return f"https://www.google.com/search?q={quote_plus(term)}"
 
@@ -479,7 +498,68 @@ COMMON_URLS: dict[str, str] = {
     "flipkart search": "https://www.flipkart.com/search?q={q}",
     "amazon search": "https://www.amazon.in/s?k={q}",
     "instagram": "https://www.instagram.com",
+    # MovieZone — user ki apni site
+    "moviezone": "https://moviezone.dev",
 }
+
+
+class DownloadFileTool(Tool):
+    name = "file_download_karo"
+    description = (
+        "Browser se koi file download karo (PDF, image, zip, video, kuch bhi). "
+        "DO TAREEKE:\n"
+        "  1. Direct URL: url='https://site.com/report.pdf'\n"
+        "  2. Page pe button/link: link_text='Download' (jo abhi khuli site "
+        "pe click karna hai)\n"
+        "File data/downloads/ mein save hoti hai. 'iss site pe jao aur X "
+        "download kar' jaise multi-step kaam ka aakhri step ye hota hai — "
+        "pehle website_kholo + page_padho se sahi download button dhoondh."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "Seedha file ka URL (agar pata ho)",
+            },
+            "link_text": {
+                "type": "string",
+                "description": (
+                    "Current page pe jis link/button pe click karke download "
+                    "karna hai uska text, jaise 'Download' ya 'Download PDF'"
+                ),
+            },
+            "save_dir": {
+                "type": "string",
+                "description": "Optional — kahan save karna hai (default data/downloads)",
+            },
+        },
+    }
+
+    async def run(
+        self,
+        ctx: ToolContext,
+        url: str = "",
+        link_text: str = "",
+        save_dir: str = "",
+    ) -> ActionResult:
+        browser = ctx.devices.get("browser")
+        if browser is None:
+            return ActionResult.failure(
+                "Browser device available nahi hai. Playwright install kar: "
+                "pip install playwright && playwright install chromium"
+            )
+
+        download_fn = getattr(browser, "download", None)
+        if download_fn is None:
+            return ActionResult.failure("Ye browser download support nahi karta.")
+
+        if not url and not link_text:
+            return ActionResult.failure(
+                "Download ke liye ya to 'url' de ya 'link_text' (kispe click karun)."
+            )
+
+        return await download_fn(link_text=link_text, url=url, save_dir=save_dir)
 
 
 def web_tools() -> list[Tool]:
@@ -488,4 +568,5 @@ def web_tools() -> list[Tool]:
         WebSearchTool(),
         FetchPageTool(),
         OpenWebsiteTool(),
+        DownloadFileTool(),
     ]

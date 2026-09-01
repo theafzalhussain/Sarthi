@@ -180,13 +180,13 @@ class PromptBuilding(SaarthiTestCase):
     def test_zaroori_rules_prompt_mein_hain(self):
         prompt = build_system_prompt()
         must_have = [
-            "KAAM PURA KARO",          # aadha kaam mat chhodo
-            "EK PROMPT MEIN KAI KAAM",  # multi-task
-            "HAAR MAT MAANO",           # retry
+            "KAAM POORA KAR",           # aadha kaam mat chhodo
+            "MAIN NAHI KAR SAKTA",      # anti-refusal (rule #0)
+            "KAI KAAM EK LINE MEIN",    # multi-task
+            "FAIL HO TO",               # retry / haar mat maan
             "CHALU KAAM MAT TODO",      # tab safety
-            "DOBARA MAT PUCH",          # jo bata diya wo mat pucho
-            "SHELL COMMAND MAT CHALAO",  # xdg-open bug
-            "xdg-open",                  # OS awareness
+            "dobara mat puch",          # jo bata diya wo mat pucho
+            "xdg-open",                  # OS awareness / shell rule
         ]
         for rule in must_have:
             self.assertIn(rule, prompt, f"Rule gayab: {rule}")

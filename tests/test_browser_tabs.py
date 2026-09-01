@@ -40,9 +40,9 @@ class UrlResolution(SaarthiTestCase):
     def test_naam_plus_search_ek_call_mein_ban_jaata_hai(self):
         cases = [
             (("youtube", "tum hi ho"),
-             "https://www.youtube.com/results?search_query=tum+hi+ho"),
+             "https://www.youtube.com/results?search_query=tum+hi+ho&sp=EgIQAQ%3D%3D"),
             (("youtube", "tere bin"),
-             "https://www.youtube.com/results?search_query=tere+bin"),
+             "https://www.youtube.com/results?search_query=tere+bin&sp=EgIQAQ%3D%3D"),
             (("flipkart", "shoes"), "https://www.flipkart.com/search?q=shoes"),
             (("maps", "connaught place"),
              "https://maps.google.com/?q=connaught+place"),
@@ -210,7 +210,8 @@ class BrowserModeRouting(SaarthiTestCase):
         self.assertEqual(opened[0]["new"], 2, "new=2 nahi — current tab replace hoga")
         self.assertIs(opened[0]["autoraise"], False, "autoraise=False nahi — focus chheenega")
         self.assertEqual(
-            opened[0]["url"], "https://www.youtube.com/results?search_query=tere+bin"
+            opened[0]["url"],
+            "https://www.youtube.com/results?search_query=tere+bin&sp=EgIQAQ%3D%3D",
         )
 
     def no_playwright(self):

@@ -35,6 +35,39 @@ import shutil
 import sys
 from typing import Iterable, Optional, Sequence
 
+
+# ----------------------------------------------------------------------
+#  Windows console encoding fix (MUST run before anything prints)
+#
+#  Windows ka purana console cp1252 use karta hai. Rich (aur print) jab
+#  koi Unicode character bhejte hain — box-drawing, '·', '→', Devanagari,
+#  ya galti se ghusa hua koi accented char — to poora process
+#  UnicodeEncodeError se CRASH ho jaata hai. Voice mode mein ye crash
+#  ek background thread/loop mein hota tha, isliye user ko dikhta tha ki
+#  "Enter dabane par kuch nahi hota" — asal mein andar hi andar crash
+#  ho raha tha.
+#
+#  Fix: stdout/stderr ko UTF-8 pe reconfigure kar do. Python 3.7+ pe
+#  yahi sabse saaf tareeka hai. Iske baad Rich har character print kar
+#  sakta hai aur ASCII fallback ki zaroorat hi nahi padti.
+# ----------------------------------------------------------------------
+
+
+def _force_utf8_output() -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001 — reconfigure fail ho to chalte raho
+            pass
+
+
+_force_utf8_output()
+
+
 # ----------------------------------------------------------------------
 #  Optional dependency: rich
 # ----------------------------------------------------------------------

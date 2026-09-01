@@ -87,8 +87,97 @@ _BIG_COMPLEX = (
     "detailed plan", "step by step guide", "analyze", "analysis",
     "summarize this", "poora samjha", "in depth",
 )
+# Document banana — PDF/Excel/PPT/Word (dedicated tools se, par ye
+# BADA/structured kaam hai, chhota model aksar galat structure deta hai)
+_BIG_DOCUMENT = (
+    "pdf bana", "pdf banao", "pdf file", "make a pdf", "create pdf",
+    "excel bana", "excel banao", "spreadsheet", "marksheet", "excel sheet",
+    "ppt bana", "ppt banao", "presentation", "slides bana", "powerpoint",
+    "word document", "word file", "resume bana", "report bana",
+    "document bana", "notes bana", "notes banao",
+)
 
-_BIG_TASK_MARKERS = _BIG_CODING + _BIG_SEARCH + _BIG_COMPLEX
+_BIG_TASK_MARKERS = _BIG_CODING + _BIG_SEARCH + _BIG_COMPLEX + _BIG_DOCUMENT
+
+
+# ----------------------------------------------------------------------
+#  AUTO MODEL ROUTING — task ki size ke hisaab se model chuno
+# ----------------------------------------------------------------------
+#
+# User ki complaint thi: "bar-bar bluesminds use hota hai". Wo chahta
+# hai ki chhota kaam chhote/tez model ko jaaye aur bada kaam bade/smart
+# model ko. Ye function decide karta hai kaun-se providers PEHLE try
+# karne hain (prefer list).
+#
+# Ye order ko REPLACE nahi karta — sirf preference set karta hai. Jo
+# provider available/healthy nahi hoga wo apne aap skip ho jaayega
+# (router.py handle karta hai), to fallback safe rehta hai.
+
+# Chhote/tez providers — ek line ka jawab, device control, quick sawaal
+_FAST_PROVIDERS = ["gemini", "groq", "kiraai", "kiraai_kira", "bluesminds"]
+
+# Bade/smart providers — coding, research, structured documents, essays
+_SMART_PROVIDERS = ["deepseek", "nvidia", "opencode", "muse", "bluesminds"]
+
+# Device-control ke shabd — ye HAMESHA chhota kaam hai (fast model),
+# chahe prompt lamba ho. App kholo/tap/gaana chalao waghairah.
+_DEVICE_MARKERS = (
+    "kholo", "khol de", "open ", "chala do", "chalao", "play ",
+    "tap", "click", "scroll", "swipe", "screenshot", "notification",
+    "volume", "call ", "message bhej", "whatsapp", "youtube",
+)
+
+
+def _classify_task_size(text: str) -> str:
+    """
+    Task chhota hai, bada hai, ya beech ka?
+
+    Returns: "chhota" | "bada" | "medium"
+
+    - chhota: device control, ek line ka sawaal (fast model)
+    - bada:   coding / research / document / essay / bahut lamba prompt
+    - medium: baaki sab (default order chalega)
+    """
+    lowered = (text or "").lower().strip()
+    if not lowered:
+        return "medium"
+
+    words = lowered.split()
+
+    # Device control = chhota (chahe keyword bada lage)
+    if any(marker in lowered for marker in _DEVICE_MARKERS):
+        # ...par agar saath mein coding/document ka kaam bhi hai to bada
+        if any(m in lowered for m in (_BIG_CODING + _BIG_DOCUMENT)):
+            return "bada"
+        return "chhota"
+
+    # Clearly bada kaam
+    if any(marker in lowered for marker in _BIG_TASK_MARKERS):
+        return "bada"
+
+    # Bahut lamba prompt = bada
+    if len(words) >= 40:
+        return "bada"
+
+    # Bahut chhota prompt = chhota (ek-do line ka sawaal/command)
+    if len(words) <= 8:
+        return "chhota"
+
+    return "medium"
+
+
+def _preferred_providers_for(text: str) -> list[str] | None:
+    """
+    Is task ke liye kaun-se providers pehle try karein?
+
+    None = koi khaas preference nahi (default order chalega).
+    """
+    size = _classify_task_size(text)
+    if size == "chhota":
+        return _FAST_PROVIDERS
+    if size == "bada":
+        return _SMART_PROVIDERS
+    return None
 
 
 def _looks_like_big_task(text: str) -> bool:
@@ -324,6 +413,18 @@ class Agent:
         ctx = self._build_context()
         tool_schemas = self.tools.schemas(available_only_for=ctx)
 
+        # --- AUTO MODEL ROUTING ---
+        # Task ki size dekh ke decide karo kaun-se providers pehle try
+        # karne hain. Chhota kaam -> fast model, bada kaam -> smart model.
+        # None = default order. Ye har step pe same rehta hai is turn ke.
+        prefer = _preferred_providers_for(user_input)
+        if self.settings.debug and prefer:
+            self.on_output(
+                "debug",
+                f"task size: {_classify_task_size(user_input)} -> "
+                f"prefer {', '.join(prefer[:3])}...",
+            )
+
         used_tools: list[str] = []
         steps = 0
 
@@ -339,6 +440,7 @@ class Agent:
                 async for chunk in self.brain.think_stream(
                     messages=self.messages,
                     tools=tool_schemas,
+                    prefer=prefer,
                 ):
                     # Real-time text output — user ko turant dikhao
                     if chunk.delta:
