@@ -151,8 +151,8 @@ class Brain:
             self._failures[name] = 0
             self._say(
                 "debug",
-                f"{name} lagatar {count} baar fail hua — "
-                f"{self.COOLDOWN_SECONDS}s ke liye chhod raha hun",
+                f"{name} failed {count} times in a row — "
+                f"skipping it for {self.COOLDOWN_SECONDS}s",
             )
 
     def _note_success(self, name: str) -> None:
@@ -350,12 +350,12 @@ class Brain:
                 )
 
                 # Pehla provider fail hua tha par ye chal gaya — user ko
-                # bata do, warna usko lagta hai kuch gadbad hai
+                # let the user know, otherwise it looks like something broke
                 if index > 0:
                     self._say(
                         "debug",
-                        f"{healthy[0].name} ne kaam nahi kiya, "
-                        f"{provider.name} se kar diya",
+                        f"{healthy[0].name} did not work, "
+                        f"used {provider.name} instead",
                     )
 
                 self._note_success(provider.name)
@@ -373,7 +373,7 @@ class Brain:
                 # Ye permanent hai — session bhar ke liye hata do
                 short = str(exc).splitlines()[0]
                 self.mark_dead(provider.name, short)
-                self._say("error", f"{provider.name} hata diya — {short}")
+                self._say("error", f"{provider.name} removed — {short}")
                 errors.append(f"{provider.name}: {exc}")
                 continue
 
@@ -382,8 +382,8 @@ class Brain:
                 self.mark_cooldown(provider.name)
                 self._say(
                     "debug",
-                    f"{provider.name} ki limit khatam — "
-                    f"{self.COOLDOWN_SECONDS}s ke liye chhod raha hun",
+                    f"{provider.name} rate limit reached — "
+                    f"skipping it for {self.COOLDOWN_SECONDS}s",
                 )
                 errors.append(f"{provider.name}: {exc}")
                 continue
@@ -404,7 +404,7 @@ class Brain:
                 continue
 
         raise AllProvidersFailedError(
-            "Saare providers fail ho gaye bhai:\n  "
+            "All providers failed:\n  "
             + "\n  ".join(errors)
         )
 
@@ -512,8 +512,8 @@ class Brain:
                 if index > 0:
                     self._say(
                         "debug",
-                        f"{healthy[0].name} ne kaam nahi kiya, "
-                        f"{provider.name} se stream kiya",
+                        f"{healthy[0].name} did not work, "
+                        f"streamed from {provider.name} instead",
                     )
                 self._note_success(provider.name)
                 return  # Stream complete
@@ -521,7 +521,7 @@ class Brain:
             except ModelUnavailableError as exc:
                 short = str(exc).splitlines()[0]
                 self.mark_dead(provider.name, short)
-                self._say("error", f"{provider.name} hata diya — {short}")
+                self._say("error", f"{provider.name} removed — {short}")
                 errors.append(f"{provider.name}: {exc}")
                 continue
 
@@ -529,8 +529,8 @@ class Brain:
                 self.mark_cooldown(provider.name)
                 self._say(
                     "debug",
-                    f"{provider.name} ki limit khatam — "
-                    f"{self.COOLDOWN_SECONDS}s ke liye chhod raha hun",
+                    f"{provider.name} rate limit reached — "
+                    f"skipping it for {self.COOLDOWN_SECONDS}s",
                 )
                 errors.append(f"{provider.name}: {exc}")
                 continue
@@ -548,7 +548,7 @@ class Brain:
                 continue
 
         raise AllProvidersFailedError(
-            "Saare providers fail ho gaye bhai:\n  "
+            "All providers failed:\n  "
             + "\n  ".join(errors)
         )
 

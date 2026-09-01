@@ -361,7 +361,7 @@ class Agent:
             hint = parsed.to_hint()
             if hint:
                 self.on_output("debug", hint)
-            self.on_output("debug", f"bhasha: {reply_language}")
+            self.on_output("debug", f"language: {reply_language}")
 
         # Structured hints ke saath LLM ko bhejo.
         # Image attach hui ho to usi user message ke saath bhejo —
@@ -380,11 +380,11 @@ class Agent:
         # lagta hai "kuch hua hi nahi". Saaf batao ki kya karna hai.
         if image_b64 is not None and not self.brain.has_vision:
             msg = (
-                "Image toh mil gayi, par abhi koi aisa model chaalu nahi "
-                "hai jo image DEKH sake.\n"
-                "Screenshot samajhne ke liye Gemini (ya Muse/Gemma) chahiye.\n"
-                "Sabse aasaan: .env mein GEMINI_API_KEY daalo "
-                "(free: https://aistudio.google.com/apikey), phir restart."
+                "I received the image, but no model that can SEE images "
+                "is active right now.\n"
+                "To understand screenshots you need Gemini (or Muse/Gemma).\n"
+                "Easiest: add GEMINI_API_KEY in .env "
+                "(free: https://aistudio.google.com/apikey), then restart."
             )
             self.on_output("error", msg)
             if self.messages and self.messages[-1].has_image:
@@ -408,7 +408,7 @@ class Agent:
             if kiro_result is not None:
                 return kiro_result
             # Kiro fail — normal providers se karo (graceful fallback)
-            self.on_output("debug", "kiro se nahi hua — normal providers try kar raha hun")
+            self.on_output("debug", "kiro did not work — trying normal providers")
 
         ctx = self._build_context()
         tool_schemas = self.tools.schemas(available_only_for=ctx)
@@ -465,13 +465,13 @@ class Agent:
                 log.exception("Brain fail hua")
                 return TurnResult(
                     reply="",
-                    error=f"LLM se jawab nahi mila: {exc}",
+                    error=f"No reply from the LLM: {exc}",
                     steps_used=steps,
                 )
 
             # --- LLM ne final jawab diya (no tools) ---
             if not response.wants_tools:
-                reply = response.text or "(kuch jawab nahi aaya)"
+                reply = response.text or "(no reply came back)"
                 self.messages.append(Message.assistant(reply))
                 await self.memory.log_turn(self.session_id, "assistant", reply)
 
@@ -595,8 +595,8 @@ class Agent:
 
         # --- Steps khatam ho gaye ---
         message = (
-            f"{self.settings.max_steps} steps ho gaye par kaam pura nahi hua. "
-            f"Thoda simple bata de ya chhote hisson mein bol."
+            f"Reached {self.settings.max_steps} steps but the task is not "
+            f"complete. Try describing it more simply, or in smaller parts."
         )
         self.messages.append(Message.assistant(message))
         return TurnResult(
