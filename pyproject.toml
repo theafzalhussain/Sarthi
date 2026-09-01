@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "saarthi"
+version = "2.0.0"
+description = "A Hinglish-first universal AI agent for your devices."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Afzal Hussain" }]
+
+# Core dependencies — enough for text mode. Optional features (voice,
+# browser, desktop control) are listed under [project.optional-dependencies].
+dependencies = [
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.6.0",
+    "rich>=13.7.0",
+    "beautifulsoup4>=4.12.0",
+    "ddgs>=9.0.0",
+]
+
+[project.optional-dependencies]
+# Document generation (PDF/Excel/PPT/Word). These also auto-install on
+# first use, so this group is optional — it just pre-installs them.
+docs = [
+    "fpdf2>=2.7.0",
+    "openpyxl>=3.1.0",
+    "python-pptx>=0.6.23",
+    "python-docx>=1.1.0",
+    "Pillow>=10.0.0",
+]
+# Talk to the agent with your voice.
+voice = [
+    "faster-whisper>=1.0.0",
+    "sounddevice>=0.4.6",
+    "numpy>=1.24.0",
+    "pyttsx3>=2.90",
+]
+# Open and read any website.
+browser = [
+    "playwright>=1.44.0",
+]
+# Control the desktop (screenshots, mouse, keyboard).
+desktop = [
+    "mss>=9.0.0",
+    "Pillow>=10.0.0",
+    "pyautogui>=0.9.54",
+]
+# Everything at once.
+all = [
+    "fpdf2>=2.7.0",
+    "openpyxl>=3.1.0",
+    "python-pptx>=0.6.23",
+    "python-docx>=1.1.0",
+    "Pillow>=10.0.0",
+    "faster-whisper>=1.0.0",
+    "sounddevice>=0.4.6",
+    "numpy>=1.24.0",
+    "pyttsx3>=2.90",
+    "playwright>=1.44.0",
+    "mss>=9.0.0",
+    "pyautogui>=0.9.54",
+]
+
+# THIS is what makes `saarthi` work as a global command from any folder,
+# on any device — just like `kiro`. After `pip install`, the shell gets a
+# `saarthi` command that calls cli:run.
+[project.scripts]
+saarthi = "cli:run"
+
+[tool.setuptools]
+# cli.py is a top-level module; the agent lives in the saarthi/ package.
+py-modules = ["cli"]
+
+[tool.setuptools.packages.find]
+include = ["saarthi*"]

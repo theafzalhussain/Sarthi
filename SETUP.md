@@ -92,6 +92,62 @@ the same language.
 
 ---
 
+## Run it as ONE command from anywhere (like `kiro`)
+
+Instead of `python cli.py`, you can install SAARTHI as a real command so
+you can type just `saarthi` from **any folder** on the machine.
+
+From inside the Sarthi folder (with your venv active), run once:
+
+```bash
+pip install -e .
+```
+
+Now, from any directory:
+
+```bash
+saarthi
+```
+
+- `-e` (editable) means your code changes take effect immediately — no
+  reinstall needed after `git pull`.
+- The `saarthi` command is created in your Python `Scripts`/`bin` folder,
+  which is on your PATH, so it works globally like `kiro`.
+
+### Where does it read your keys from?
+
+The command reads the `.env` file **from the folder you run it in**, or
+from your system environment variables. Two easy ways to make keys work
+everywhere:
+
+1. **Simplest:** set your keys as system/user environment variables once
+   (e.g. `NVIDIA_API_KEY`, `GEMINI_API_KEY`). Then `saarthi` works in any
+   folder with no `.env` needed.
+   - Windows (PowerShell, permanent for your user):
+     ```powershell
+     setx NVIDIA_API_KEY "your-key-here"
+     setx GEMINI_API_KEY "your-key-here"
+     ```
+     (open a new terminal after `setx`)
+   - macOS/Linux (add to `~/.bashrc` or `~/.zshrc`):
+     ```bash
+     export NVIDIA_API_KEY="your-key-here"
+     export GEMINI_API_KEY="your-key-here"
+     ```
+
+2. Or keep a `.env` file in whichever project folder you run `saarthi` in.
+
+### Optional extras with the command install
+
+```bash
+pip install -e ".[docs]"      # PDF/Excel/PPT/Word libraries
+pip install -e ".[browser]"   # website control (then: playwright install chromium)
+pip install -e ".[voice]"     # talk to it
+pip install -e ".[all]"       # everything
+```
+
+---
+
 ## Optional features (install only if you want them)
 
 These are commented out in `requirements.txt`. Uncomment the lines you
@@ -120,32 +176,43 @@ git clone https://github.com/theafzalhussain/Sarthi.git
 cd Sarthi
 python -m venv .venv
 # activate it (see step 2 above)
-pip install -r requirements.txt
-# create .env with your keys (see step 4 above)
-python cli.py
+pip install -e .            # installs deps AND the `saarthi` command
+# set your keys (env vars, or a .env file)
+saarthi                     # run from anywhere
 ```
 
-The only thing that does NOT travel through Git is your `.env` (keys) and
-the `data/` folder (memory, generated files). That is by design — secrets
-should never be in Git.
+The only thing that does NOT travel through Git is your keys (`.env` or
+env vars) and the `data/` folder (memory, generated files). That is by
+design — secrets should never be in Git.
 
 ---
 
 ## Mobile (Android / iOS)
 
-SAARTHI's brain is a Python program — a phone cannot run `python cli.py`
-directly. Two realistic options:
+SAARTHI's brain is a Python program — a phone cannot run it the normal
+way. Two realistic options:
 
-1. **Run SAARTHI on a laptop/desktop and control it from your phone.**
+1. **Easiest: run SAARTHI on a laptop/desktop, control it from your phone.**
    The `android/` folder in this repo is a companion phone app that talks
    to the running agent over your local WiFi. Your laptop is the "brain",
    the phone is a remote.
 
-2. **Run it in a Linux environment on the phone (advanced).**
-   On Android you can install [Termux](https://termux.dev), then follow
-   the Linux steps above (`pkg install python git`, clone, etc.). This
-   works for text mode but is fiddly — the laptop approach is much easier.
+2. **Android — run it directly with Termux (works, a bit fiddly):**
+   [Termux](https://termux.dev) gives you a Linux shell on Android. Then
+   it is the same as the Linux steps:
+   ```bash
+   pkg update && pkg install python git
+   git clone https://github.com/theafzalhussain/Sarthi.git
+   cd Sarthi
+   pip install -e .
+   # set your keys, then:
+   saarthi
+   ```
+   Text mode works well this way. Voice/desktop/browser control are hard
+   on a phone — for those, use option 1.
+
+iOS does not allow this kind of Python app, so on iPhone use option 1
+(control a laptop agent from the phone).
 
 For most people: keep the agent on a laptop/desktop, and if you want phone
-control, set up the `android/` app (see its own instructions).
-```
+control, set up the `android/` app.

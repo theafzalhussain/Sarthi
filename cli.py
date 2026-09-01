@@ -911,8 +911,18 @@ async def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """
+    Synchronous entry point for the `saarthi` command.
+
+    This is what `pyproject.toml`'s [project.scripts] calls, so `saarthi`
+    works as a global command from any folder on any device (like `kiro`).
+    """
     try:
         sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
         sys.exit(0)
+
+
+if __name__ == "__main__":
+    run()
