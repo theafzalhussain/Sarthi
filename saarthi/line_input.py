@@ -37,6 +37,32 @@ def supported() -> bool:
     return _HAVE_MSVCRT
 
 
+def poll_for_esc(stop_flag) -> bool:
+    """
+    Blocking: jab tak Esc na dabe ya `stop_flag.is_set()` na ho, sunte
+    raho. Esc dabe to True, warna (stop hone par) False.
+
+    Ye AGENT ke chalte waqt (turn processing) use hota hai — user beech
+    mein Esc daba ke cancel kar sake. Thread mein chalao (blocking hai).
+
+    Non-Windows par msvcrt nahi — turant False (wahan Ctrl+C se cancel).
+    """
+    if not _HAVE_MSVCRT:
+        return False
+    import time as _time
+    while not stop_flag.is_set():
+        try:
+            if msvcrt.kbhit():
+                ch = msvcrt.getwch()
+                if ch == "\x1b":  # Esc
+                    return True
+                # koi aur key — ignore (turn ke beech typing bekaar)
+        except Exception:  # noqa: BLE001
+            return False
+        _time.sleep(0.03)
+    return False
+
+
 # Control keys
 _CTRL_V = "\x16"
 _CTRL_C = "\x03"

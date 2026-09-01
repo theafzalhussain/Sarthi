@@ -825,13 +825,41 @@ async def main() -> int:
 
         _spinner.start()
         started = time.monotonic()
+
+        # Esc-to-cancel: run_turn ko task mein chalao, background mein
+        # Esc suno. Esc dabe to turn cancel ho jaaye.
+        turn_task = asyncio.ensure_future(
+            agent.run_turn(user_input, image_b64=attached_image)
+        )
+        esc_stop = threading.Event()
+        esc_task = None
+
+        async def _esc_watcher() -> None:
+            pressed = await asyncio.to_thread(line_input.poll_for_esc, esc_stop)
+            if pressed and not turn_task.done():
+                turn_task.cancel()
+
+        def _esc_stop_set() -> None:
+            esc_stop.set()
+            if esc_task is not None:
+                esc_task.cancel()
+
+        if line_input.supported():
+            esc_task = asyncio.ensure_future(_esc_watcher())
+
         try:
-            result = await agent.run_turn(user_input, image_b64=attached_image)
-        except KeyboardInterrupt:
+            result = await turn_task
+        except (asyncio.CancelledError, KeyboardInterrupt):
             _spinner.stop()
             ui.blank()
-            ui.error("Interrupted.")
+            ui.error("Cancellation")
             ui.blank()
+            agent.reset_conversation()
+            try:
+                await agent.start_session()
+            except Exception:  # noqa: BLE001
+                pass
+            _esc_stop_set()
             state["pending_image"] = None
             continue
         except Exception as exc:  # noqa: BLE001 — CLI kabhi crash na ho
@@ -843,10 +871,12 @@ async def main() -> int:
                 import traceback
 
                 traceback.print_exc()
+            _esc_stop_set()
             state["pending_image"] = None
             continue
         finally:
-            # Image ek hi baar bhejni thi — bhejne ke baad clear
+            # Esc-watcher band karo; image ek hi baar bhejni thi
+            _esc_stop_set()
             if attached_image:
                 state["pending_image"] = None
 
