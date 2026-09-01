@@ -70,20 +70,20 @@ def _html_to_text(html: str, max_chars: int = 6000) -> str:
 class WebSearchTool(Tool):
     name = "internet_pe_dhoondho"
     description = (
-        "Internet pe search karo. Tab use kar jab koi current information "
-        "chahiye — news, prices, latest info, ya kuch bhi jo tujhe nahi pata. "
-        "Free hai, koi API key nahi chahiye."
+        "Search the internet. Use this when you need current information "
+        "— news, prices, latest info, or anything you do not know. "
+        "It is free and needs no API key."
     )
     parameters = {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Kya search karna hai",
+                "description": "What to search for",
             },
             "count": {
                 "type": "integer",
-                "description": "Kitne results (default 5, max 10)",
+                "description": "How many results (default 5, max 10)",
             },
         },
         "required": ["query"],
@@ -146,16 +146,16 @@ class WebSearchTool(Tool):
 class FetchPageTool(Tool):
     name = "website_padho"
     description = (
-        "Kisi website ka content padho. URL do, main us page ka text nikaal "
-        "ke dunga. Search ke baad detail chahiye to ye use kar."
+        "Read a website's content. Give a URL and it returns the text of "
+        "that page. Use this when you need detail after a search."
     )
     parameters = {
         "type": "object",
         "properties": {
-            "url": {"type": "string", "description": "Page ka URL"},
+            "url": {"type": "string", "description": "The page URL"},
             "max_chars": {
                 "type": "integer",
-                "description": "Max kitna text (default 6000)",
+                "description": "Max characters of text (default 6000)",
             },
         },
         "required": ["url"],
@@ -331,16 +331,16 @@ class OpenWebsiteTool(Tool):
 
     name = "website_kholo"
     description = (
-        "Browser mein website kholo (laptop pe). YE BAHUT KAAM KA HAI: "
-        "phone connected na ho to bahut kaam browser se ho jaate hain — "
-        "YouTube pe gaana, WhatsApp Web pe message, IRCTC pe train, "
-        "Instagram, Gmail, Maps, shopping. Phone na ho to app_kholo ki "
-        "jagah YE use kar.\n"
-        "EK HI CALL MEIN kaam ho jaata hai — do step mat lo:\n"
-        "  url='youtube', search='tum hi ho'   (search karna ho)\n"
-        "  url='youtube'                        (bas site kholni ho)\n"
-        "  url='https://web.whatsapp.com'       (poora URL bhi chalega)\n"
-        "Ye NAYE TAB mein khulta hai — user ka chalu kaam nahi todta."
+        "Open a website in the browser (on the laptop). VERY USEFUL: when "
+        "the phone is not connected, many tasks can be done from the "
+        "browser — a song on YouTube, a message on WhatsApp Web, a train "
+        "on IRCTC, Instagram, Gmail, Maps, shopping. When there is no "
+        "phone, use THIS instead of app_kholo.\n"
+        "It is done in ONE call — don't take two steps:\n"
+        "  url='youtube', search='tum hi ho'   (to search)\n"
+        "  url='youtube'                        (just open the site)\n"
+        "  url='https://web.whatsapp.com'       (a full URL also works)\n"
+        "It opens in a NEW TAB — it does not disrupt the user's current work."
     )
     parameters = {
         "type": "object",
@@ -348,15 +348,15 @@ class OpenWebsiteTool(Tool):
             "url": {
                 "type": "string",
                 "description": (
-                    "Site ka naam ('youtube', 'irctc') ya poora URL "
-                    "('https://web.whatsapp.com'). Dono chalte hain."
+                    "A site name ('youtube', 'irctc') or a full URL "
+                    "('https://web.whatsapp.com'). Both work."
                 ),
             },
             "search": {
                 "type": "string",
                 "description": (
-                    "Us site pe kya dhoondhna hai, jaise 'tum hi ho'. "
-                    "Isse ek hi step mein search result khul jaata hai."
+                    "What to search on that site, e.g. 'tum hi ho'. "
+                    "This opens the search result in a single step."
                 ),
             },
         },
@@ -506,32 +506,32 @@ COMMON_URLS: dict[str, str] = {
 class DownloadFileTool(Tool):
     name = "file_download_karo"
     description = (
-        "Browser se koi file download karo (PDF, image, zip, video, kuch bhi). "
-        "DO TAREEKE:\n"
+        "Download a file via the browser (PDF, image, zip, video, anything). "
+        "TWO WAYS:\n"
         "  1. Direct URL: url='https://site.com/report.pdf'\n"
-        "  2. Page pe button/link: link_text='Download' (jo abhi khuli site "
-        "pe click karna hai)\n"
-        "File data/downloads/ mein save hoti hai. 'iss site pe jao aur X "
-        "download kar' jaise multi-step kaam ka aakhri step ye hota hai — "
-        "pehle website_kholo + page_padho se sahi download button dhoondh."
+        "  2. A button/link on the page: link_text='Download' (to click on "
+        "the currently open site)\n"
+        "The file is saved under data/downloads/. For a multi-step task "
+        "like 'go to this site and download X', this is the last step — "
+        "first find the right download button with website_kholo + page_padho."
     )
     parameters = {
         "type": "object",
         "properties": {
             "url": {
                 "type": "string",
-                "description": "Seedha file ka URL (agar pata ho)",
+                "description": "The direct file URL (if you know it)",
             },
             "link_text": {
                 "type": "string",
                 "description": (
-                    "Current page pe jis link/button pe click karke download "
-                    "karna hai uska text, jaise 'Download' ya 'Download PDF'"
+                    "The text of the link/button on the current page to "
+                    "click to download, e.g. 'Download' or 'Download PDF'"
                 ),
             },
             "save_dir": {
                 "type": "string",
-                "description": "Optional — kahan save karna hai (default data/downloads)",
+                "description": "Optional — where to save (default data/downloads)",
             },
         },
     }

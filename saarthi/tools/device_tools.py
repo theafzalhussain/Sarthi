@@ -129,14 +129,14 @@ DEVICE_PARAM = {
         "type": "string",
         "enum": ["browser", "android", "phone", "desktop"],
         "description": (
-            "Kis device pe kaam karna hai:\n"
-            "- 'browser' -> jo website tune website_kholo se kholi (YouTube, "
-            "Gmail, WhatsApp Web, koi bhi site). WEBSITE KHOLNE KE BAAD PADHNE/"
-            "TAP KARNE KE LIYE HAMESHA 'browser' USE KAR — 'desktop' NAHI.\n"
-            "- 'android' / 'phone' -> connected phone.\n"
-            "- 'desktop' -> laptop ki poori screen (desktop apps ke liye, "
-            "browser page ke liye NAHI).\n"
-            "Na do to default use hoga."
+            "Which device to act on:\n"
+            "- 'browser' -> the website you opened with website_kholo (YouTube, "
+            "Gmail, WhatsApp Web, any site). AFTER OPENING A WEBSITE, ALWAYS USE "
+            "'browser' TO READ/TAP — NOT 'desktop'.\n"
+            "- 'android' / 'phone' -> the connected phone.\n"
+            "- 'desktop' -> the laptop's full screen (for desktop apps, NOT for "
+            "a browser page).\n"
+            "Defaults are used if not provided."
         ),
     }
 }
@@ -150,10 +150,10 @@ DEVICE_PARAM = {
 class ReadScreenTool(Tool):
     name = "screen_padho"
     description = (
-        "Screen pe kya hai wo padho — saara text, buttons, input fields "
-        "aur unke coordinates. SCREENSHOT SE PEHLE YE USE KAR: ye fast hai, "
-        "sasta hai, aur exact text deta hai. Kisi bhi UI pe kaam karne se "
-        "pehle pehla step yahi hona chahiye."
+        "Read what is on the screen — all text, buttons, input fields "
+        "and their coordinates. USE THIS BEFORE A SCREENSHOT: it is fast, "
+        "cheap, and gives exact text. It should be the first step before "
+        "interacting with any UI."
     )
     parameters = {"type": "object", "properties": dict(DEVICE_PARAM)}
     requires_capability = Capability.UI_TREE
@@ -191,10 +191,10 @@ class ReadScreenTool(Tool):
 class ScreenshotTool(Tool):
     name = "screenshot_lo"
     description = (
-        "Screen ki photo lo taaki tu dekh sake. Tab use kar jab "
-        "screen_padho se kaam na bane — jaise image dekhni ho, ya layout "
-        "samajhna ho. Dhyan: ye zyada tokens kha jaata hai, isliye "
-        "pehle screen_padho try kar."
+        "Take a photo of the screen so you can see it. Use this when "
+        "screen_padho is not enough — for example when you need to see an "
+        "image or understand the layout. Note: this uses a lot of tokens, "
+        "so try screen_padho first."
     )
     parameters = {"type": "object", "properties": dict(DEVICE_PARAM)}
     requires_capability = Capability.SCREENSHOT
@@ -235,9 +235,9 @@ class ScreenshotTool(Tool):
 class TapTextTool(Tool):
     name = "text_pe_tap"
     description = (
-        "Screen pe likhe text/button pe tap karo. YE PREFERRED TAREEKA HAI "
-        "— coordinates se behtar hai, kyunki UI badal jaaye ya screen size "
-        "alag ho to bhi kaam karta hai. Example: text='Recharge'"
+        "Tap on text/a button shown on screen. THIS IS THE PREFERRED WAY "
+        "— better than coordinates, because it still works when the UI "
+        "changes or the screen size differs. Example: text='Recharge'"
     )
     parameters = {
         "type": "object",
@@ -264,9 +264,9 @@ class TapTextTool(Tool):
 class TapTool(Tool):
     name = "coordinate_pe_tap"
     description = (
-        "Exact x,y coordinate pe tap karo. YE LAST OPTION HAI — pehle "
-        "text_pe_tap try kar. Coordinates sirf tab use kar jab screen_padho "
-        "se element mila ho aur uske coordinates pata hon."
+        "Tap at an exact x,y coordinate. THIS IS THE LAST RESORT — try "
+        "text_pe_tap first. Only use coordinates when you found an element "
+        "via screen_padho and you know its coordinates."
     )
     parameters = {
         "type": "object",
@@ -291,14 +291,14 @@ class TapTool(Tool):
 class TypeTextTool(Tool):
     name = "text_likho"
     description = (
-        "Jo field select hai usme text type karo. Pehle us field pe tap "
-        "karna zaroori hai. Password/OTP/PIN type karne se main mana kar "
-        "dunga — wo user khud daalega."
+        "Type text into the currently selected field. You must tap that "
+        "field first. Typing a password/OTP/PIN is refused — the user "
+        "enters those themselves."
     )
     parameters = {
         "type": "object",
         "properties": {
-            "text": {"type": "string", "description": "Jo likhna hai"},
+            "text": {"type": "string", "description": "The text to type"},
             **DEVICE_PARAM,
         },
         "required": ["text"],
@@ -329,16 +329,16 @@ class TypeTextTool(Tool):
 class PressKeyTool(Tool):
     name = "key_dabao"
     description = (
-        "Hardware ya special key dabao. Android: back/home/enter/recent/"
-        "volume_up/volume_down/power. Desktop: enter/tab/esc ya combo "
-        "jaise 'ctrl+c'. Browser mein bhi kaam karta hai (space=play/pause)."
+        "Press a hardware or special key. Android: back/home/enter/recent/"
+        "volume_up/volume_down/power. Desktop: enter/tab/esc or a combo "
+        "like 'ctrl+c'. Also works in the browser (space=play/pause)."
     )
     parameters = {
         "type": "object",
         "properties": {
             "key": {
                 "type": "string",
-                "description": "Key ka naam, jaise 'back', 'home', 'enter', 'space'",
+                "description": "The key name, e.g. 'back', 'home', 'enter', 'space'",
             },
             **DEVICE_PARAM,
         },
@@ -358,20 +358,20 @@ class PressKeyTool(Tool):
 class ScrollTool(Tool):
     name = "scroll_karo"
     description = (
-        "Screen scroll karo. Direction: down/up/left/right (ya neeche/upar/"
-        "baayen/daayen). Screen size ke hisaab se automatically calculate "
-        "hota hai, isliye har phone pe kaam karta hai."
+        "Scroll the screen. Direction: down/up/left/right. The distance is "
+        "calculated automatically from the screen size, so it works on any "
+        "phone."
     )
     parameters = {
         "type": "object",
         "properties": {
             "direction": {
                 "type": "string",
-                "description": "down, up, left, ya right",
+                "description": "down, up, left, or right",
             },
             "amount": {
                 "type": "number",
-                "description": "Kitna scroll (0.1 se 0.8, default 0.5)",
+                "description": "How much to scroll (0.1 to 0.8, default 0.5)",
             },
             **DEVICE_PARAM,
         },
@@ -406,16 +406,16 @@ class ScrollTool(Tool):
 class LaunchAppTool(Tool):
     name = "app_kholo"
     description = (
-        "App kholo. Aam naam chalega — 'paytm', 'whatsapp', 'irctc', "
-        "'swiggy' — package name khud resolve ho jaayega. Indian apps ka "
-        "pura database built-in hai."
+        "Open an app. Common names work — 'paytm', 'whatsapp', 'irctc', "
+        "'swiggy' — the package name is resolved automatically. A full "
+        "database of Indian apps is built in."
     )
     parameters = {
         "type": "object",
         "properties": {
             "app": {
                 "type": "string",
-                "description": "App ka naam, jaise 'paytm' ya 'whatsapp'",
+                "description": "The app name, e.g. 'paytm' or 'whatsapp'",
             },
             **DEVICE_PARAM,
         },
@@ -467,11 +467,11 @@ class LaunchAppTool(Tool):
 
 class CloseAppTool(Tool):
     name = "app_band_karo"
-    description = "Chalta hua app band karo (force stop)."
+    description = "Close a running app (force stop)."
     parameters = {
         "type": "object",
         "properties": {
-            "app": {"type": "string", "description": "App ka naam"},
+            "app": {"type": "string", "description": "The app name"},
             **DEVICE_PARAM,
         },
         "required": ["app"],
@@ -490,8 +490,8 @@ class CloseAppTool(Tool):
 class ListAppsTool(Tool):
     name = "apps_ki_list"
     description = (
-        "Device pe kaunse apps installed hain wo batao. Tab use kar jab "
-        "app khulne mein problem aaye — check kar sakte hain ki app hai ya nahi."
+        "List the apps installed on the device. Use this when an app fails "
+        "to open — you can check whether it is installed or not."
     )
     parameters = {"type": "object", "properties": dict(DEVICE_PARAM)}
     requires_capability = Capability.LIST_APPS
@@ -511,8 +511,8 @@ class ListAppsTool(Tool):
 class DeviceInfoTool(Tool):
     name = "device_ki_jaankari"
     description = (
-        "Device ki info batao — model, Android version, battery, screen "
-        "size. Ya sab devices ki status dekho."
+        "Report device info — model, Android version, battery, screen "
+        "size. Or view the status of all devices."
     )
     parameters = {
         "type": "object",
@@ -520,7 +520,7 @@ class DeviceInfoTool(Tool):
             "device": {
                 "type": "string",
                 "description": (
-                    "Kis device ki info. 'all' do to sab devices ki status."
+                    "Which device's info. Pass 'all' for the status of every device."
                 ),
             }
         },
@@ -540,9 +540,9 @@ class DeviceInfoTool(Tool):
 class ShellTool(Tool):
     name = "command_chalao"
     description = (
-        "Shell/terminal command chalao. Desktop pe files dhoondhne, "
-        "system info, ya programs chalane ke liye. Khatarnak commands "
-        "automatically block ho jaate hain."
+        "Run a shell/terminal command. For finding files on the desktop, "
+        "system info, or running programs. Dangerous commands are blocked "
+        "automatically."
     )
     parameters = {
         "type": "object",
@@ -552,7 +552,7 @@ class ShellTool(Tool):
         },
         "required": ["command"],
     }
-    risky = True  # Har shell command pe confirmation
+    risky = True  # confirmation on every shell command
     requires_capability = Capability.SHELL
 
     async def run(
@@ -574,18 +574,18 @@ class ShellTool(Tool):
 class ConnectPhoneWifiTool(Tool):
     name = "phone_wifi_se_jodo"
     description = (
-        "Phone ko WiFi se connect karo (USB cable ke bina). "
-        "PEHLE EK BAAR USB cable lagana zaroori hai — uske baad cable "
-        "nikaal sakte hain. Phone aur laptop same WiFi pe hone chahiye. "
-        "Phone ka IP chahiye (phone ke Settings > About > Status mein milta hai), "
-        "ya khali chhod de to khud dhoondhne ki koshish karunga."
+        "Connect the phone over WiFi (without a USB cable). "
+        "A USB cable is required ONCE first — after that you can unplug it. "
+        "The phone and laptop must be on the same WiFi. The phone's IP is "
+        "needed (found in the phone's Settings > About > Status), or leave "
+        "it empty and it will try to detect it."
     )
     parameters = {
         "type": "object",
         "properties": {
             "ip": {
                 "type": "string",
-                "description": "Phone ka IP, jaise '192.168.1.5'. Na pata ho to khali chhod",
+                "description": "The phone's IP, e.g. '192.168.1.5'. Leave empty if unknown",
             },
             "port": {
                 "type": "integer",
@@ -593,7 +593,7 @@ class ConnectPhoneWifiTool(Tool):
             },
         },
     }
-    risky = True  # Network connection bana raha hai
+    risky = True  # opens a network connection
 
     async def run(
         self,
@@ -666,7 +666,7 @@ class ConnectPhoneWifiTool(Tool):
 
 class NotificationsTool(Tool):
     name = "notifications_padho"
-    description = "Phone ke notifications padho — kya aaya hai wo batao."
+    description = "Read the phone's notifications — report what has arrived."
     parameters = {"type": "object", "properties": dict(DEVICE_PARAM)}
     requires_capability = Capability.NOTIFICATIONS
 
@@ -697,18 +697,18 @@ class NotificationsTool(Tool):
 class FillFieldTool(Tool):
     name = "field_bharo"
     description = (
-        "Browser mein koi input field bharo — label, placeholder ya naam se "
-        "dhoondh ke. Form bharne ke liye ye BEST hai (tap + type se behtar). "
-        "Example: field='email', value='abc@gmail.com'"
+        "Fill an input field in the browser — found by label, placeholder "
+        "or name. This is the BEST way to fill a form (better than tap + "
+        "type). Example: field='email', value='abc@gmail.com'"
     )
     parameters = {
         "type": "object",
         "properties": {
             "field": {
                 "type": "string",
-                "description": "Field ka label/placeholder, jaise 'Search' ya 'email'",
+                "description": "The field label/placeholder, e.g. 'Search' or 'email'",
             },
-            "value": {"type": "string", "description": "Kya bharna hai"},
+            "value": {"type": "string", "description": "What to fill in"},
             **DEVICE_PARAM,
         },
         "required": ["field", "value"],
@@ -742,16 +742,17 @@ class FillFieldTool(Tool):
 class ReadPageTool(Tool):
     name = "page_padho"
     description = (
-        "Browser mein khule page ka pura text padho. Website ka content "
-        "samajhne ke liye — news, article, search results, prices. "
-        "screen_padho buttons dikhata hai, ye pura CONTENT deta hai."
+        "Read the full text of the page open in the browser. For "
+        "understanding a website's content — news, articles, search "
+        "results, prices. screen_padho shows buttons; this gives the full "
+        "CONTENT."
     )
     parameters = {
         "type": "object",
         "properties": {
             "max_chars": {
                 "type": "integer",
-                "description": "Max kitna text (default 6000)",
+                "description": "Max characters of text (default 6000)",
             },
             **DEVICE_PARAM,
         },

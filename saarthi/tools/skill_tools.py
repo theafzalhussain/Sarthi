@@ -26,17 +26,17 @@ def _get_runner(ctx: ToolContext):
 class StartLearningTool(Tool):
     name = "seekhna_shuru_karo"
     description = (
-        "Recording ON karo — 'Dikha Do Mode'. Jab user bole 'dekh main "
-        "dikha raha hun', 'ye yaad kar le', 'sikha raha hun' — to ye use "
-        "kar. Iske baad jo bhi kaam ke steps honge wo record honge, aur "
-        "baad mein skill ban jaayegi."
+        "Turn ON recording — 'Show Me Mode'. Use this when the user says "
+        "things like 'dekh main dikha raha hun', 'ye yaad kar le', "
+        "'sikha raha hun' (watch, remember this, I'm teaching you). After "
+        "this, every meaningful step is recorded and later saved as a skill."
     )
     parameters = {
         "type": "object",
         "properties": {
             "device": {
                 "type": "string",
-                "description": "Kis device pe seekh raha hai: android ya desktop",
+                "description": "Which device is being taught on: android or desktop",
             }
         },
     }
@@ -59,19 +59,20 @@ class StartLearningTool(Tool):
 class SaveSkillTool(Tool):
     name = "skill_yaad_kar_le"
     description = (
-        "Recording band karo aur skill save karo. User jab kaam dikha chuke "
-        "aur naam bataye — jaise 'isko bijli ka bill bol' — to ye use kar."
+        "Stop recording and save the skill. Use this once the user has "
+        "demonstrated a task and given it a name — e.g. 'isko bijli ka "
+        "bill bol' (call this the electricity bill)."
     )
     parameters = {
         "type": "object",
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Skill ka naam, jaise 'bijli ka bill'",
+                "description": "The skill name, e.g. 'bijli ka bill'",
             },
             "description": {
                 "type": "string",
-                "description": "Ye skill kya karti hai (chhota description)",
+                "description": "A short description of what this skill does",
             },
         },
         "required": ["name"],
@@ -116,8 +117,8 @@ class SaveSkillTool(Tool):
 class RecordingStatusTool(Tool):
     name = "recording_status"
     description = (
-        "Recording ka status aur abhi tak record hue steps dikhao. "
-        "Save karne se pehle check karne ke liye."
+        "Show the recording status and the steps recorded so far. "
+        "For checking before you save."
     )
     parameters = {"type": "object", "properties": {}}
 
@@ -130,7 +131,7 @@ class RecordingStatusTool(Tool):
 
 class CancelLearningTool(Tool):
     name = "seekhna_cancel_karo"
-    description = "Recording cancel karo, kuch save na karo."
+    description = "Cancel recording without saving anything."
     parameters = {"type": "object", "properties": {}}
 
     async def run(self, ctx: ToolContext) -> ActionResult:
@@ -144,8 +145,8 @@ class CancelLearningTool(Tool):
 class ListSkillsTool(Tool):
     name = "skills_ki_list"
     description = (
-        "Kaunse kaam seekhe hue hain wo batao. User pooche 'tu kya kar "
-        "sakta hai' to ye use kar."
+        "List the tasks that have been learned. Use this when the user "
+        "asks 'what can you do'."
     )
     parameters = {"type": "object", "properties": {}}
 
@@ -168,25 +169,25 @@ class ListSkillsTool(Tool):
 class RunSkillTool(Tool):
     name = "skill_chalao"
     description = (
-        "Seekhi hui skill chalao. Jab user koi jaana-pehchana kaam bole "
-        "(jaise 'bijli ka bill bhar de') to pehle ye try kar — zero se "
-        "karne se ye tez aur reliable hai. Agar UI badal gaya to main "
-        "khud theek kar lunga."
+        "Run a learned skill. When the user asks for a familiar task "
+        "(e.g. 'bijli ka bill bhar de' — pay the electricity bill), try "
+        "this first — it is faster and more reliable than doing it from "
+        "scratch. If the UI has changed, it self-heals."
     )
     parameters = {
         "type": "object",
         "properties": {
-            "name": {"type": "string", "description": "Skill ka naam"},
+            "name": {"type": "string", "description": "The skill name"},
             "values": {
                 "type": "object",
                 "description": (
-                    "Skill ko chahiye values, jaise {\"amount\": 2500}"
+                    "Values the skill needs, e.g. {\"amount\": 2500}"
                 ),
             },
         },
         "required": ["name"],
     }
-    risky = True  # Poora sequence chal raha hai — user ko pata hona chahiye
+    risky = True  # a whole sequence runs — the user should know
 
     async def run(
         self,
@@ -221,13 +222,13 @@ class RunSkillTool(Tool):
 class ExplainSkillTool(Tool):
     name = "skill_dikhao"
     description = (
-        "Kisi skill ke steps detail mein dikhao. User pooche 'ye kaise "
-        "karta hai' to ye use kar."
+        "Show a skill's steps in detail. Use this when the user asks "
+        "'how does this work'."
     )
     parameters = {
         "type": "object",
         "properties": {
-            "name": {"type": "string", "description": "Skill ka naam"}
+            "name": {"type": "string", "description": "The skill name"}
         },
         "required": ["name"],
     }
@@ -245,11 +246,11 @@ class ExplainSkillTool(Tool):
 
 class DeleteSkillTool(Tool):
     name = "skill_hata_do"
-    description = "Seekhi hui skill delete karo."
+    description = "Delete a learned skill."
     parameters = {
         "type": "object",
         "properties": {
-            "name": {"type": "string", "description": "Skill ka naam"}
+            "name": {"type": "string", "description": "The skill name"}
         },
         "required": ["name"],
     }
@@ -280,20 +281,21 @@ class PhoneSeSkillTool(Tool):
 
     name = "phone_se_seekho"
     description = (
-        "Phone pe user ke manually kiye kaam se skill banao. Phone app "
-        "mein 'Dikha Do' mode ON hona chahiye. User jab phone pe kaam "
-        "dikha chuka ho aur bole 'phone se seekh le' — to ye use kar."
+        "Build a skill from actions the user performed manually on the "
+        "phone. 'Show Me' mode must be ON in the phone app. Use this when "
+        "the user has demonstrated a task on the phone and says "
+        "'phone se seekh le' (learn it from the phone)."
     )
     parameters = {
         "type": "object",
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Skill ka naam, jaise 'bijli ka bill'",
+                "description": "The skill name, e.g. 'bijli ka bill'",
             },
             "description": {
                 "type": "string",
-                "description": "Ye skill kya karti hai (chhota description)",
+                "description": "A short description of what this skill does",
             },
         },
         "required": ["name"],

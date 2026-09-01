@@ -29,8 +29,8 @@ HINDI_DAYS = {
 class TimeTool(Tool):
     name = "time_bata"
     description = (
-        "Abhi ka time aur date batao (India time). Jab bhi date/time ka "
-        "kaam ho ye use kar — tujhe khud current time nahi pata hota."
+        "Report the current time and date (India time). Use this whenever "
+        "date/time is involved — you do not know the current time on your own."
     )
     parameters = {"type": "object", "properties": {}}
 
@@ -63,7 +63,7 @@ class TimeTool(Tool):
 class CalculateTool(Tool):
     name = "calculate_karo"
     description = (
-        "Maths calculation karo. Simple arithmetic: +, -, *, /, **, %, "
+        "Do a maths calculation. Simple arithmetic: +, -, *, /, **, %, "
         "brackets. Example: '2500 * 12 + 300'"
     )
     parameters = {
@@ -71,7 +71,7 @@ class CalculateTool(Tool):
         "properties": {
             "expression": {
                 "type": "string",
-                "description": "Maths expression, jaise '2500*12'",
+                "description": "A maths expression, e.g. '2500*12'",
             }
         },
         "required": ["expression"],
@@ -114,16 +114,16 @@ class CalculateTool(Tool):
 class AskUserTool(Tool):
     name = "user_se_pucho"
     description = (
-        "User se sawaal pucho jab kuch clear na ho. Guess karne se behtar "
-        "hai puch lena. Example: kisko message bhejna hai, kaunsa option "
-        "chunna hai."
+        "Ask the user a question when something is unclear. Asking is "
+        "better than guessing. Examples: who to message, which option to "
+        "choose."
     )
     parameters = {
         "type": "object",
         "properties": {
             "question": {
                 "type": "string",
-                "description": "Kya puchna hai (Hinglish mein)",
+                "description": "What to ask (in the user's language)",
             }
         },
         "required": ["question"],

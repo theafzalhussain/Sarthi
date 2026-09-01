@@ -48,22 +48,22 @@ def _get_store(ctx: ToolContext) -> CredentialStore:
 class SaveCredentialTool(Tool):
     name = "login_save_karo"
     description = (
-        "Kisi website ka login (username/email + password) save karo taaki "
-        "baad mein agent khud login kar sake. Jab user bole 'ye login yaad "
-        "rakh', 'github ka password save kar', 'mera email-password store "
-        "kar' — to ye use kar. Password safe (obfuscated) store hota hai. "
-        "OTP/PIN kabhi save mat karna — wo user khud daalega."
+        "Save a website login (username/email + password) so the agent "
+        "can sign in later on its own. Use this when the user says things "
+        "like 'ye login yaad rakh', 'github ka password save kar', 'mera "
+        "email-password store kar' (remember/save this login). The password "
+        "is stored obfuscated. Never save an OTP/PIN — the user enters those."
     )
     parameters = {
         "type": "object",
         "properties": {
             "site": {
                 "type": "string",
-                "description": "Website ka naam ya domain, jaise 'github.com' ya 'gmail'",
+                "description": "The website name or domain, e.g. 'github.com' or 'gmail'",
             },
             "username": {
                 "type": "string",
-                "description": "Email ya username",
+                "description": "Email or username",
             },
             "password": {
                 "type": "string",
@@ -71,12 +71,12 @@ class SaveCredentialTool(Tool):
             },
             "login_url": {
                 "type": "string",
-                "description": "Optional — login page ka poora URL (agar pata ho)",
+                "description": "Optional — the full login page URL (if known)",
             },
         },
         "required": ["site", "username", "password"],
     }
-    risky = True  # Credential store karna — user ko pata hona chahiye
+    risky = True  # storing a credential — the user should know
 
     async def run(
         self,
@@ -102,8 +102,8 @@ class SaveCredentialTool(Tool):
 class ListCredentialsTool(Tool):
     name = "logins_dikhao"
     description = (
-        "Kaunse websites ke login save hain wo dikhao (password chhupa ke). "
-        "User pooche 'kaunse logins yaad hain' to ye use kar."
+        "Show which websites have a saved login (password hidden). "
+        "Use this when the user asks 'which logins are saved'."
     )
     parameters = {"type": "object", "properties": {}}
 
@@ -121,11 +121,11 @@ class ListCredentialsTool(Tool):
 
 class DeleteCredentialTool(Tool):
     name = "login_hata_do"
-    description = "Kisi website ka saved login delete karo."
+    description = "Delete a website's saved login."
     parameters = {
         "type": "object",
         "properties": {
-            "site": {"type": "string", "description": "Website ka naam ya domain"}
+            "site": {"type": "string", "description": "The website name or domain"}
         },
         "required": ["site"],
     }
@@ -141,42 +141,42 @@ class DeleteCredentialTool(Tool):
 class LoginTool(Tool):
     name = "login_karo"
     description = (
-        "Kisi website pe login karo — user ki taraf se. Browser mein site "
-        "kholo (ya pehle se khuli ho) aur email/username + password bhar ke "
-        "sign-in dabao.\n"
-        "DO TAREEKE se credentials milte hain:\n"
-        "  1. Site ka login pehle 'login_save_karo' se save hai -> sirf "
-        "site do, main store se utha lunga: site='github'\n"
-        "  2. User ne abhi username/password bataye -> seedha do: "
+        "Log in to a website — on the user's behalf. Open the site in the "
+        "browser (or use one already open) and fill in email/username + "
+        "password, then click sign-in.\n"
+        "Credentials come from TWO sources:\n"
+        "  1. The site's login was saved earlier via 'login_save_karo' -> "
+        "just give the site and it is pulled from the store: site='github'\n"
+        "  2. The user just gave username/password -> pass them directly: "
         "site='github', username='me@x.com', password='...'\n"
-        "Login ke BAAD screenshot_lo/page_padho (device='browser') se "
-        "confirm kar ki login hua. OTP/2FA maange to user ko daalne de — "
-        "wo tu type nahi karega."
+        "AFTER logging in, use screenshot_lo/page_padho (device='browser') "
+        "to confirm it worked. If it asks for OTP/2FA, let the user enter "
+        "it — you do not type that."
     )
     parameters = {
         "type": "object",
         "properties": {
             "site": {
                 "type": "string",
-                "description": "Website ka naam/domain, jaise 'github' ya 'gmail'",
+                "description": "The website name/domain, e.g. 'github' or 'gmail'",
             },
             "username": {
                 "type": "string",
                 "description": (
-                    "Email/username. Na do to saved credential se uthega."
+                    "Email/username. If omitted, taken from the saved credential."
                 ),
             },
             "password": {
                 "type": "string",
                 "description": (
-                    "Password. Na do to saved credential se uthega."
+                    "Password. If omitted, taken from the saved credential."
                 ),
             },
             "login_url": {
                 "type": "string",
                 "description": (
-                    "Optional — login page ka URL. Na do to site ka naam/"
-                    "saved URL use hoga."
+                    "Optional — the login page URL. If omitted, the site "
+                    "name/saved URL is used."
                 ),
             },
         },

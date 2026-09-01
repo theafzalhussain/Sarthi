@@ -65,10 +65,10 @@ def _safe_filename(prompt: str, ext: str) -> str:
 class ImageGenerateTool(Tool):
     name = "image_banao"
     description = (
-        "AI se image generate karo. Text prompt do, high-quality image milegi. "
-        "Koi bhi cheez bana sakta hai — art, photos, logos, illustrations. "
-        "Models: flux (best quality), gptimage (creative), seedream (photorealistic). "
-        "Free hai, koi limit nahi."
+        "Generate an image with AI. Give a text prompt and get a "
+        "high-quality image. Can create anything — art, photos, logos, "
+        "illustrations. Models: flux (best quality), gptimage (creative), "
+        "seedream (photorealistic). Free, no limit."
     )
     parameters = {
         "type": "object",
@@ -76,15 +76,15 @@ class ImageGenerateTool(Tool):
             "prompt": {
                 "type": "string",
                 "description": (
-                    "Kya banana hai — detail mein batao. "
-                    "English mein likho for best results. "
+                    "What to create — describe it in detail. "
+                    "Write in English for best results. "
                     "Example: 'a majestic tiger in a misty forest, photorealistic, 8k'"
                 ),
             },
             "model": {
                 "type": "string",
                 "description": (
-                    "Kaunsa model use karna hai. Options: "
+                    "Which model to use. Options: "
                     "flux (default, best quality), "
                     "gptimage (creative, artistic), "
                     "seedream (photorealistic), "
@@ -93,16 +93,16 @@ class ImageGenerateTool(Tool):
             },
             "width": {
                 "type": "integer",
-                "description": "Image ki width pixels mein. Default 1024.",
+                "description": "Image width in pixels. Default 1024.",
             },
             "height": {
                 "type": "integer",
-                "description": "Image ki height pixels mein. Default 1024.",
+                "description": "Image height in pixels. Default 1024.",
             },
             "style": {
                 "type": "string",
                 "description": (
-                    "Style hint — prompt ke saath add hota hai. "
+                    "Style hint — added to the prompt. "
                     "Examples: photorealistic, anime, watercolor, "
                     "cinematic, minimalist, pixel art"
                 ),
@@ -201,10 +201,10 @@ class ImageGenerateTool(Tool):
 class VideoGenerateTool(Tool):
     name = "video_banao"
     description = (
-        "AI se video generate karo. Text prompt do, MP4 video milegi. "
-        "Short clips bana sakta hai — 4 to 10 seconds. "
-        "Models: veo (cinematic, best), wan-fast (quick), seedance-2.0 (motion). "
-        "Video generation mein 1-3 minute lag sakte hain."
+        "Generate a video with AI. Give a text prompt and get an MP4 "
+        "video. Can create short clips — 4 to 10 seconds. Models: veo "
+        "(cinematic, best), wan-fast (quick), seedance-2.0 (motion). "
+        "Video generation can take 1-3 minutes."
     )
     parameters = {
         "type": "object",
@@ -212,15 +212,15 @@ class VideoGenerateTool(Tool):
             "prompt": {
                 "type": "string",
                 "description": (
-                    "Video mein kya hona chahiye — detail mein batao. "
-                    "English mein likho. "
+                    "What should be in the video — describe it in detail. "
+                    "Write in English. "
                     "Example: 'a drone flying over snowy mountains at sunset, cinematic'"
                 ),
             },
             "model": {
                 "type": "string",
                 "description": (
-                    "Kaunsa model use karna hai. Options: "
+                    "Which model to use. Options: "
                     "veo (default, cinematic quality), "
                     "wan-fast (quick generation), "
                     "seedance-2.0 (best motion/dance), "
@@ -229,7 +229,7 @@ class VideoGenerateTool(Tool):
             },
             "duration": {
                 "type": "integer",
-                "description": "Video ki length seconds mein. Default 4, max 10.",
+                "description": "Video length in seconds. Default 4, max 10.",
             },
             "style": {
                 "type": "string",

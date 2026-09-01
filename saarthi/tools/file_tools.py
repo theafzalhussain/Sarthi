@@ -104,13 +104,13 @@ class WriteFileTool(Tool):
 
     name = "file_banao"
     description = (
-        "File banao ya usme likho. Multi-line content bilkul theek hai — "
-        "koi escaping nahi karni. "
-        "YE USE KAR jab bhi koi file banani ho: Python script, CSV, text "
-        "note, JSON, HTML. Shell command (echo/powershell) se file likhne "
-        "ki koshish MAT kar — nested quotes se wo fail hota hai. "
-        "Script bana ke chalana ho to: pehle file_banao, phir "
-        "command_chalao se 'python <path>'."
+        "Create a file or write to one. Multi-line content is totally "
+        "fine — no escaping needed. "
+        "USE THIS whenever you need to create a file: a Python script, CSV, "
+        "text note, JSON, HTML. Do NOT try to write files with a shell "
+        "command (echo/powershell) — that fails on nested quotes. To build "
+        "and run a script: file_banao first, then command_chalao with "
+        "'python <path>'."
     )
     parameters = {
         "type": "object",
@@ -118,22 +118,22 @@ class WriteFileTool(Tool):
             "path": {
                 "type": "string",
                 "description": (
-                    "File ka path, jaise '~/Desktop/marks.csv'. "
-                    "Folder na ho to ban jaayega."
+                    "The file path, e.g. '~/Desktop/marks.csv'. "
+                    "Missing folders are created."
                 ),
             },
             "content": {
                 "type": "string",
-                "description": "File mein kya likhna hai (multi-line theek hai)",
+                "description": "What to write to the file (multi-line is fine)",
             },
             "append": {
                 "type": "boolean",
-                "description": "True = end mein jodo, False = overwrite (default)",
+                "description": "True = append to the end, False = overwrite (default)",
             },
         },
         "required": ["path", "content"],
     }
-    risky = True  # File ban rahi hai — user ko pata hona chahiye
+    risky = True  # a file is being created — the user should know
 
     async def run(
         self, ctx: ToolContext, path: str, content: str, append: bool = False
@@ -189,16 +189,17 @@ class ReadFileTool(Tool):
 
     name = "file_padho"
     description = (
-        "Kisi file ka content padho. Tab use kar jab file banane ke baad "
-        "verify karna ho, ya user ki file dekhni ho (CSV, text, code, log)."
+        "Read a file's content. Use this when you need to verify a file "
+        "after creating it, or to look at the user's file (CSV, text, "
+        "code, log)."
     )
     parameters = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "File ka path"},
+            "path": {"type": "string", "description": "The file path"},
             "max_chars": {
                 "type": "integer",
-                "description": "Max kitna text (default 4000)",
+                "description": "Max characters to read (default 4000)",
             },
         },
         "required": ["path"],
@@ -255,19 +256,19 @@ class ListFilesTool(Tool):
 
     name = "files_dikhao"
     description = (
-        "Folder ka content dikhao. Tab use kar jab dhoondhna ho ki file "
-        "kahan hai, ya banayi hui file sach mein bani ya nahi."
+        "Show the contents of a folder. Use this to find where a file is, "
+        "or to check whether a file you created actually exists."
     )
     parameters = {
         "type": "object",
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Folder ka path (default: home folder)",
+                "description": "The folder path (default: home folder)",
             },
             "pattern": {
                 "type": "string",
-                "description": "Filter, jaise '*.csv' ya '*marks*'",
+                "description": "A filter, e.g. '*.csv' or '*marks*'",
             },
         },
         "required": [],
@@ -382,17 +383,17 @@ class RunPythonTool(Tool):
 
     name = "python_chalao"
     description = (
-        "Python code chalao. YE TERA SABSE TAAKATWAR TOOL HAI — jab bhi "
-        "kuch complex karna ho to shell ke jugaad ke bajaay YE use kar.\n"
-        "Ismein kya kar sakta hai:\n"
-        "  Excel/CSV banana aur padhna (openpyxl, csv, pandas)\n"
+        "Run Python code. THIS IS YOUR MOST POWERFUL TOOL — whenever you "
+        "need to do something complex, use THIS instead of shell hacks.\n"
+        "What you can do with it:\n"
+        "  Create and read Excel/CSV (openpyxl, csv, pandas)\n"
         "  JSON/data processing, complex maths\n"
-        "  Bahut si files rename/organize karna\n"
+        "  Rename/organize many files\n"
         "  Text processing, regex\n"
-        "Multi-line code SEEDHA likh — koi escaping nahi, koi quote ki "
-        "tension nahi. Result dekhne ke liye print() use kar.\n"
-        "Library na ho to pehle command_chalao se "
-        "'pip install <naam>' chala le."
+        "Write multi-line code DIRECTLY — no escaping, no quote hassles. "
+        "Use print() to see the result.\n"
+        "If a library is missing, first run 'pip install <name>' via "
+        "command_chalao."
     )
     parameters = {
         "type": "object",
@@ -400,18 +401,17 @@ class RunPythonTool(Tool):
             "code": {
                 "type": "string",
                 "description": (
-                    "Python code (multi-line theek hai). Output ke liye "
-                    "print() use kar."
+                    "Python code (multi-line is fine). Use print() for output."
                 ),
             },
             "timeout": {
                 "type": "integer",
-                "description": "Max kitne second (default 60, max 300)",
+                "description": "Max seconds (default 60, max 300)",
             },
         },
         "required": ["code"],
     }
-    risky = True  # Code chal raha hai — user ko pata hona chahiye
+    risky = True  # code is running — the user should know
 
     async def run(
         self, ctx: ToolContext, code: str, timeout: int = 60
@@ -508,13 +508,12 @@ class OpenFileTool(Tool):
 
     name = "file_kholo"
     description = (
-        "File ya folder USER KE LIYE khol do — default app mein "
-        "(Excel .xlsx ke liye, Notepad .txt ke liye, File Explorer folder "
-        "ke liye). "
-        "Ye tab use kar jab user bole 'file do mujhe' / 'dikha do' / "
-        "'khol do', ya jab tu koi file bana chuka ho aur user ko dena ho. "
-        "File banane ke baad ye karna acchi baat hai — user ko dhoondhna "
-        "nahi padta."
+        "Open a file or folder FOR THE USER — in the default app "
+        "(Excel for .xlsx, Notepad for .txt, File Explorer for a folder). "
+        "Use this when the user says 'give me the file' / 'show it' / "
+        "'open it', or after you have created a file and want to hand it "
+        "over. Doing this after creating a file is good practice — the "
+        "user does not have to hunt for it."
     )
     parameters = {
         "type": "object",

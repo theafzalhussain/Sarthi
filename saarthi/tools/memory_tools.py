@@ -14,20 +14,21 @@ from .base import Tool, ToolContext
 class RememberTool(Tool):
     name = "yaad_rakho"
     description = (
-        "Koi baat permanently yaad rakho. Jab user kuch bataye jo aage "
-        "kaam aayega — jaise contact number, address, preference, ya koi "
-        "setting — to turant ye use kar. Bina puche yaad rakhna accha hai."
+        "Remember something permanently. When the user tells you something "
+        "that will be useful later — a contact number, address, preference, "
+        "or a setting — use this immediately. Remembering without being "
+        "asked is good."
     )
     parameters = {
         "type": "object",
         "properties": {
             "key": {
                 "type": "string",
-                "description": "Chhota naam, jaise 'mummy ka number'",
+                "description": "A short name, e.g. 'mom's number'",
             },
             "value": {
                 "type": "string",
-                "description": "Jo yaad rakhna hai",
+                "description": "What to remember",
             },
             "category": {
                 "type": "string",
@@ -66,15 +67,15 @@ class RememberTool(Tool):
 class RecallTool(Tool):
     name = "yaad_karo"
     description = (
-        "Yaad rakhi hui baat nikaalo. Kuch bhi puchne se pehle ye check kar "
-        "— ho sakta hai user ne pehle bata rakha ho."
+        "Retrieve something remembered. Check this before asking the user "
+        "anything — they may have told you already."
     )
     parameters = {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Kya dhoondhna hai, jaise 'mummy'",
+                "description": "What to look for, e.g. 'mom'",
             }
         },
         "required": ["query"],
@@ -103,15 +104,15 @@ class RecallTool(Tool):
 
 class ForgetTool(Tool):
     name = "bhool_jao"
-    description = "Yaad rakhi hui baat delete karo."
+    description = "Delete something that was remembered."
     parameters = {
         "type": "object",
         "properties": {
-            "key": {"type": "string", "description": "Kaunsi baat bhoolni hai"}
+            "key": {"type": "string", "description": "Which item to forget"}
         },
         "required": ["key"],
     }
-    risky = True  # Data delete ho raha hai — confirmation lo
+    risky = True  # data is being deleted — take confirmation
 
     async def run(self, ctx: ToolContext, key: str) -> ActionResult:
         if ctx.memory is None:
@@ -126,14 +127,14 @@ class ForgetTool(Tool):
 class SearchHistoryTool(Tool):
     name = "purani_baat_dhoondho"
     description = (
-        "Purani conversations mein dhoondo. Jab user bole 'wahi kar do jo "
-        "pichli baar kiya tha' ya 'phir se wahi' — to ye use kar ke pata "
-        "kar pichli baar kya hua tha."
+        "Search past conversations. When the user says 'do what you did "
+        "last time' or 'same as before', use this to find out what "
+        "happened previously."
     )
     parameters = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Kya dhoondhna hai"}
+            "query": {"type": "string", "description": "What to search for"}
         },
         "required": ["query"],
     }
