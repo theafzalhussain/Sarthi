@@ -2,6 +2,14 @@
 
 **Ek personal AI agent jo Hinglish samajhta hai aur tere devices chalata hai.**
 
+> About
+>
+> SAARTHI is a lightweight personal AI agent focused on Hinglish (Hindi-English) interactions and safe device control. It's implemented primarily in Python (≈95.6%) with a small Kotlin component (≈4.4%). Designed for low-resource hardware (old laptops, minimal RAM) and privacy-first local workflows.
+>
+> Languages: Python (95.6%), Kotlin (4.4%)
+>
+> License: MIT (check LICENSE file in the repo)
+
 सारथी = rath chalane wala. Jo raasta jaanta hai aur khud chalata hai.
 
 ```
@@ -50,8 +58,7 @@ SAARTHI ke 4 pillars isi gap pe bane hain:
 
 Sab free hain. **Credit card nahi maangte.**
 
-**Salah: NVIDIA + Groq dono le le.** Dono ki limit alag hai — ek khatam ho
-to doosra chalta rahega. Total **8 providers** ka fallback ban jaata hai.
+**Salah: NVIDIA + Groq dono le le.** Dono ki limit alag hai — ek khatam ho to doosra chalta rahega. Total **8 providers** ka fallback ban jaata hai.
 
 > ⚠️ Dhyan: ChatGPT Plus / Claude Pro subscription se API **nahi** chalti — wo alag cheez hai. Isliye upar wale free tiers use kar.
 
@@ -184,7 +191,7 @@ Normal automation (Tasker, macros) yahin toot jaate hain. SAARTHI screen padh ke
 python voice_cli.py
 ```
 
-```
+``` 
 [Enter dabao aur bolo]
   >>> sun raha hun...
   fix  suna: "pay time cholo" -> samjha: "paytm kholo"
@@ -241,18 +248,18 @@ Risky kaam pe bolke confirmation maangta hai:
 - **468 tests** — `python run_tests.py`
 
 ### 🚧 Abhi nahi (roadmap pe hai)
+
 - **Standalone Android app** — abhi laptop ki zarurat hai (Phase 4)
 - **User ke taps sunna** — abhi agent ke apne actions record hote hain. Tere manual taps record karne ke liye Accessibility Service chahiye (Phase 4)
 - **Barge-in** — agent bol raha ho tab tokna (echo cancellation chahiye)
 - **Vector memory** — semantic recall (ChromaDB, Phase 5)
 
 ### ❌ Kabhi nahi hoga (aur kyun)
-| Cheez | Wajah |
-|---|---|
-| **iPhone ka full control** | Apple ka sandbox allow nahi karta. Technically impossible without jailbreak |
-| **OTP/PIN/password type karna** | Jaan-boojh ke block kiya hai. Agent galti kare to account chala jaayega. Tu khud daalega |
-| **Final payment button dabana** | Agent screen tak le jaayega, confirm tu karega. Banking apps automation detect karke block bhi karte hain |
-| **Kisi aur ka device** | Sirf apne devices. Bina permission illegal hai |
+
+- **iPhone ka full control** | Apple ka sandbox allow nahi karta. Technically impossible without jailbreak
+- **OTP/PIN/password type karna** | Jaan-boojh ke block kiya hai. Agent galti kare to account chala jaayega. Tu khud daalega
+- **Final payment button dabana** | Agent screen tak le jaayega, confirm tu karega. Banking apps automation detect karke block bhi karte hain
+- **Kisi aur ka device** | Sirf apne devices. Bina permission illegal hai
 
 ---
 
@@ -289,67 +296,3 @@ run_tests.py        468 tests — koi install nahi chahiye
 hardware_check.py   Mic/speaker/phone diagnostic
 tests/              Test suite (8 bugs ka regression guard)
 ```
-
----
-
-## Testing
-
-```bash
-python run_tests.py              # sab — 468 tests, 0.1 second
-python run_tests.py known_bugs   # sirf bug regression tests
-```
-
-**Koi extra install nahi chahiye** — stdlib `unittest` use hota hai
-(₹0 budget, purana laptop). pytest ho to `pytest tests/` bhi chalega.
-
-Tests **hardware ke bina** chalte hain — mic, phone, browser, internet
-kuch nahi chahiye.
-
-**Har fix hue bug ka apna named test hai:**
-```
-test_bug1_paytm_youtube_match_nahi_karta
-test_bug3_semantic_healing_coordinates_se_pehle_hai
-test_bug7_user_ka_navigate_kiya_tab_detect_hota_hai
-```
-Fail hone pe seedha samajh aata hai ki kya toota.
-
-**Hardware test** (ye sirf tu kar sakta hai):
-```bash
-python hardware_check.py                # sab kuch
-
-# Voice mein problem ho to — GUESS mat kar, MEASURE kar:
-python hardware_check.py --mic-scan     # kaunsa mic sach mein sunta hai
-python hardware_check.py --stt-tune     # galat suna? best Whisper setting
-python hardware_check.py --mic-live     # "kuch sunai nahi diya" aata ho to
-python hardware_check.py --mic-stream   # mic se sirf 0 aa raha ho to
-```
-Detail: **[HARDWARE_TEST.md](docs/HARDWARE_TEST.md)**
-
-**Docs:**
-**[UPDATE.md](docs/UPDATE.md) — 👈 `git pull` kaam nahi kar raha? YE padho** ·
-**[HANDOFF.md](docs/HANDOFF.md) — naya developer/AI ho to YE pehle padho (pura context)** ·
-[ARCHITECTURE.md](docs/ARCHITECTURE.md) — code kaise organize hai ·
-[HARDWARE_TEST.md](docs/HARDWARE_TEST.md) — mic/speaker/phone test ·
-**[PHONE_SETUP.md](docs/PHONE_SETUP.md) — 📱 phone pe kaise chalayein (ADB ya app)** ·
-[VOICE.md](docs/VOICE.md) — voice setup + Hinglish tuning ·
-[DEPLOYMENT.md](docs/DEPLOYMENT.md) — server, bijli, hardware ·
-[ROADMAP.md](docs/ROADMAP.md) — aage kya
-
----
-
-## Requirements
-
-- **Python 3.9+** (purane laptop pe bhi chalega)
-- Internet (LLM API ke liye)
-- ADB (optional — sirf phone control ke liye)
-- 4GB RAM kaafi hai
-
----
-
-## Ek baat
-
-Ye project ek student ne ₹0 budget pe banaya hai — mehnat aur dimag se.
-
-Agar tu bhi apna agent bana raha hai: **choti cheez se shuru kar, aur unique wedge pakad.** "Sab kuch karne wala agent" duniya ka sabse crowded idea hai. "Hinglish samajhne wala, sasta phone pe chalne wala, dikha ke sikhaya jaane wala agent" — ye tera hai.
-
-**Sirf apne devices pe use kar.**
