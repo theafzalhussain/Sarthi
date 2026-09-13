@@ -66,6 +66,16 @@ def create_app(agent: Agent | None = None) -> FastAPI:
     #  PWA Manifest & Service Worker
     # ------------------------------------------------------------------
 
+    @app.get("/api/download-shortcut")
+    async def download_shortcut() -> Response:
+        """Provide a 1-click Windows Internet Shortcut (.url) file."""
+        shortcut_content = "[InternetShortcut]\nURL=http://localhost:8000\nIconIndex=0\n"
+        return Response(
+            content=shortcut_content,
+            media_type="application/internet-shortcut",
+            headers={"Content-Disposition": "attachment; filename=JARVIS.url"},
+        )
+
     @app.get("/manifest.json")
     async def manifest() -> JSONResponse:
         return JSONResponse(
@@ -775,8 +785,10 @@ def get_jarvis_html(local_ip: str) -> str:
         </div>
         <div class="hud-pills">
             <div class="pill"><div class="pill-dot"></div> <span id="brainBadge">AI BRAIN</span></div>
+            <a href="http://localhost:8000" id="secureSwitch" class="pill" style="text-decoration: none; color: var(--cyan); display: none;" title="Click to remove 'Not secure'">🔒 SECURE MODE</a>
             <div class="pill" id="ipBadge" title="Open on Mobile / Tablet">🌐 {local_ip}:8000</div>
             <button class="pill" id="muteToggle" onclick="toggleAudio()" style="cursor: pointer;">🔊 VOICE</button>
+            <button class="pill" id="installAppBtn" onclick="triggerInstall()" style="cursor: pointer; background: linear-gradient(90deg, #00e5ff 0%, #00b0ff 100%); color: #000000; font-weight: 800; border: none; box-shadow: 0 0 15px rgba(0,229,255,0.4);">📲 INSTALL APP</button>
         </div>
     </header>
 
@@ -848,12 +860,80 @@ def get_jarvis_html(local_ip: str) -> str:
 
     <audio id="ttsAudio" style="display: none;"></audio>
 
+    <!-- High Tech Install & Secure Modal -->
+    <div id="installModal" style="display: none; position: fixed; inset: 0; background: rgba(5,8,17,0.85); backdrop-filter: blur(12px); z-index: 1000; align-items: center; justify-content: center; padding: 20px;">
+        <div style="background: rgba(10,18,36,0.95); border: 2px solid var(--cyan); border-radius: 16px; width: 100%; max-width: 500px; padding: 24px; box-shadow: 0 0 40px var(--cyan-glow); position: relative;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 16px;">
+                <div style="font-family: var(--font-display); font-size: 1.1rem; color: #ffffff; font-weight: 800; letter-spacing: 2px;">📲 INSTALL J.A.R.V.I.S. APP</div>
+                <button onclick="document.getElementById('installModal').style.display='none'" style="background: none; border: none; color: var(--cyan); font-size: 1.5rem; cursor: pointer;">✕</button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 16px;">
+                <div style="padding: 12px 16px; background: rgba(0, 229, 255, 0.05); border: 1px solid var(--border); border-radius: 8px;">
+                    <div style="font-weight: 700; color: var(--cyan); font-size: 0.95rem; margin-bottom: 4px;">1. Chrome Desktop App (1-Click)</div>
+                    <div style="font-size: 0.85rem; color: var(--text); line-height: 1.4;">
+                        Chrome ke URL bar ke andar right side mein <b>[🖥️ Install]</b> icon par click karein ya niche <b>Download Shortcut</b> karein.
+                    </div>
+                </div>
+
+                <div style="padding: 12px 16px; background: rgba(0, 230, 118, 0.05); border: 1px solid rgba(0, 230, 118, 0.3); border-radius: 8px;">
+                    <div style="font-weight: 700; color: var(--green); font-size: 0.95rem; margin-bottom: 4px;">2. 'Not Secure' Hatane Ke Liye:</div>
+                    <div style="font-size: 0.85rem; color: var(--text); line-height: 1.4; margin-bottom: 8px;">
+                        Local IP (192.168.x.x) par Chrome 'Not secure' likhta hai. <b>localhost</b> par open karne se 'Not secure' turant gayab ho jayega!
+                    </div>
+                    <a href="http://localhost:8000" style="display: inline-block; padding: 6px 14px; background: var(--green); color: #000000; font-weight: 700; border-radius: 6px; text-decoration: none; font-size: 0.85rem;">🔒 Switch to http://localhost:8000</a>
+                </div>
+
+                <div style="padding: 12px 16px; background: rgba(255, 145, 0, 0.05); border: 1px solid rgba(255, 145, 0, 0.3); border-radius: 8px;">
+                    <div style="font-weight: 700; color: var(--orange); font-size: 0.95rem; margin-bottom: 4px;">3. Direct Desktop Shortcut (.URL File):</div>
+                    <div style="font-size: 0.85rem; color: var(--text); line-height: 1.4; margin-bottom: 8px;">
+                        Ek click mein Windows Desktop shortcut download karein aur direct click se JARVIS open karein:
+                    </div>
+                    <a href="/api/download-shortcut" download="JARVIS.url" style="display: inline-block; padding: 6px 14px; background: var(--orange); color: #000000; font-weight: 700; border-radius: 6px; text-decoration: none; font-size: 0.85rem;">💾 Download Desktop App Shortcut</a>
+                </div>
+            </div>
+
+            <div style="margin-top: 18px; text-align: right;">
+                <button onclick="document.getElementById('installModal').style.display='none'" style="padding: 8px 18px; background: rgba(0,229,255,0.1); border: 1px solid var(--cyan); color: var(--cyan); border-radius: 8px; font-weight: 600; cursor: pointer;">Close</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let voiceMuted = false;
         let isListening = false;
         let recognition = null;
 
         // Register Service Worker for PWA
+        let deferredPrompt = null;
+
+        // Check if currently on IP address and show 'Secure Mode' switch
+        if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {{
+            const secBtn = document.getElementById('secureSwitch');
+            if (secBtn) secBtn.style.display = 'inline-flex';
+        }}
+
+        window.addEventListener('beforeinstallprompt', (e) => {{
+            e.preventDefault();
+            deferredPrompt = e;
+            const btn = document.getElementById('installAppBtn');
+            if (btn) btn.style.display = 'inline-flex';
+        }});
+
+        function triggerInstall() {{
+            if (deferredPrompt) {{
+                deferredPrompt.prompt();
+                deferredPrompt.userChoice.then((choice) => {{
+                    if (choice.outcome === 'accepted') {{
+                        document.getElementById('installAppBtn').textContent = '✅ INSTALLED';
+                    }}
+                    deferredPrompt = null;
+                }});
+            }} else {{
+                document.getElementById('installModal').style.display = 'flex';
+            }}
+        }}
+
         if ('serviceWorker' in navigator) {{
             navigator.serviceWorker.register('/service-worker.js').catch(e => console.log('SW reg fail', e));
         }}
