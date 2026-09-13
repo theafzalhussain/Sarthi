@@ -938,25 +938,32 @@ def get_jarvis_html(local_ip: str) -> str:
             navigator.serviceWorker.register('/service-worker.js').catch(e => console.log('SW reg fail', e));
         }}
 
-        // Initialize Web Speech API if supported
+        let isProcessing = false;
+        let speechAccumulator = '';
+
+        // Initialize Web Speech API with debounce and full sentence wait
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {{
             const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRec();
             recognition.continuous = false;
-            recognition.interimResults = false;
-            recognition.lang = 'en-US';
+            recognition.interimResults = true;
+            recognition.lang = 'en-IN'; // Highly tuned for Hinglish & Indian English
 
             recognition.onstart = () => {{
                 isListening = true;
+                speechAccumulator = '';
                 document.getElementById('micBtn').classList.add('listening');
                 document.getElementById('reactorCore').classList.add('active');
                 document.getElementById('reactorLabel').textContent = 'LISTENING...';
             }};
 
             recognition.onresult = (event) => {{
-                const transcript = event.results[0][0].transcript;
-                document.getElementById('promptInput').value = transcript;
-                submitPrompt();
+                let fullText = '';
+                for (let i = 0; i < event.results.length; ++i) {{
+                    fullText += event.results[i][0].transcript;
+                }}
+                speechAccumulator = fullText.trim();
+                document.getElementById('promptInput').value = speechAccumulator;
             }};
 
             recognition.onerror = (event) => {{
@@ -966,6 +973,10 @@ def get_jarvis_html(local_ip: str) -> str:
 
             recognition.onend = () => {{
                 stopListening();
+                // Submit only once after full sentence is completed and silence is reached
+                if (speechAccumulator && !isProcessing) {{
+                    submitPrompt();
+                }}
             }};
         }}
 
@@ -980,6 +991,7 @@ def get_jarvis_html(local_ip: str) -> str:
         function startVoiceRecognition() {{
             if (recognition) {{
                 try {{
+                    speechAccumulator = '';
                     recognition.start();
                 }} catch (e) {{
                     console.log('Recognition restart:', e);
@@ -993,7 +1005,9 @@ def get_jarvis_html(local_ip: str) -> str:
             isListening = false;
             document.getElementById('micBtn').classList.remove('listening');
             document.getElementById('reactorCore').classList.remove('active');
-            document.getElementById('reactorLabel').textContent = 'SYSTEM READY';
+            if (!isProcessing) {{
+                document.getElementById('reactorLabel').textContent = 'SYSTEM READY';
+            }}
         }}
 
         function toggleAudio() {{
@@ -1009,12 +1023,18 @@ def get_jarvis_html(local_ip: str) -> str:
         }}
 
         async function submitPrompt() {{
+            if (isProcessing) return;
+
             const input = document.getElementById('promptInput');
             const text = input.value.trim();
             if (!text) return;
 
-            appendMessage('user', text);
+            isProcessing = true;
+            speechAccumulator = '';
             input.value = '';
+            input.disabled = true;
+
+            appendMessage('user', text);
 
             const core = document.getElementById('reactorCore');
             const label = document.getElementById('reactorLabel');
@@ -1038,13 +1058,18 @@ def get_jarvis_html(local_ip: str) -> str:
                         window.speechSynthesis.speak(utter);
                     }}
                 }} else if (data.error) {{
-                    appendMessage('jarvis', '⚠️ Error: ' + data.error);
+                    appendMessage('jarvis', '⚠️ ' + data.error);
                 }}
-            }} catch (err) {{
-                appendMessage('jarvis', '⚠️ Connection error with JARVIS Core.');
+            }} catch (e) {{
+                appendMessage('jarvis', 'Connection error: ' + e.message);
             }} finally {{
-                core.classList.remove('active');
-                label.textContent = 'SYSTEM READY';
+                isProcessing = false;
+                input.disabled = false;
+                input.focus();
+                if (!isListening) {{
+                    core.classList.remove('active');
+                    label.textContent = 'SYSTEM READY';
+                }}
             }}
         }}
 
