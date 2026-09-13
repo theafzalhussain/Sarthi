@@ -45,6 +45,9 @@ _NVIDIA_NIM = "https://integrate.api.nvidia.com/v1"
 BASE_URLS: dict[str, str] = {
     "groq": "https://api.groq.com/openai/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    # Unikey — token-credit multi-model gateway. The API uses the standard
+    # OpenAI chat-completions protocol.
+    "unikey": "https://www.getunikey.ai/v1",
     # Bluesminds — multi-model gateway, 200+ models, OpenAI-compatible
     "bluesminds": "https://api.bluesminds.com/v1",
     # OpenCode Zen — curated coding models, free tier available
@@ -101,28 +104,31 @@ class OpenAICompatProvider(LLMProvider):
                 f"BASE_URLS mein add kar."
             )
 
-        # PERSISTENT HTTP CLIENT — connection pooling + keep-alive
-        # Har request pe naya TCP+TLS handshake nahi hoga = 200-500ms saved
-        self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(
-                connect=4.0,   # Dead server 4s mein detect (90s nahi)
-                # read: pehla byte aane ka wait. 30s kaafi hai — koi
-                # provider itna slow ho to usse chhod ke fast fallback
-                # behtar hai (muse ~28s leta tha aur poori request block
-                # kar deta tha). Streaming mein har token ke beech ka
-                # gap bhi isi ke andar hona chahiye.
-                read=30.0,
-                write=10.0,    # Request bhejne ke liye
-                pool=4.0,      # Connection pool se lene ke liye
-            ),
-            limits=httpx.Limits(
-                max_keepalive_connections=5,
-                max_connections=10,
-                keepalive_expiry=120,  # 2 min keep-alive
-            ),
-            follow_redirects=True,
-            http2=True,  # HTTP/2 multiplexing — faster parallel
-        )
+        self._cached_client = None
+
+    @property
+    def _client(self) -> httpx.AsyncClient:
+        current_cls = httpx.AsyncClient
+        if self._cached_client is None or type(self._cached_client) is not current_cls:
+            try:
+                self._cached_client = current_cls(
+                    timeout=httpx.Timeout(
+                        connect=4.0,
+                        read=30.0,
+                        write=10.0,
+                        pool=4.0,
+                    ),
+                    limits=httpx.Limits(
+                        max_keepalive_connections=5,
+                        max_connections=10,
+                        keepalive_expiry=120,
+                    ),
+                    follow_redirects=True,
+                    http2=True,
+                )
+            except TypeError:
+                self._cached_client = current_cls()
+        return self._cached_client
 
     # ------------------------------------------------------------------
     #  Message conversion

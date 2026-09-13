@@ -17,20 +17,31 @@ GLOBAL_CONFIG_DIR = Path.home() / ".saarthi"
 GLOBAL_ENV_FILE = GLOBAL_CONFIG_DIR / ".env"
 
 try:
-    from dotenv import load_dotenv
+    from dotenv import dotenv_values
 
-    # Keys are loaded from THREE places (priority order). This is what
-    # makes SAARTHI feel like `kiro`: put your keys in ~/.saarthi/.env
-    # ONCE per device, and `saarthi` works from ANY folder without a local
-    # .env and without re-adding keys. A project can still override with
-    # its own ./.env if it has one.
-    #   1. ./.env (current folder)   -> per-project override (optional)
-    #   2. ~/.saarthi/.env           -> DEVICE-WIDE keys (set once)
-    #   3. OS environment variables
-    # override=True makes a loaded file win, so load the device-wide file
-    # FIRST and ./.env LAST — the last write wins.
-    load_dotenv(GLOBAL_ENV_FILE, override=True)  # device-wide keys
-    load_dotenv(override=True)                   # ./.env (project) wins if present
+    def _load_non_empty_env(path: Path) -> None:
+        """Load a dotenv file without letting blank placeholders erase values."""
+        if not path.is_file():
+            return
+        for key, value in dotenv_values(path).items():
+            if value is not None and value.strip():
+                os.environ[key] = value
+
+    # Device config always loads. The SAARTHI source/install directory's
+    # own .env also loads for backwards-compatible development and legacy
+    # launches. An arbitrary project's .env is NOT trusted by default:
+    # otherwise a cloned repo could set SAARTHI_AUTO_APPROVE=true or turn
+    # off confirmations/redaction merely because `saarthi` was launched
+    # from that folder.
+    _load_non_empty_env(GLOBAL_ENV_FILE)
+    source_root = Path(__file__).resolve().parent.parent
+    cwd = Path.cwd().resolve()
+    if cwd == source_root:
+        _load_non_empty_env(cwd / ".env")
+    elif os.getenv("SAARTHI_LOAD_PROJECT_ENV", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }:
+        _load_non_empty_env(cwd / ".env")
 except ImportError:  # dotenv install nahi hua to bhi chalega
     pass
 
@@ -73,6 +84,10 @@ DEFAULT_MODELS: dict[str, str] = {
     # GLM-5.2 sab chal jaate hain. Model select karna chahiye to
     # .env mein BLUESMINDS_MODEL set kar.
     "bluesminds": "gpt-4o",
+
+    # Unikey — OpenAI-compatible multi-model gateway. The router model lets
+    # Unikey choose a compatible model; set UNIKEY_MODEL for a specific one.
+    "unikey": "unikey-router",
 
     # OpenCode Zen — curated coding agent models. Laguna S 2.1 Free
     # (Stealth/Poolside) 256K context, 32K output. FREE, tool calling
@@ -201,6 +216,7 @@ TIGHT_RATE_LIMIT_PROVIDERS: dict[str, str] = {
 DEFAULT_PROVIDER_ORDER: list[str] = [
     "bluesminds",  # ~1.5s, gpt-4o — fast + vision + full tool schema OK
     "opencode",    # ~3s, coding optimized
+    "unikey",      # paid token-credit gateway; opt in explicitly if needed
     "gemini",      # aankh (screenshot) — vision kaam iske paas jaata hai
     "nvidia",      # nemotron ultra — smart backup
     "groq",        # FAST (~1s) par 8000 TPM tools ke saath choke (413).
@@ -422,6 +438,7 @@ class Settings:
     # Fix karna hai to "hinglish" ya "english" set kar de.
     language: str = "auto"
     confirm_risky: bool = True
+    jarvis_mode: bool = False
 
     # Ek command ke liye max kitne steps.
     #
@@ -547,6 +564,14 @@ class Settings:
                 ),
                 supports_vision=False,
                 **_provider_tuning("openrouter"),
+            ),
+            ProviderConfig(
+                name="unikey",
+                api_key=os.getenv("UNIKEY_API_KEY"),
+                model=os.getenv("UNIKEY_MODEL", DEFAULT_MODELS["unikey"]),
+                supports_vision=_env_bool("UNIKEY_VISION", False),
+                supports_tools=_env_bool("UNIKEY_TOOLS", True),
+                **_provider_tuning("unikey"),
             ),
             ProviderConfig(
                 name="nvidia",
@@ -738,6 +763,7 @@ class Settings:
                 "SAARTHI_LANGUAGE", ("auto", "hinglish", "hindi", "english"), "auto"
             ),
             confirm_risky=_env_bool("SAARTHI_CONFIRM_RISKY", True),
+            jarvis_mode=_env_bool("JARVIS_MODE", False),
             auto_approve=_env_bool("SAARTHI_AUTO_APPROVE", False),
             max_steps=_env_int("SAARTHI_MAX_STEPS", 25),
             max_tokens=_env_int("SAARTHI_MAX_TOKENS", 4096),
@@ -791,20 +817,18 @@ class Settings:
         return None
 
     def setup_help(self) -> str:
-        """Key nahi hai to user ko kya karna chahiye."""
+        """Backend nahi hai to automatic aur manual dono setup options."""
         return (
-            "Koi API key nahi mili bhai!\n\n"
-            "  1. cp .env.example .env       (Windows: Copy-Item .env.example .env)\n"
-            "  2. Kam se kam EK free key le:\n"
-            "       NVIDIA  -> https://build.nvidia.com           (BEST DEAL —\n"
-            "                  ek key se 4 models: nemotron, deepseek v4 pro,\n"
-            "                  muse glimmer, diffusiongemma)\n"
-            "       GROQ    -> https://console.groq.com           (sabse tez)\n"
-            "       GEMINI  -> https://aistudio.google.com/apikey (screenshot ke liye)\n"
-            "  3. .env file mein paste kar de\n\n"
-            "Sab free hain, credit card ki zarurat nahi.\n"
-            "Salah: NVIDIA + GROQ dono le le — alag-alag limits hain,\n"
-            "ek khatam ho to doosra chalta rahega."
+            "AI backend ready nahi mila bhai!\n\n"
+            "Sabse simple Windows fix (API key nahi chahiye):\n"
+            "  irm https://raw.githubusercontent.com/theafzalhussain/"
+            "Sarthi/main/install.ps1 | iex\n"
+            "  Installer Ollama + local model khud setup karega.\n\n"
+            "Cloud AI optional hai. Use karna ho to ~/.saarthi/.env mein\n"
+            "kam se kam ek key set kar sakte ho:\n"
+            "  NVIDIA_API_KEY=...  -> https://build.nvidia.com\n"
+            "  GROQ_API_KEY=...    -> https://console.groq.com\n"
+            "  GEMINI_API_KEY=...  -> https://aistudio.google.com/apikey\n"
         )
 
 

@@ -35,12 +35,21 @@ class GeminiProvider(LLMProvider):
 
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
-        # Persistent client for connection reuse
-        self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=5.0, read=90.0, write=10.0, pool=5.0),
-            limits=httpx.Limits(max_keepalive_connections=2, max_connections=3, keepalive_expiry=120),
-            follow_redirects=True,
-        )
+        self._cached_client = None
+
+    @property
+    def _client(self) -> httpx.AsyncClient:
+        current_cls = httpx.AsyncClient
+        if self._cached_client is None or type(self._cached_client) is not current_cls:
+            try:
+                self._cached_client = current_cls(
+                    timeout=httpx.Timeout(connect=5.0, read=90.0, write=10.0, pool=5.0),
+                    limits=httpx.Limits(max_keepalive_connections=2, max_connections=3, keepalive_expiry=120),
+                    follow_redirects=True,
+                )
+            except TypeError:
+                self._cached_client = current_cls()
+        return self._cached_client
 
     # ------------------------------------------------------------------
     #  Message conversion (Gemini ka apna format hai)

@@ -166,7 +166,17 @@ class FakeHTTP:
         import httpx
 
         original = httpx.AsyncClient
+        orig_post = httpx.AsyncClient.post
+        orig_get = httpx.AsyncClient.get
         outer = self
+
+        async def _fake_post(client_self, url, json=None, headers=None, **kwargs):
+            outer.calls.append((str(url), json))
+            return outer.handler(str(url), json)
+
+        async def _fake_get(client_self, url, headers=None, **kwargs):
+            outer.calls.append((str(url), None))
+            return outer.handler(str(url), None)
 
         class _Client:
             def __init__(self, *args, **kwargs):
@@ -178,19 +188,18 @@ class FakeHTTP:
             async def __aexit__(self, *args):
                 return False
 
-            async def post(self, url, json=None, headers=None, **kwargs):
-                outer.calls.append((url, json))
-                return outer.handler(url, json)
-
-            async def get(self, url, headers=None, **kwargs):
-                outer.calls.append((url, None))
-                return outer.handler(url, None)
+            post = _fake_post
+            get = _fake_get
 
         httpx.AsyncClient = _Client
+        original.post = _fake_post
+        original.get = _fake_get
         try:
             yield outer
         finally:
             httpx.AsyncClient = original
+            original.post = orig_post
+            original.get = orig_get
 
     @property
     def urls(self) -> list:

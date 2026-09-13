@@ -24,6 +24,8 @@ recordings/
 .DS_Store
 .vscode/
 .idea/
+.continue/
+.commandcode/
 *.swp
 
 

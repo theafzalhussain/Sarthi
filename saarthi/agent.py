@@ -309,6 +309,7 @@ class Agent:
             device_info=device_info,
             memory_context=memory_context or None,
             known_skills=known_skills or None,
+            jarvis_mode=getattr(self.settings, "jarvis_mode", False),
         )
         return self._system_prompt
 

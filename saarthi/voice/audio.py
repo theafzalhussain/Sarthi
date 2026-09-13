@@ -142,7 +142,7 @@ class AudioConfig:
     # 300 pe bolna "loud" register hi nahi hota tha -> detector WAITING
     # mein atka -> timeout -> "Nothing heard". 120 pe dheemi awaaz bhi
     # speech ke roop mein pakdi jaati hai.
-    min_threshold: float = 60.0
+    min_threshold: float = 300.0
 
     # Bolna shuru hua maanne ke liye kitne consecutive loud chunks
     speech_start_chunks: int = 3
@@ -203,16 +203,16 @@ class AudioConfig:
         config = cls()
 
         raw_device = os.getenv("SAARTHI_MIC_DEVICE", "").strip()
-        if raw_device:
-            config.device = resolve_device(raw_device)
+        if raw_device and raw_device.lower() not in ("none", "default"):
+            if raw_device.lower() == "auto":
+                try:
+                    config.device = pick_best_input_device()
+                except Exception:
+                    config.device = None
+            else:
+                config.device = resolve_device(raw_device)
         else:
-            # User ne mic nahi chuna — khud accha wala dhoondo.
-            # (Windows ka MME "Sound Mapper" default aksar bekaar/dheema
-            # hota hai; WASAPI Realtek mic 14x loud aata hai.)
-            try:
-                config.device = pick_best_input_device()
-            except Exception:  # noqa: BLE001 — fail ho to PortAudio default
-                config.device = None
+            config.device = None
 
         raw_min = os.getenv("SAARTHI_MIC_MIN_THRESHOLD", "").strip()
         if raw_min:

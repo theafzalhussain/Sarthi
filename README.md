@@ -14,7 +14,7 @@
 
 ---
 
-## ⚡ 1-Minute Install (kisi bhi Windows system pe)
+## ⚡ One-command Install (Windows)
 
 PowerShell kholo aur bas **ye ek line** chalao:
 
@@ -22,12 +22,60 @@ PowerShell kholo aur bas **ye ek line** chalao:
 irm https://raw.githubusercontent.com/theafzalhussain/Sarthi/main/install.ps1 | iex
 ```
 
-Ye khud sab kar dega: code download → dependencies install → `.env` banao → chalu.
-Sirf ek baar apni free API key ([Groq](https://console.groq.com)) `.env` mein daalni hai.
+Installer khud Python check/install karta hai, SAARTHI download/update karta hai,
+private `.venv` banata hai, AI backend ready karta hai, Desktop + Start Menu
+shortcut banata hai, aur app launch kar deta hai.
 
-> Zaroori: Python ([python.org](https://python.org), install ke waqt "Add to PATH" tick) pehle se hona chahiye. Baaki sab script sambhal legi.
+**API key zaroori nahi hai.** Fresh PC par installer official
+[Ollama for Windows](https://ollama.com/download/windows) aur RAM ke hisaab se
+local `qwen2.5:3b` ya `qwen2.5:7b` model install karta hai. Model ka one-time
+download roughly 2–5 GB hai; uske baad prompts local machine par chal sakte hain.
+Agar device par pehle se cloud API key configured hai, installer use preserve
+karta hai aur Ollama download skip kar deta hai.
 
-Install ke baad chalane ke liye — folder ke andar **`Sarthi.bat`** pe double-click, ya `python cli.py`.
+Install ke baad **Desktop ya Start Menu mein `SAARTHI`** kholo. Files
+`%USERPROFILE%\Sarthi` mein aur device config `%USERPROFILE%\.saarthi\.env`
+mein rehti hai.
+
+### Kisi bhi VS Code/project mein use karo
+
+Installer ek global `saarthi` command banata hai. VS Code ko installer ke baad
+ek baar restart karo, apna project kholo, phir integrated terminal mein:
+
+```powershell
+cd C:\path\to\your-project
+saarthi
+```
+
+Bas. SAARTHI usi project folder se start hota hai. Relative file paths, Python
+commands aur approved shell commands isi project par chalte hain; app apne install
+folder mein `cd` nahi karta. Security ke liye cloned/arbitrary project ki `.env`
+default se load nahi hoti. Agar apne trusted project ko device config override
+karne dena ho, `%USERPROFILE%\.saarthi\.env` mein
+`SAARTHI_LOAD_PROJECT_ENV=true` explicitly set karo.
+
+Check karna ho ki command available hai:
+
+```powershell
+Get-Command saarthi
+```
+
+Agar purana VS Code terminal `saarthi` na pehchane, VS Code poora band karke dobara
+kholna hai taaki updated user `PATH` load ho.
+
+### "No API key" ka safe meaning
+
+Default installer local Ollama model use karta hai, isliye user se provider key
+nahi maangi jaati aur owner ki secret key app mein bundle nahi hoti. Apni Groq,
+NVIDIA, Gemini ya kisi aur provider key ko `install.ps1`, repository, Python code
+ya executable mein kabhi embed mat karo—desktop user use aasani se nikaal sakta
+hai aur shared quota misuse ho sakta hai.
+
+Future mein cloud-quality AI bhi bina user key ke deni ho to SAARTHI-owned HTTPS
+backend chahiye: provider keys sirf server-side secret store mein, har device/user
+ka authentication, short-lived tokens, rate limits/quotas, abuse controls, key
+rotation, monitoring, aur clear prompt/data-retention policy. Desktop app ko
+provider key nahi, sirf tumhare backend ka scoped token milna chahiye.
 
 ```
 tu     > bhai paytm khol ke dhai hazaar ka bijli ka bill bhar de
@@ -72,8 +120,12 @@ SAARTHI ke 4 pillars isi gap pe bane hain:
 | **Gemini** ⭐ | https://aistudio.google.com/apikey | Screenshot dekhne ke liye (vision) |
 | OpenRouter | https://openrouter.ai/keys | 98 free models ka router (optional) |
 | Bluesminds | https://api.bluesminds.com | GPT-4o/GPT-5.6 gateway (optional) |
+| Unikey | https://getunikey.ai/keys | Multi-model gateway via token credits (optional) |
 
 Sab free hain. **Credit card nahi maangte.**
+
+Unikey API credits/token balance ke hisaab se charge kar sakta hai. Isliye
+Unikey ko sirf tab enable karo jab account me credits aur spending samajh ho.
 
 **Salah: NVIDIA + Groq dono le le.** Dono ki limit alag hai — ek khatam ho to doosra chalta rahega. Total **8 providers** ka fallback ban jaata hai.
 

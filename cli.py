@@ -933,6 +933,7 @@ def _run_login() -> int:
     ui.muted("  NVIDIA (1 key = 4 models): https://build.nvidia.com")
     ui.muted("  Gemini (for screenshots):  https://aistudio.google.com/apikey")
     ui.muted("  Groq (fast):               https://console.groq.com")
+    ui.muted("  Unikey (multi-model):      https://getunikey.ai/keys")
     ui.blank()
 
     # Which keys we ask for. Add more here if needed.
@@ -942,6 +943,7 @@ def _run_login() -> int:
         ("GROQ_API_KEY", "Groq key"),
         ("OPENROUTER_API_KEY", "OpenRouter key (optional)"),
         ("BLUESMINDS_API_KEY", "Bluesminds key (optional)"),
+        ("UNIKEY_API_KEY", "Unikey key (optional)"),
     ]
 
     # Read existing values so we don't wipe keys the user already saved.

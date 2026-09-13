@@ -23,13 +23,19 @@ NVIDIA_NIM = "https://integrate.api.nvidia.com/v1"
 class Providers(SaarthiTestCase):
     def test_8_providers_hain(self):
         with clean_env():
-            self.assertEqual(len(Settings.load().providers), 10)
+            self.assertEqual(len(Settings.load().providers), len(DEFAULT_PROVIDER_ORDER))
 
     def test_saare_providers_ka_base_url_hai(self):
         for name in DEFAULT_MODELS:
-            if name == "gemini":
-                continue  # Gemini ka apna client hai, BASE_URLS mein nahi
+            if name in {"gemini", "kiro"}:
+                continue  # Native/subprocess providers use a different transport
             self.assertIn(name, BASE_URLS, f"'{name}' ka base URL nahi mila")
+
+    def test_unikey_openai_compatible_provider(self):
+        with clean_env(UNIKEY_API_KEY="sk-test"):
+            providers = {p.name: p for p in Settings.load().available_providers}
+        self.assertEqual(providers["unikey"].api_key, "sk-test")
+        self.assertEqual(providers["unikey"].model, "unikey-router")
 
     def test_default_models_sahi_hain(self):
         expected = {

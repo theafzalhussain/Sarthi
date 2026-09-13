@@ -260,7 +260,7 @@ async def main() -> int:
 
     ui.blank()
     ui.line(
-        f"  Listening  \u00b7  press Enter, then speak  \u00b7  'q' to quit",
+        f"  Listening.  \u00b7  press Enter, then speak  \u00b7  'q' to quit",
         OK,
     )
     ui.blank()

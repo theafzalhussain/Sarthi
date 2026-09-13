@@ -53,6 +53,14 @@ from .audio import play_wav
 
 log = logging.getLogger("saarthi.voice.tts")
 
+try:
+    import edge_tts
+
+    HAS_EDGE_TTS = True
+except Exception:  # noqa: BLE001
+    edge_tts = None  # type: ignore[assignment]
+    HAS_EDGE_TTS = False
+
 
 # ======================================================================
 #  Text prep — bolne se pehle text saaf karo
@@ -186,6 +194,9 @@ class TTSConfig:
     # piper | espeak | say | pyttsx3 | null | auto
     backend: str = "auto"
 
+    # Edge TTS voice (e.g. en-GB-RyanNeural for Jarvis, en-IN-PrabhatNeural for Indian English)
+    edge_voice: str = "en-GB-RyanNeural"
+
     # Piper ka voice model (.onnx file ka path)
     piper_model: str | None = None
 
@@ -209,6 +220,7 @@ class TTSConfig:
 
         return cls(
             backend=os.getenv("TTS_BACKEND", "auto").strip().lower(),
+            edge_voice=os.getenv("EDGE_VOICE", os.getenv("JARVIS_VOICE", "en-GB-RyanNeural")).strip(),
             piper_model=os.getenv("PIPER_MODEL") or None,
             espeak_voice=os.getenv("ESPEAK_VOICE", "en-in").strip(),
             speed=_float("TTS_SPEED", 1.0),
@@ -586,6 +598,111 @@ class Pyttsx3TTS(TTSBackend):
 
 
 # ======================================================================
+#  0. Edge-TTS — Ultra-realistic Neural Voice (JARVIS & Indian Voices)
+# ======================================================================
+
+
+class EdgeTTS(TTSBackend):
+    """
+    Microsoft Edge Neural TTS — Free, realistic AI voices.
+    Includes the iconic British JARVIS voice ('en-GB-RyanNeural') and
+    natural Indian voices ('en-IN-PrabhatNeural', 'hi-IN-MadhurNeural').
+    """
+
+    name = "edge"
+    quality = "ultra-realistic (neural, free)"
+
+    def is_available(self) -> bool:
+        return HAS_EDGE_TTS
+
+    def speak(self, text: str) -> bool:
+        if not text or not self.is_available():
+            return False
+
+        import asyncio
+        import concurrent.futures
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            temp_file = Path(f.name)
+
+        try:
+            voice = self.config.edge_voice or "en-GB-RyanNeural"
+            communicate = edge_tts.Communicate(text, voice)
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(asyncio.run, communicate.save(str(temp_file))).result(timeout=15)
+            else:
+                asyncio.run(communicate.save(str(temp_file)))
+
+            if not temp_file.exists() or temp_file.stat().st_size == 0:
+                return False
+
+            return self._play_mp3(temp_file)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("EdgeTTS playback error: %s", exc)
+            return False
+        finally:
+            try:
+                temp_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _play_mp3(self, path: Path) -> bool:
+        p_str = str(path.resolve())
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                winmm = ctypes.windll.winmm
+                alias = f"edge_tts_{os.getpid()}"
+                winmm.mciSendStringW(f'close {alias}', None, 0, None)
+                err = winmm.mciSendStringW(f'open "{p_str}" type mpegvideo alias {alias}', None, 0, None)
+                if err == 0:
+                    winmm.mciSendStringW(f'play {alias} wait', None, 0, None)
+                    winmm.mciSendStringW(f'close {alias}', None, 0, None)
+                    return True
+            except Exception as exc:  # noqa: BLE001
+                log.debug("MCI playback fail: %s", exc)
+
+        for cmd in (
+            ["afplay", p_str],
+            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", p_str],
+            ["mpv", "--no-video", p_str],
+        ):
+            if shutil.which(cmd[0]):
+                try:
+                    subprocess.run(cmd, check=True, timeout=30)
+                    return True
+                except Exception:  # noqa: BLE001
+                    pass
+
+        return False
+
+    def synthesize_to_file(self, text: str, path: str | Path) -> Path | None:
+        if not self.is_available():
+            return None
+        import asyncio
+        target = Path(path)
+        voice = self.config.edge_voice or "en-GB-RyanNeural"
+        communicate = edge_tts.Communicate(text, voice)
+        try:
+            asyncio.run(communicate.save(str(target)))
+            return target if target.exists() else None
+        except Exception as exc:  # noqa: BLE001
+            log.warning("EdgeTTS synthesize_to_file fail: %s", exc)
+            return None
+
+    def setup_help(self) -> str:
+        return "pip install edge-tts"
+
+
+# ======================================================================
 #  5. Null — hamesha chalta hai (fallback)
 # ======================================================================
 
@@ -619,7 +736,8 @@ class NullTTS(TTSBackend):
 
 # Kis order mein try karna hai (pehla = pehli choice)
 BACKEND_ORDER: list[type[TTSBackend]] = [
-    PiperTTS,      # best quality
+    EdgeTTS,       # ultra-realistic neural voice (Jarvis / Indian)
+    PiperTTS,      # best quality offline
     MacSayTTS,     # Mac pe built-in, acchi quality
     EspeakTTS,     # halka, reliable
     Pyttsx3TTS,    # cross-platform
