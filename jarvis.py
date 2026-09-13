@@ -141,9 +141,9 @@ def render_hud(agent: Agent, tts: TTSEngine) -> None:
     badges = [
         f"🧠 BRAIN: {ui.paint(active_provider, OK)}",
         f"🎙️ VOICE: {ui.paint(voice_status, OK if VOICE_OUTPUT_ENABLED else WARN)}",
+        f"👂 WAKE: {ui.paint('Hey Jarvis (Active)', OK, bold=True)}",
         f"💻 CPU: {ui.paint(f'{cpu_pct}%', OK)}",
         f"📊 RAM: {ui.paint(mem_str, OK)}",
-        f"🔋 PWR: {ui.paint(batt_str, OK)}",
     ]
     print("  " + "  │  ".join(badges))
     ui.rule()
@@ -258,6 +258,48 @@ class RealtimeStreamHandler:
 
 
 # ----------------------------------------------------------------------
+#  Hands-Free Background 'Hey Jarvis' Wake Word Loop
+# ----------------------------------------------------------------------
+
+async def wake_word_loop(agent: Agent, tts: TTSEngine, stream_handler: RealtimeStreamHandler) -> None:
+    """Continuously listens for 'Hey Jarvis' or 'Jarvis' in the background."""
+    from saarthi.voice import AudioConfig
+    from saarthi.voice.wake import HeyJarvisWake
+
+    config_audio = AudioConfig.from_env()
+    config_audio.silence_duration = 0.6
+    detector = HeyJarvisWake(audio_config=config_audio)
+
+    while True:
+        try:
+            woke = await asyncio.to_thread(detector.wait_for_wake)
+            if not woke:
+                await asyncio.sleep(0.5)
+                continue
+
+            ui.line("\n  ⚡ 'Hey Jarvis' Wake Word Activated! Listening...", BRAND)
+
+            if detector.trailing_command:
+                command = detector.trailing_command
+                ui.line(f"  🗣️  Command: '{command}'", OK)
+            else:
+                ack = "Yes, Sir?"
+                ui.line(f"  🤖 JARVIS: {ack}", OK)
+                if VOICE_OUTPUT_ENABLED:
+                    await asyncio.to_thread(tts.say, ack)
+                command = await capture_voice_input()
+
+            if command:
+                await process_input(command, agent, tts, stream_handler)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logging.getLogger("jarvis").debug("Wake loop error: %s", exc)
+            await asyncio.sleep(1)
+
+
+# ----------------------------------------------------------------------
 #  Main Jarvis Loop
 # ----------------------------------------------------------------------
 
@@ -277,6 +319,11 @@ async def main() -> int:
     if "--no-web" not in sys.argv:
         start_background_web(agent, host="0.0.0.0", port=WEB_PORT)
 
+    # 4. Start Hands-Free 'Hey Jarvis' Wake Word Listener
+    wake_task = None
+    if "--no-wake" not in sys.argv:
+        wake_task = asyncio.create_task(wake_word_loop(agent, tts, stream_handler))
+
     # CLI args
     if "--mute" in sys.argv:
         VOICE_OUTPUT_ENABLED = False
@@ -294,6 +341,15 @@ async def main() -> int:
         spoken = await capture_voice_input()
         if spoken:
             await process_input(spoken, agent, tts, stream_handler)
+
+    # Pure Background Wake-Word Daemon (if --daemon or --silent)
+    if "--daemon" in sys.argv or "--silent" in sys.argv or "--bg" in sys.argv:
+        ui.line("  👂 JARVIS Background Wake-Word Daemon running. Say 'Hey Jarvis' anytime...", OK)
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            return 0
 
     # REPL Loop
     while True:

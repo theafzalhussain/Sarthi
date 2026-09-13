@@ -471,6 +471,93 @@ class PorcupineWake(WakeDetector):
 
 
 # ======================================================================
+#  4. HeyJarvisWake — 100% Free, Zero-Key, Offline Wake Word
+# ======================================================================
+
+
+class HeyJarvisWake(WakeDetector):
+    """
+    Hands-free 'Hey Jarvis' wake word detector.
+    Zero API key, 100% offline, uses faster-whisper.
+    """
+
+    name = "hey_jarvis"
+    description = "Hands-free 'Hey Jarvis' wake word (zero key, 100% offline)"
+
+    WAKE_KEYWORDS = (
+        "jarvis",
+        "hey jarvis",
+        "hi jarvis",
+        "hello jarvis",
+        "oye jarvis",
+        "ok jarvis",
+        "okay jarvis",
+        "sarthi",
+        "hey sarthi",
+    )
+
+    def __init__(
+        self,
+        config: WakeConfig | None = None,
+        audio_config: AudioConfig | None = None,
+    ):
+        super().__init__(config, audio_config)
+        self._stt = None
+        self.trailing_command: str | None = None
+
+    def _get_stt(self):
+        if self._stt is None:
+            from .stt import WhisperConfig, WhisperSTT
+            cfg = WhisperConfig.from_env()
+            cfg.beam_size = 1
+            self._stt = WhisperSTT(cfg)
+            self._stt.load()
+        return self._stt
+
+    def is_available(self) -> bool:
+        from .stt import is_stt_available
+        return is_audio_available() and is_stt_available() and HAS_NUMPY
+
+    def wait_for_wake(self) -> bool:
+        if not self.is_available():
+            return False
+
+        from .audio import Recorder
+
+        recorder = Recorder(self.audio_config)
+        stt = self._get_stt()
+
+        try:
+            while True:
+                self.trailing_command = None
+                audio, _ = recorder.record_until_silence()
+                if audio is None or len(audio) == 0:
+                    continue
+
+                res = stt.transcribe(audio)
+                if not res or not res.text:
+                    continue
+
+                text_lower = res.text.lower().strip()
+
+                for kw in self.WAKE_KEYWORDS:
+                    if kw in text_lower:
+                        log.info("Wake word matched: '%s' in '%s'", kw, text_lower)
+                        parts = text_lower.split(kw, 1)
+                        if len(parts) > 1:
+                            cmd = parts[1].strip(" ,.!?")
+                            if len(cmd) > 2:
+                                self.trailing_command = cmd
+                        return True
+
+        except (KeyboardInterrupt, EOFError):
+            return False
+        except Exception as exc:
+            log.warning("HeyJarvisWake error: %s", exc)
+            return False
+
+
+# ======================================================================
 #  Factory
 # ======================================================================
 
@@ -481,6 +568,9 @@ WAKE_MODES: dict[str, type[WakeDetector]] = {
     "energy": EnergyWake,
     "porcupine": PorcupineWake,
     "wake_word": PorcupineWake,
+    "hey_jarvis": HeyJarvisWake,
+    "jarvis": HeyJarvisWake,
+    "hands_free": HeyJarvisWake,
 }
 
 
@@ -530,7 +620,7 @@ def available_wake_modes() -> list[tuple[str, bool, str]]:
     out: list[tuple[str, bool, str]] = []
     seen: set[str] = set()
 
-    for detector_class in (PushToTalkWake, EnergyWake, PorcupineWake):
+    for detector_class in (PushToTalkWake, HeyJarvisWake, EnergyWake, PorcupineWake):
         if detector_class.name in seen:
             continue
         seen.add(detector_class.name)
