@@ -185,8 +185,10 @@ async def capture_voice_input() -> str | None:
 
         ui.line("  🎙️  Listening, Sir... (speak now)", BRAND)
         config_audio = AudioConfig.from_env()
+        config_audio.silence_duration = 0.6  # Real-time endpointing (stops listening 500ms faster)
         recorder = Recorder(config_audio)
         config_stt = WhisperConfig.from_env()
+        config_stt.beam_size = 1  # 3x faster transcription on CPU
         stt = WhisperSTT(config_stt)
 
         await asyncio.to_thread(stt.load)
@@ -211,6 +213,51 @@ async def capture_voice_input() -> str | None:
 
 
 # ----------------------------------------------------------------------
+#  Real-Time Streaming Output & Sentence-Level Voice Handler
+# ----------------------------------------------------------------------
+
+class RealtimeStreamHandler:
+    """Handles live token streaming and starts speech on the very first sentence."""
+    def __init__(self, tts: TTSEngine, get_voice_enabled):
+        self.tts = tts
+        self.get_voice_enabled = get_voice_enabled
+        self.has_printed_prefix = False
+        self.buffer = ""
+        self.spoken_sentence = False
+
+    def reset(self):
+        self.has_printed_prefix = False
+        self.buffer = ""
+        self.spoken_sentence = False
+
+    def on_output(self, kind: str, text: str):
+        if kind == "stream":
+            if not self.has_printed_prefix:
+                print("\n  " + ui.paint("JARVIS ❯", BRAND, bold=True) + " ", end="", flush=True)
+                self.has_printed_prefix = True
+            sys.stdout.write(text)
+            sys.stdout.flush()
+
+            if self.get_voice_enabled() and not self.spoken_sentence:
+                self.buffer += text
+                for punct in (". ", "! ", "? ", "\n", "। "):
+                    if punct in self.buffer:
+                        parts = self.buffer.split(punct, 1)
+                        sentence = (parts[0] + punct.strip()).strip()
+                        if len(sentence) > 5:
+                            self.spoken_sentence = True
+                            asyncio.create_task(asyncio.to_thread(self.tts.say, sentence))
+                        break
+        elif kind == "tool":
+            ui.line(f"\n  ⚡ Tool: {text}", MUTED)
+            self.has_printed_prefix = False
+        elif kind == "model":
+            ui.line(f"  🧠 Model: {text}", MUTED)
+        elif kind == "error":
+            ui.line(f"\n  ⚠️ {text}", WARN)
+
+
+# ----------------------------------------------------------------------
 #  Main Jarvis Loop
 # ----------------------------------------------------------------------
 
@@ -221,9 +268,10 @@ async def main() -> int:
     settings = Settings.load()
     settings.jarvis_mode = True
 
-    # 2. Setup Agent & TTS Engine
+    # 2. Setup Agent & TTS Engine with Realtime Streaming
     tts = TTSEngine()
-    agent = Agent(config=settings, confirm=ask_confirmation)
+    stream_handler = RealtimeStreamHandler(tts, lambda: VOICE_OUTPUT_ENABLED)
+    agent = Agent(config=settings, confirm=ask_confirmation, on_output=stream_handler.on_output)
 
     # 3. Start Background Web Server
     if "--no-web" not in sys.argv:
@@ -245,7 +293,7 @@ async def main() -> int:
     if start_in_voice:
         spoken = await capture_voice_input()
         if spoken:
-            await process_input(spoken, agent, tts)
+            await process_input(spoken, agent, tts, stream_handler)
 
     # REPL Loop
     while True:
@@ -258,7 +306,7 @@ async def main() -> int:
             if not user_input:
                 spoken = await capture_voice_input()
                 if spoken:
-                    await process_input(spoken, agent, tts)
+                    await process_input(spoken, agent, tts, stream_handler)
                 continue
 
             # Command shortcuts
@@ -273,7 +321,7 @@ async def main() -> int:
             elif cmd_lower in ("/v", "/voice", "voice", "bolo"):
                 spoken = await capture_voice_input()
                 if spoken:
-                    await process_input(spoken, agent, tts)
+                    await process_input(spoken, agent, tts, stream_handler)
                 continue
 
             elif cmd_lower in ("/web", "/ui", "web"):
@@ -324,7 +372,7 @@ async def main() -> int:
                 continue
 
             # Regular command execution
-            await process_input(user_input, agent, tts)
+            await process_input(user_input, agent, tts, stream_handler)
 
         except (KeyboardInterrupt, EOFError):
             ui.blank()
@@ -336,28 +384,27 @@ async def main() -> int:
     return 0
 
 
-async def process_input(text: str, agent: Agent, tts: TTSEngine) -> None:
-    """Process user prompt, stream response, and speak aloud."""
+async def process_input(text: str, agent: Agent, tts: TTSEngine, stream_handler: RealtimeStreamHandler) -> None:
+    """Process user prompt with real-time token streaming and instant voice feedback."""
     ui.blank()
-
     ui.line(f"  ⚡ Processing: '{text}'...", MUTED)
+    stream_handler.reset()
 
     start_time = time.monotonic()
     result = await agent.run_turn(text)
     elapsed = time.monotonic() - start_time
 
-    ui.blank()
-    if result.reply:
+    if not stream_handler.has_printed_prefix and result.reply:
         ui.reply(result.reply)
-        ui.muted(f"  [Time: {elapsed:.2f}s | Steps: {result.steps_used}]")
 
-        # Speak reply aloud via Edge-TTS / pyttsx3
-        if VOICE_OUTPUT_ENABLED:
-            asyncio.create_task(asyncio.to_thread(tts.say, result.reply))
-    elif result.error:
-        ui.error(f"Error: {result.error}")
-        if VOICE_OUTPUT_ENABLED:
-            asyncio.create_task(asyncio.to_thread(tts.say, "An error occurred while executing the command, Sir."))
+    print()
+    ui.muted(f"  [Response Time: {elapsed:.2f}s | Steps: {result.steps_used}]")
+
+    # If sentence was not spoken in stream, speak full reply
+    if VOICE_OUTPUT_ENABLED and not stream_handler.spoken_sentence and result.reply:
+        asyncio.create_task(asyncio.to_thread(tts.say, result.reply))
+    elif VOICE_OUTPUT_ENABLED and result.error:
+        asyncio.create_task(asyncio.to_thread(tts.say, "An error occurred while executing the command, Sir."))
 
     ui.blank()
 

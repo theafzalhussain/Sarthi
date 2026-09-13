@@ -364,6 +364,9 @@ class Agent:
                 self.on_output("debug", hint)
             self.on_output("debug", f"language: {reply_language}")
 
+        # Tokens bachane aur real-time speed ke liye history trim karo
+        self.trim_history(keep_messages=12 if getattr(self.settings, "jarvis_mode", False) else 30)
+
         # Structured hints ke saath LLM ko bhejo.
         # Image attach hui ho to usi user message ke saath bhejo —
         # router.py dekh lega ki image hai aur vision provider chunega.
