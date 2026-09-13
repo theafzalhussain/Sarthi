@@ -615,6 +615,18 @@ class EdgeTTS(TTSBackend):
     def is_available(self) -> bool:
         return HAS_EDGE_TTS
 
+    def _resolve_voice(self, text: str) -> str:
+        """Automatically pick the best neural voice based on language."""
+        if self.config.edge_voice:
+            return self.config.edge_voice
+        try:
+            from ..lang.normalize import detect_language
+            if detect_language(text) == "hinglish":
+                return "hi-IN-MadhurNeural"
+            return "en-GB-RyanNeural"
+        except Exception:
+            return "en-GB-RyanNeural"
+
     def speak(self, text: str) -> bool:
         if not text or not self.is_available():
             return False
@@ -627,7 +639,7 @@ class EdgeTTS(TTSBackend):
             temp_file = Path(f.name)
 
         try:
-            voice = self.config.edge_voice or "en-GB-RyanNeural"
+            voice = self._resolve_voice(text)
             communicate = edge_tts.Communicate(text, voice)
 
             try:
@@ -689,7 +701,7 @@ class EdgeTTS(TTSBackend):
             return None
         import asyncio
         target = Path(path)
-        voice = self.config.edge_voice or "en-GB-RyanNeural"
+        voice = self._resolve_voice(text)
         communicate = edge_tts.Communicate(text, voice)
         try:
             asyncio.run(communicate.save(str(target)))
