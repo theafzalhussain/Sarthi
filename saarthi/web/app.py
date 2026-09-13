@@ -251,8 +251,7 @@ def create_app(agent: Agent | None = None) -> FastAPI:
 
     @app.post("/api/voice")
     async def voice_upload(file: UploadFile = File(...)) -> dict[str, Any]:
-        from ..voice import VoiceConfig, is_stt_available
-        from ..voice.stt import SpeechRecognizer
+        from ..voice import WhisperConfig, WhisperSTT, is_stt_available
 
         if not is_stt_available():
             raise HTTPException(status_code=500, detail="faster-whisper is not installed")
@@ -263,12 +262,12 @@ def create_app(agent: Agent | None = None) -> FastAPI:
             tpath.write_bytes(await file.read())
 
         try:
-            config = VoiceConfig.from_env()
-            stt = SpeechRecognizer(config.stt)
+            config = WhisperConfig.from_env()
+            stt = WhisperSTT(config)
             await asyncio.to_thread(stt.load)
 
             # Load audio bytes and transcribe
-            transcribed = await asyncio.to_thread(stt.transcribe_file, str(tpath))
+            transcribed = await asyncio.to_thread(stt.transcribe, str(tpath))
             text = transcribed.text.strip() if transcribed else ""
             if not text:
                 return {"ok": False, "reply": "I could not understand the audio, Sir.", "user_text": ""}

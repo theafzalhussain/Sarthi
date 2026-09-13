@@ -166,9 +166,14 @@ def render_hud(agent: Agent, tts: TTSEngine) -> None:
 async def capture_voice_input() -> str | None:
     """Capture microphone audio and transcribe via faster-whisper."""
     try:
-        from saarthi.voice import VoiceConfig, is_audio_available, is_stt_available
-        from saarthi.voice.audio import AudioRecorder
-        from saarthi.voice.stt import SpeechRecognizer
+        from saarthi.voice import (
+            AudioConfig,
+            Recorder,
+            WhisperConfig,
+            WhisperSTT,
+            is_audio_available,
+            is_stt_available,
+        )
 
         if not is_audio_available():
             ui.error("Microphone device not detected.")
@@ -179,9 +184,10 @@ async def capture_voice_input() -> str | None:
             return None
 
         ui.line("  🎙️  Listening, Sir... (speak now)", BRAND)
-        config = VoiceConfig.from_env()
-        recorder = AudioRecorder(config.audio)
-        stt = SpeechRecognizer(config.stt)
+        config_audio = AudioConfig.from_env()
+        recorder = Recorder(config_audio)
+        config_stt = WhisperConfig.from_env()
+        stt = WhisperSTT(config_stt)
 
         await asyncio.to_thread(stt.load)
         audio, status = await asyncio.to_thread(recorder.record_until_silence)
