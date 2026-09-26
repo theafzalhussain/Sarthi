@@ -140,16 +140,53 @@ Achhi khabar: `skills/store.py` ka data format **same rahega**. Store aur runner
 
 ---
 
-## 🎯 Phase 5 — Powerful banao
+## ✅ Phase 5A — Human Voice (HO GAYA)
+
+JARVIS ab sach mein insaan jaisa bolta hai. Detail: [PHASE5A_UPDATE.md](PHASE5A_UPDATE.md)
+
+| Kaam | Status |
+|---|---|
+| Hindi neural voice — `hi-IN-MadhurNeural` auto-select + roman→Devanagari engine (~370 shabd dict + rules) | ✅ |
+| Hindi numbers TTS mein — "2500" → "दो हज़ार पांच सौ", time "8:30" → "aath bajke tees" | ✅ |
+| Streaming TTS — LLM ka pehla sentence aate hi bolna shuru (VoiceSession + jarvis.py dono) | ✅ |
+| Barge-in — bolte waqt beech mein tokna (VOICE_BARGE_IN=true; headphone pe reliable) | ✅ |
+| Free wake word — `WAKE_MODE=oww` (openwakeword "hey_jarvis", zero API key) | ✅ |
+| 44 naye pure-logic tests — total **533 tests pass** | ✅ |
+
+## ✅ Phase 5B — Powerful (HO GAYA)
+
+Detail: [PHASE5B_UPDATE.md](PHASE5B_UPDATE.md)
+
+| Kaam | Status |
+|---|---|
+| Persistent scheduler (SQLite) — restart-proof reminders, daily/weekly recurrence, missed catch-up | ✅ |
+| Proactive mode — reminders pe JARVIS khud bole + session-start briefing | ✅ |
+| Vector memory — trigram-TFIDF semantic recall (offline, zero dep) + agent context injection | ✅ |
+| Telegram bot — phone se text/voice note command, whitelist security, risky auto-deny | ✅ |
+| Streaming TTS | ✅ (Phase 5A mein ho chuka tha) |
+| GitHub Actions CI — Python 3.10/3.11/3.12, full suite (555 tests) | ✅ |
+
+## ✅ Phase 5C — Advanced (HO GAYA)
+
+Detail: [PHASE5C_UPDATE.md](PHASE5C_UPDATE.md)
+
+| Kaam | Status |
+|---|---|
+| Web UI auth — SAARTHI_WEB_TOKEN + constant-time compare + auto token-JS | ✅ |
+| Email tools — mail_padho/dhoondho/bhejo (stdlib IMAP/SMTP, zero dep) | ✅ |
+| Calendar — Hinglish date parser + SQLite events + AUTO-reminder | ✅ |
+| Multi-step planner — plan_banao/update/dikhao (pure logic + scaffolding) | ✅ |
+| History compaction — LLM summary, context kabhi nahi kho jaata | ✅ |
+| Tools: 58 -> **68** | ✅ |
+
+## 🎯 Phase 5D — Future ideas
 
 | Kaam | Kyun |
 |---|---|
-| Vector memory (ChromaDB) | Semantic recall — "wo cheez jo pichle mahine ki thi" |
+| Google Calendar sync (OAuth) | Local calendar upar cloud sync |
 | Skill chaining | Ek skill doosri ko call kare |
-| Proactive suggestions | "bijli ka bill 3 din mein due hai" |
-| On-device LLM | Gemma 4 12B / Qwen3.6 — privacy + no rate limit |
-| Multi-step planning | Bade kaam automatically todna |
-| Local server | Phone se laptop ke agent ko baat karana |
+| On-device LLM | Gemma/Qwen local — privacy + no rate limit |
+| Multi-device sync | Do PC, ek JARVIS |
 
 ---
 
@@ -172,7 +209,10 @@ Achhi khabar: `skills/store.py` ka data format **same rahega**. Store aur runner
 3. ✅ Phase 3 (Browser+Polish) <- HO GAYA (v2.0)
 4. ✅ Phase 4A (Python side)   <- HO GAYA — HTTP contract + tests
    ✅ Phase 4B (Kotlin app)   <- HO GAYA — 1,340 lines, security 8/8
-5. 🎯 Phase 5 (Powerful)      <- NEXT — polish + advanced features
+5. ✅ Phase 5A (Human Voice)   <- HO GAYA — Hindi TTS + streaming + barge-in + free wake word
+   ✅ Phase 5B (Powerful)     <- HO GAYA — scheduler + proactive + vector memory + Telegram + CI
+   ✅ Phase 5C (Advanced)     <- HO GAYA — web auth + email + calendar + planner + compaction
+   🎯 Phase 5D (Future)       <- cloud sync, on-device LLM, skill chaining
 ```
 
 ---

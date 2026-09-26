@@ -51,6 +51,9 @@ class ToolContext:
     memory: "MemoryStore | None" = None
     skills: "SkillStore | None" = None
 
+    # Persistent scheduler (reminders restart-proof hote hain isse)
+    scheduler: Any | None = None
+
     # Agent ka current conversation context (tools padh sakte hain)
     scratch: dict[str, Any] = field(default_factory=dict)
 

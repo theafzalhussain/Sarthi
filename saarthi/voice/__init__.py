@@ -2,13 +2,16 @@
 SAARTHI Voice — bolke agent chalao.
 
     hinglish_asr.py  -> PILLAR #1 voice pe: biasing + correction
-    audio.py         -> mic recording, silence detection, playback
+    hinglish_tts.py  -> PILLAR #1 TTS pe: Hindi numbers + Devanagari
+    audio.py         -> mic recording, silence detection, barge-in, playback
+    streaming.py     -> streaming TTS (sentence-by-sentence bolna)
     stt.py           -> Whisper (offline, free)
-    tts.py           -> awaaz (piper/espeak/say/pyttsx3/null)
-    wake.py          -> push-to-talk / energy / porcupine
+    tts.py           -> awaaz (edge/piper/espeak/say/pyttsx3/null)
+    wake.py          -> push-to-talk / energy / oww / hey_jarvis / porcupine
     session.py       -> pura loop
 
 Sab OFFLINE aur FREE hai. LLM ke liye internet chahiye, voice ke liye nahi.
+(edge-tts cloud neural voice hai — wo bhi free, optional.)
 
 Use:
     from saarthi.agent import Agent
@@ -48,6 +51,16 @@ from .hinglish_asr import (
     correct_transcript,
     looks_like_garbage,
 )
+from .hinglish_tts import (
+    HINDI_WORDS,
+    SentenceBuffer,
+    digits_to_hindi_words,
+    number_to_hindi,
+    pick_voice_kind,
+    prepare_hinglish_speech,
+    roman_to_devanagari,
+    split_into_sentences,
+)
 from .session import VoiceConfig, VoiceSession
 from .stt import (
     HAS_WHISPER,
@@ -61,6 +74,7 @@ from .stt import (
     total_ram_gb,
     stt_setup_help,
 )
+from .streaming import StreamSpeaker
 from .tts import (
     TTSConfig,
     TTSEngine,
@@ -78,6 +92,16 @@ __all__ = [
     # Session (main entry point)
     "VoiceSession",
     "VoiceConfig",
+    # Streaming TTS (Phase 5A)
+    "StreamSpeaker",
+    "SentenceBuffer",
+    "split_into_sentences",
+    "prepare_hinglish_speech",
+    "roman_to_devanagari",
+    "digits_to_hindi_words",
+    "number_to_hindi",
+    "pick_voice_kind",
+    "HINDI_WORDS",
     # Hinglish ASR — PILLAR #1
     "correct_transcript",
     "CorrectionResult",

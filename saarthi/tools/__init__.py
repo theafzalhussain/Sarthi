@@ -21,10 +21,13 @@ Jitne tools add karega, utna capable agent banega.
 
 from .base import Tool, ToolContext, simple_tool
 from .auth_tools import auth_tools
+from .calendar_tools import calendar_tools
 from .creative_tools import creative_tools
 from .device_tools import device_tools
 from .document_tools import document_tools
+from .email_tools import email_tools
 from .file_tools import file_tools
+from .planner_tools import planner_tools
 from .memory_tools import memory_tools
 from .registry import ToolRegistry
 from .safety import (
@@ -57,6 +60,9 @@ def default_registry() -> ToolRegistry:
     registry.register_all(skill_tools())    # DIKHA DO MODE
     registry.register_all(creative_tools()) # image + video generation
     registry.register_all(auth_tools())     # website login + credentials
+    registry.register_all(email_tools())    # mail padho/bhejo (Phase 5C)
+    registry.register_all(calendar_tools()) # events + Hinglish dates (Phase 5C)
+    registry.register_all(planner_tools())  # bade kaam ka plan (Phase 5C)
     return registry
 
 
@@ -77,6 +83,9 @@ __all__ = [
     "memory_tools",
     "skill_tools",
     "auth_tools",
+    "email_tools",
+    "calendar_tools",
+    "planner_tools",
     # Safety
     "RiskLevel",
     "RiskAssessment",

@@ -1,0 +1,49 @@
+# SAARTHI CI — har push/PR pe tests chalo
+#
+# Repo ka design rule: tests HARDWARE KE BINA chalte hain (mic, phone,
+# browser, internet ki zarurat nahi). Isliye CI pe poora suite chal
+# sakta hai — sirf core dependencies chahiye.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python ${{ matrix.python-version }} setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx python-dotenv pydantic rich beautifulsoup4 "ddgs>=9.0.0" pytest
+
+      - name: Run full test suite
+        env:
+          # Test env — koi asli API key nahi (tests fake use karte hain)
+          SAARTHI_LOAD_PROJECT_ENV: "false"
+        run: |
+          python run_tests.py -q
+
+      - name: Syntax check (all entry points)
+        run: |
+          python -m py_compile cli.py jarvis.py voice_cli.py hardware_check.py
+          python -m compileall -q saarthi/

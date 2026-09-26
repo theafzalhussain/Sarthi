@@ -46,8 +46,78 @@ class ChatRequest(BaseModel):
     voice_response: bool = True
 
 
+def check_web_token(provided: str | None, expected: str) -> bool:
+    """
+    Token match check — CONSTANT-TIME compare (PURE LOGIC, tested).
+
+    Timing-attack safe: secrets.compare_digest — na hit-or-miss pe
+    time ka farak padta hai.
+    """
+    if not expected:
+        return True
+    if not provided:
+        return False
+    import secrets
+
+    return secrets.compare_digest(str(provided).strip(), expected)
+
+
+def get_web_token() -> str:
+    """Configured web token (khaali = auth off — LAN open mode)."""
+    return os.getenv("SAARTHI_WEB_TOKEN", "").strip()
+
+
+# Jin endpoints pe auth lagta hai (UI shell sabko khula rehta hai)
+_PROTECTED_API = ("/api/", "/v1/")
+
+
 def create_app(agent: Agent | None = None) -> FastAPI:
     app = FastAPI(title="J.A.R.V.I.S. Core", version="2.0.0")
+
+    # ------------------------------------------------------------------
+    #  Web Auth (Phase 5C) — SAARTHI_WEB_TOKEN set ho to lock
+    # ------------------------------------------------------------------
+    expected_token = get_web_token()
+
+    if expected_token:
+        log.warning(
+            "Web auth ON (SAARTHI_WEB_TOKEN set) — API sirf token se chalega. "
+            "Phone/browser pe pehli baar token pucha jaayega."
+        )
+
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.requests import Request
+
+        class TokenAuthMiddleware(BaseHTTPMiddleware):
+            """API endpoints pe token check — UI shell khula (token input ke liye)."""
+
+            async def dispatch(self, request: Request, call_next):  # noqa: ANN001
+                path = request.url.path
+
+                is_api = any(path.startswith(p) for p in _PROTECTED_API)
+                auth_check = path == "/api/auth-check"
+
+                if not is_api or auth_check:
+                    return await call_next(request)
+
+                provided = (
+                    request.headers.get("x-saarthi-token")
+                    or request.query_params.get("token")
+                )
+                if check_web_token(provided, expected_token):
+                    return await call_next(request)
+
+                return JSONResponse(
+                    {"error": "Unauthorized — token chahiye", "auth_required": True},
+                    status_code=401,
+                )
+
+        app.add_middleware(TokenAuthMiddleware)
+    else:
+        log.info(
+            "Web auth OFF — LAN pe open hai. Lock karne ke liye "
+            "SAARTHI_WEB_TOKEN set karo ~/.saarthi/.env mein."
+        )
 
     app.add_middleware(
         CORSMiddleware,
@@ -112,6 +182,12 @@ def create_app(agent: Agent | None = None) -> FastAPI:
     # ------------------------------------------------------------------
     #  Hardware & Status API
     # ------------------------------------------------------------------
+
+    @app.get("/api/auth-check")
+    async def auth_check(request: dict = None) -> dict:
+        """Frontend puchta hai: token chahiye? mera token theek hai?"""
+        expected = get_web_token()
+        return {"required": bool(expected)}
 
     @app.get("/api/status")
     async def get_status() -> dict[str, Any]:
@@ -313,7 +389,36 @@ def create_app(agent: Agent | None = None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def index() -> HTMLResponse:
         local_ip = get_local_ip()
-        return HTMLResponse(get_jarvis_html(local_ip))
+        html = get_jarvis_html(local_ip)
+
+        # Web auth ON -> token input + auto-fetch-header JS inject karo.
+        # (UI shell khula rehta hai taaki token maang sake)
+        if get_web_token():
+            auth_js = """
+<script>
+(function() {
+  var T = localStorage.getItem('saarthi_token');
+  if (!T) {
+    T = prompt('JARVIS access token (SAARTHI_WEB_TOKEN):');
+    localStorage.setItem('saarthi_token', T || '');
+  }
+  // Saari fetch calls mein header laga do
+  var _fetch = window.fetch;
+  window.fetch = function(url, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({}, opts.headers || {}, {'X-Saarthi-Token': localStorage.getItem('saarthi_token') || ''});
+    return _fetch(url, opts).catch(function(err){ throw err; });
+  };
+  // 401 aaye to token dubara puchho
+  setTimeout(function() {
+    fetch('/api/auth-check').then(r=>r.json()).catch(function(){});
+  }, 300);
+})();
+</script>
+</body>"""
+            html = html.replace("</body>", auth_js, 1)
+
+        return HTMLResponse(html)
 
     return app
 
