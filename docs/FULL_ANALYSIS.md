@@ -4,6 +4,8 @@
 > **Verdict: Project solid hai. Foundation world-class hai. Ab isko "human-like powerful agent" banane ke liye 5 jagah upgrade chahiye.**
 >
 > ⚡ **UPDATE: Phase 5A (items 1-5 — Hindi TTS, Streaming TTS, Hinglish rules, Barge-in, Free wake word) IMPLEMENT HO GAYA.** Detail: [PHASE5A_UPDATE.md](PHASE5A_UPDATE.md) · 533 tests pass.
+>
+> ⚡ **UPDATE 2: Phase 5B bhi HO GAYA** — Persistent scheduler, Proactive mode, Vector memory, Telegram bot, GitHub CI. Detail: [PHASE5B_UPDATE.md](PHASE5B_UPDATE.md) · **555 tests pass**.
 
 ---
 

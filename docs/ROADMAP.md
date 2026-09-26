@@ -153,16 +153,29 @@ JARVIS ab sach mein insaan jaisa bolta hai. Detail: [PHASE5A_UPDATE.md](PHASE5A_
 | Free wake word — `WAKE_MODE=oww` (openwakeword "hey_jarvis", zero API key) | ✅ |
 | 44 naye pure-logic tests — total **533 tests pass** | ✅ |
 
-## 🎯 Phase 5 — Powerful banao (baaki)
+## ✅ Phase 5B — Powerful (HO GAYA)
+
+Detail: [PHASE5B_UPDATE.md](PHASE5B_UPDATE.md)
+
+| Kaam | Status |
+|---|---|
+| Persistent scheduler (SQLite) — restart-proof reminders, daily/weekly recurrence, missed catch-up | ✅ |
+| Proactive mode — reminders pe JARVIS khud bole + session-start briefing | ✅ |
+| Vector memory — trigram-TFIDF semantic recall (offline, zero dep) + agent context injection | ✅ |
+| Telegram bot — phone se text/voice note command, whitelist security, risky auto-deny | ✅ |
+| Streaming TTS | ✅ (Phase 5A mein ho chuka tha) |
+| GitHub Actions CI — Python 3.10/3.11/3.12, full suite (555 tests) | ✅ |
+
+## 🎯 Phase 5C — Powerful banao (baaki)
 
 | Kaam | Kyun |
 |---|---|
-| Vector memory (ChromaDB) | Semantic recall — "wo cheez jo pichle mahine ki thi" |
+| Web UI auth (token/PIN) | LAN pe bhi lock — G5 |
 | Skill chaining | Ek skill doosri ko call kare |
-| Proactive suggestions | "bijli ka bill 3 din mein due hai" |
 | On-device LLM | Gemma 4 12B / Qwen3.6 — privacy + no rate limit |
 | Multi-step planning | Bade kaam automatically todna |
-| Local server | Phone se laptop ke agent ko baat karana |
+| Email + Calendar tools | Gmail/Google Calendar API |
+| History compaction | Purani baatein LLM-summary mein |
 
 ---
 
@@ -186,7 +199,8 @@ JARVIS ab sach mein insaan jaisa bolta hai. Detail: [PHASE5A_UPDATE.md](PHASE5A_
 4. ✅ Phase 4A (Python side)   <- HO GAYA — HTTP contract + tests
    ✅ Phase 4B (Kotlin app)   <- HO GAYA — 1,340 lines, security 8/8
 5. ✅ Phase 5A (Human Voice)   <- HO GAYA — Hindi TTS + streaming + barge-in + free wake word
-   🎯 Phase 5  (Powerful)     <- NEXT — vector memory, scheduler, proactive
+   ✅ Phase 5B (Powerful)     <- HO GAYA — scheduler + proactive + vector memory + Telegram + CI
+   🎯 Phase 5C (Advanced)     <- NEXT — web auth, email/calendar, planner
 ```
 
 ---

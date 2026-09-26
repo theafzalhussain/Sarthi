@@ -386,6 +386,50 @@ async def wake_word_loop(agent: Agent, tts: TTSEngine, stream_handler: RealtimeS
 
 
 # ----------------------------------------------------------------------
+#  Proactive Loop (Phase 5B) — JARVIS KHUD bolta hai
+# ----------------------------------------------------------------------
+
+async def proactive_loop(agent: Agent, tts: TTSEngine) -> None:
+    """
+    Scheduler poll karta hai — due reminder aate hi JARVIS khud bolta hai.
+
+    Pehle sirf react karta tha; ab reminders pe wo khud awaaz deta hai:
+    "⏰ Reminder: chai pi lo Sir". Agent band tha tab bhi due hue tasks
+    (missed catch-up) bhi pakde jaate hain.
+    """
+    from saarthi.proactive import ProactiveEngine, format_announcement
+
+    scheduler = getattr(agent, "scheduler", None)
+    if scheduler is None:
+        return
+
+    async def announce(kind: str, text: str) -> None:
+        ui.line(f"\n  🔔 {text}", BRAND)
+        if VOICE_OUTPUT_ENABLED:
+            await asyncio.to_thread(tts.say, text)
+
+    engine = ProactiveEngine(scheduler, on_announce=announce)
+    await engine.start()
+
+    # Session-start briefing — koi kaam due ho to khud bata do
+    try:
+        briefing = await engine.briefing()
+        if briefing:
+            ui.line(f"\n  🔔 {briefing}", BRAND)
+            if VOICE_OUTPUT_ENABLED:
+                await asyncio.to_thread(tts.say, briefing.replace("\n", ". "))
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("jarvis").debug("Briefing fail: %s", exc)
+
+    try:
+        # Engine khud loop chalata hai — bas is task ko zinda rakho
+        while True:
+            await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        await engine.stop()
+
+
+# ----------------------------------------------------------------------
 #  Main Jarvis Loop
 # ----------------------------------------------------------------------
 
@@ -409,6 +453,19 @@ async def main() -> int:
     wake_task = None
     if "--no-wake" not in sys.argv:
         wake_task = asyncio.create_task(wake_word_loop(agent, tts, stream_handler))
+
+    # 4b. Proactive loop — reminders pe JARVIS khud bolega (Phase 5B)
+    if "--no-proactive" not in sys.argv:
+        asyncio.create_task(proactive_loop(agent, tts))
+
+    # 4c. Telegram bot — phone se JARVIS ko command (Phase 5B, optional)
+    telegram_bot = None
+    if "--no-telegram" not in sys.argv:
+        from saarthi.telegram_bot import TelegramBot
+
+        telegram_bot = TelegramBot(agent)
+        if await telegram_bot.start():
+            ui.line("  📡 Telegram bot live — phone se JARVIS online", OK)
 
     # CLI args
     if "--mute" in sys.argv:

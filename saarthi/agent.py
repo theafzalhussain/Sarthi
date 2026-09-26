@@ -246,6 +246,17 @@ class Agent:
         self.memory = memory or MemoryStore()
         self.skills = skills or SkillStore()
 
+        # --- Persistent scheduler (Phase 5B) ---
+        # Reminders ab SQLite mein — restart pe bhi zinda.
+        # fail-safe: db na bane to bhi agent chalta rahe (None hi rehta hai)
+        self.scheduler = None
+        try:
+            from .scheduler import TaskScheduler
+
+            self.scheduler = TaskScheduler()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Scheduler init fail (reminders temporary rahenge): %s", exc)
+
         # --- Dikha Do Mode ---
         self.recorder = SkillRecorder()
         self.runner = SkillRunner(
@@ -287,6 +298,7 @@ class Agent:
             confirm=self.confirm,
             memory=self.memory,
             skills=self.skills,
+            scheduler=self.scheduler,
             scratch={
                 "recorder": self.recorder,
                 "skill_runner": self.runner,
@@ -370,9 +382,30 @@ class Agent:
         # Structured hints ke saath LLM ko bhejo.
         # Image attach hui ho to usi user message ke saath bhejo —
         # router.py dekh lega ki image hai aur vision provider chunega.
+        user_text = build_user_message(parsed, reply_language)
+
+        # --- SEMANTIC RECALL (Phase 5B) ---
+        # Purani baatein MEANING se dhoondo (keyword nahi) — user jab
+        # "wo photographer wali baat" bole to purana turn yaad aaye.
+        # User message ke ANDAR inject karte hain (history pollute nahi).
+        try:
+            relevant = await self.memory.search_relevant_history(
+                user_input, limit=3, min_score=0.22
+            )
+            if relevant:
+                recall_lines = "\n".join(
+                    f'- "{r["text"][:150]}"' for r in relevant
+                )
+                user_text += (
+                    "\n\n[Purani relevant baatein — isi topic pe pehle ye hua tha]\n"
+                    + recall_lines
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Semantic recall skip: %s", exc)
+
         self.messages.append(
             Message.user(
-                build_user_message(parsed, reply_language),
+                user_text,
                 image_b64=image_b64,
             )
         )

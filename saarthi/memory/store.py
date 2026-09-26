@@ -26,12 +26,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import settings as default_settings
+
+log = logging.getLogger("saarthi.memory.store")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (
@@ -92,6 +96,30 @@ class MemoryStore:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
+
+        # --- Semantic recall (Phase 5B) ---
+        # Same db file, alag table. fail-safe: fail ho to keyword search
+        # waise hi chalta rahega (semantic optional hai).
+        self._semantic = None
+
+    @property
+    def semantic(self):
+        """SemanticMemory (lazy) — meaning-based recall ke liye."""
+        if self._semantic is None:
+            # MEMORY_SEMANTIC=false se off (keyword search hi chalega)
+            if os.getenv("MEMORY_SEMANTIC", "true").strip().lower() in {
+                "0", "false", "no", "off",
+            }:
+                self._semantic = False
+                return None
+            try:
+                from .vector import SemanticMemory
+
+                self._semantic = SemanticMemory(self.db_path)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Semantic memory init fail: %s", exc)
+                self._semantic = False  # dobara try nahi (fail-fast)
+        return self._semantic or None
 
     # ------------------------------------------------------------------
     #  Plumbing
@@ -246,9 +274,22 @@ class MemoryStore:
         content: str,
         meta: dict | None = None,
     ) -> None:
-        """Conversation ka ek message save karo."""
+        """Conversation ka ek message save karo (+ semantic index)."""
         meta_json = json.dumps(meta, ensure_ascii=False) if meta else None
         await self._run(self._log_sync, session_id, role, content, meta_json)
+
+        # Semantic index (Phase 5B) — taaki "wo baat" meaning se mile.
+        # Sirf kaafi lambe messages index karo (chhote "haan"/"ok" bekaar)
+        if role in ("user", "assistant") and content and len(content) > 25:
+            semantic = self.semantic
+            if semantic is not None:
+                try:
+                    await semantic.add(
+                        content,
+                        meta={"session_id": session_id, "role": role},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("Semantic index skip: %s", exc)
 
     def _history_sync(
         self, session_id: str | None, limit: int
@@ -324,6 +365,39 @@ class MemoryStore:
     # ------------------------------------------------------------------
     #  Context for the LLM
     # ------------------------------------------------------------------
+
+    async def search_relevant_history(
+        self,
+        query: str,
+        limit: int = 3,
+        min_score: float = 0.18,
+    ) -> list[dict]:
+        """
+        MEANING se purani baatein dhoondo (Phase 5B — semantic recall).
+
+        "pichle mahine photographer wali baat" -> photographer stored
+        na bhi ho to bhi trigram overlap se "photo shoot" wale turns
+        mil jaate hain. Keyword search ye nahi kar sakta.
+
+        Returns: [{text, score, meta}] — nayi se purani sort by score.
+        """
+        semantic = self.semantic
+        if semantic is None:
+            # Fallback: purana keyword search
+            try:
+                turns = await self.search_history(query, limit=limit)
+                return [
+                    {"text": t.content, "score": 0.1, "meta": {"role": t.role}}
+                    for t in turns
+                ]
+            except Exception:  # noqa: BLE001
+                return []
+
+        try:
+            return await semantic.search(query, limit=limit, min_score=min_score)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Semantic search fail: %s", exc)
+            return []
 
     async def build_context(self, max_facts: int = 25) -> str:
         """

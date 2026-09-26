@@ -480,10 +480,21 @@ class ScreenVisionTool(Tool):
 
 
 class ReminderTool(Tool):
+    """
+    Reminder set karo — PERSISTENT (Phase 5B).
+
+    PEHLE: asyncio.create_task — PC restart = reminder gayab.
+    AB: TaskScheduler (SQLite) mein save — restart ke baad bhi zinda,
+    recurring support (roz/hafte), aur ProactiveEngine khud bolta hai.
+
+    Fallback: scheduler na ho to purana in-memory behavior (kuch to chale).
+    """
+
     name = "reminder_set"
     description = (
-        "Set a countdown timer or reminder with an alarm. "
-        "Example: remind in 10 minutes to 'drink water', or '5 minutes for tea'."
+        "Set a reminder or timer. Persists across restarts. "
+        "Example: 'remind me in 10 minutes to drink water', "
+        "'remind daily at 8' (repeat=daily), 'remind in 30 minutes for tea'."
     )
     parameters = {
         "type": "object",
@@ -496,17 +507,48 @@ class ReminderTool(Tool):
                 "type": "string",
                 "description": "What to remind the user about",
             },
+            "repeat": {
+                "type": "string",
+                "enum": ["none", "daily", "weekly"],
+                "description": "Recurrence — 'daily' = roz isi time pe, default none",
+            },
         },
         "required": ["minutes", "message"],
     }
 
-    async def run(self, ctx: ToolContext, minutes: float, message: str) -> ActionResult:
-        secs = max(1, int(float(minutes) * 60))
+    async def run(
+        self,
+        ctx: ToolContext,
+        minutes: float,
+        message: str,
+        repeat: str = "none",
+    ) -> ActionResult:
+        minutes = max(0.01, float(minutes))
+        recurrence = repeat if repeat in ("none", "daily", "weekly") else "none"
 
-        # Launch async background task for reminder
+        # --- PERSISTENT path (Phase 5B) ---
+        scheduler = getattr(ctx, "scheduler", None)
+        if scheduler is not None:
+            try:
+                task = await scheduler.add(
+                    message=message,
+                    due_in_minutes=minutes,
+                    recurrence=recurrence,
+                )
+                repeat_note = "" if recurrence == "none" else f" (repeats {recurrence})"
+                return ActionResult.success(
+                    f"Reminder set: '{message}' — {task.due_text()} "
+                    f"(in {minutes:g} min){repeat_note}. "
+                    f"Task #{task.id} saved persistently."
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Persistent reminder fail, in-memory pe fallback: %s", exc)
+
+        # --- Fallback: purana in-memory (scheduler na ho to) ---
+        secs = max(1, int(minutes * 60))
+
         async def _reminder_coro(delay: int, text: str):
             await asyncio.sleep(delay)
-            # Beep / sound alert
             try:
                 if sys.platform == "win32":
                     import winsound
@@ -517,8 +559,67 @@ class ReminderTool(Tool):
                 pass
 
         asyncio.create_task(_reminder_coro(secs, message))
+        note = " (temporary — scheduler unavailable, restart pe gayab hoga)"
         return ActionResult.success(
-            f"Reminder set for {minutes} minute(s) ({secs} seconds): '{message}'."
+            f"Reminder set for {minutes:g} minute(s): '{message}'.{note}"
+        )
+
+
+class RemindersListTool(Tool):
+    """Saare pending reminders dikhao — persistent scheduler se."""
+
+    name = "reminders_dikhao"
+    description = (
+        "List all pending reminders/tasks with their due times. "
+        "Use when user asks 'mere reminders dikhao' / 'kya kya yaad dilaya hai'."
+    )
+    parameters = {"type": "object", "properties": {}}
+
+    async def run(self, ctx: ToolContext) -> ActionResult:
+        scheduler = getattr(ctx, "scheduler", None)
+        if scheduler is None:
+            return ActionResult.failure("Scheduler available nahi hai")
+
+        tasks = await scheduler.pending(limit=20)
+        if not tasks:
+            return ActionResult.success("Koi pending reminder nahi hai.")
+
+        from ..scheduler import format_task_list
+
+        return ActionResult.success(
+            "Pending reminders:\n" + format_task_list(tasks)
+        )
+
+
+class ReminderCancelTool(Tool):
+    """Reminder hatao — id se ya sab."""
+
+    name = "reminder_hatao"
+    description = (
+        "Cancel a reminder by its id (from reminders_dikhao list). "
+        "Use when user says 'wo reminder hata do' / 'cancel reminder 3'."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "task_id": {
+                "type": "integer",
+                "description": "Reminder ka id (reminders_dikhao se milega)",
+            },
+        },
+        "required": ["task_id"],
+    }
+
+    async def run(self, ctx: ToolContext, task_id: int) -> ActionResult:
+        scheduler = getattr(ctx, "scheduler", None)
+        if scheduler is None:
+            return ActionResult.failure("Scheduler available nahi hai")
+
+        ok = await scheduler.cancel(int(task_id))
+        if ok:
+            return ActionResult.success(f"Reminder #{task_id} cancel ho gaya.")
+        return ActionResult.failure(
+            f"#{task_id} nahi mila. reminders_dikhao chala ke sahi id dekho."
         )
 
 
@@ -534,4 +635,6 @@ def system_tools() -> list[Tool]:
         AppControlTool(),
         ScreenVisionTool(),
         ReminderTool(),
+        RemindersListTool(),
+        ReminderCancelTool(),
     ]
