@@ -295,6 +295,15 @@ nikaal, phir wahi use kar. Google pe mat atko — site ke ANDAR navigate kar.
 #  Safety
 # ======================================================================
 
+PLANNING_RULES = """
+PLANNING RULES (bade kaam ke liye):
+- Agar task me 3+ alag-alag kaam hain (multi-step), PEHLE plan_banao call karo —
+  chhote ordered steps likho (2-8), phir ek-ek step apne tools se EXECUTE karo.
+- Har step ke baad plan_update call karo (done/failed/skip) — user ko progress dikhta rahe.
+- Ek step fail ho to usko failed mark karke aage badho, end mein batana kya adhoora reh gaya.
+- Chhote kaam (ek tool se hone wale) pe plan banana bekaar hai — seedha karo.
+"""
+
 SAFETY_RULES = """
 SURAKSHA:
 
@@ -334,6 +343,7 @@ def build_system_prompt(
         BEHAVIOUR_RULES,
         SITE_KNOWLEDGE,
         SAFETY_RULES,
+        PLANNING_RULES,
     ]
 
     if device_info:

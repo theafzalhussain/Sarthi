@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -257,6 +258,15 @@ class Agent:
         except Exception as exc:  # noqa: BLE001
             log.warning("Scheduler init fail (reminders temporary rahenge): %s", exc)
 
+        # --- Local calendar (Phase 5C) ---
+        self.calendar = None
+        try:
+            from .calendar_store import CalendarStore
+
+            self.calendar = CalendarStore()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Calendar init fail: %s", exc)
+
         # --- Dikha Do Mode ---
         self.recorder = SkillRecorder()
         self.runner = SkillRunner(
@@ -302,6 +312,7 @@ class Agent:
             scratch={
                 "recorder": self.recorder,
                 "skill_runner": self.runner,
+                "calendar_store": self.calendar,
             },
         )
 
@@ -378,6 +389,15 @@ class Agent:
 
         # Tokens bachane aur real-time speed ke liye history trim karo
         self.trim_history(keep_messages=12 if getattr(self.settings, "jarvis_mode", False) else 30)
+
+        # SMART COMPACTION (Phase 5C): lambi baat-cheet mein purane
+        # turns ka summary ban jaata hai — context kho nahi jaata
+        try:
+            await self.compact_history(
+                keep_recent=10 if getattr(self.settings, "jarvis_mode", False) else 16
+            )
+        except Exception as exc:  # noqa: BLE001 — compaction kabhi turn na roke
+            log.debug("Compaction skip: %s", exc)
 
         # Structured hints ke saath LLM ko bhejo.
         # Image attach hui ho to usi user message ke saath bhejo —
@@ -877,6 +897,97 @@ class Agent:
         removed = len(self.messages) - len(recent) - 1
         self.messages = [system] + recent
         return removed
+
+    async def compact_history(
+        self,
+        keep_recent: int = 16,
+        max_summary_chars: int = 1200,
+        summarize_fn=None,
+    ) -> int:
+        """
+        PURANI baatein LLM-summary mein badlo — CUT nahi (Phase 5C).
+
+        trim_history() seedha message DELETE karta tha — thread ka
+        shuruaati context kho jaata tha. Compaction mein:
+
+            purane turns -> chhota saaraansh (LLM se) -> ek SYSTEM
+            message ke roop mein rehta hai, recent `keep_recent`
+            turns ke saath.
+
+        Fallback: LLM na chale to pehle 500 chars ka raw saaraansh —
+        kuch bhi na hone se zyada hai.
+
+        Args:
+            summarize_fn: tests fake summarizer inject karte hain
+                          (async fn(text) -> str). None = asli brain.
+
+        Returns: kitne messages compact hue (0 = kuch nahi hua).
+        """
+        threshold = int(
+            os.getenv("HISTORY_COMPACT_THRESHOLD", str(keep_recent + 20))
+        )
+        if len(self.messages) <= threshold:
+            return 0
+
+        if os.getenv("HISTORY_COMPACT", "true").strip().lower() in {
+            "0", "false", "no", "off",
+        }:
+            return 0
+
+        system = self.messages[0]
+        recent = self.messages[-keep_recent:]
+        old = self.messages[1:-keep_recent]
+
+        # Sirf user/assistant text compact karo (tool results/images drop)
+        old_text_parts: list[str] = []
+        for m in old:
+            if m.role in (Role.USER, Role.ASSISTANT) and m.content and not m.has_image:
+                tag = "User" if m.role == Role.USER else "Jarvis"
+                old_text_parts.append(f"{tag}: {m.content[:300]}")
+
+        if not old_text_parts:
+            # compact karne layak kuch nahi — purana trim hi kaafi tha
+            removed = len(self.messages) - len(recent) - 1
+            self.messages = [system] + recent
+            return removed
+
+        raw_text = "\n".join(old_text_parts)[:6000]
+
+        # --- Summary banao ---
+        summary = ""
+        if summarize_fn is None:
+            async def _brain_summary(text: str) -> str:
+                resp = await self.brain.think(
+                    messages=[
+                        Message.system(
+                            "Tu conversation summarizer hai. Diye gaye purani "
+                            "baat-cheet ka saaraansh Hinglish mein likh — max "
+                            "150 shabd. Important facts (naam, numbers, dates, "
+                            "decisions, pending kaam) zaroor rakh. Bhasha "
+                            "simple rakhi."
+                        ),
+                        Message.user(text),
+                    ],
+                    max_tokens=400,
+                )
+                return resp.text or ""
+            summarize_fn = _brain_summary
+
+        try:
+            summary = str(await summarize_fn(raw_text)).strip()[:max_summary_chars]
+        except Exception as exc:  # noqa: BLE001 — summary fail ho to raw fallback
+            log.warning("Compaction summary fail, raw fallback: %s", exc)
+            summary = raw_text[:500]
+
+        compact_msg = Message.system(
+            "[PURANI BAAT-CHEET KA SAARAANSH — isi session ki baatein hain]\n"
+            + (summary or raw_text[:500])
+        )
+
+        before = len(self.messages)
+        self.messages = [system, compact_msg] + recent
+        log.info("History compacted: %d -> %d messages", before, len(self.messages))
+        return before - len(self.messages)
 
     async def status(self) -> str:
         """Agent ka pura status — CLI ke liye."""

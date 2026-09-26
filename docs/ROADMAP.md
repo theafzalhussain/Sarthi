@@ -166,16 +166,27 @@ Detail: [PHASE5B_UPDATE.md](PHASE5B_UPDATE.md)
 | Streaming TTS | ✅ (Phase 5A mein ho chuka tha) |
 | GitHub Actions CI — Python 3.10/3.11/3.12, full suite (555 tests) | ✅ |
 
-## 🎯 Phase 5C — Powerful banao (baaki)
+## ✅ Phase 5C — Advanced (HO GAYA)
+
+Detail: [PHASE5C_UPDATE.md](PHASE5C_UPDATE.md)
+
+| Kaam | Status |
+|---|---|
+| Web UI auth — SAARTHI_WEB_TOKEN + constant-time compare + auto token-JS | ✅ |
+| Email tools — mail_padho/dhoondho/bhejo (stdlib IMAP/SMTP, zero dep) | ✅ |
+| Calendar — Hinglish date parser + SQLite events + AUTO-reminder | ✅ |
+| Multi-step planner — plan_banao/update/dikhao (pure logic + scaffolding) | ✅ |
+| History compaction — LLM summary, context kabhi nahi kho jaata | ✅ |
+| Tools: 58 -> **68** | ✅ |
+
+## 🎯 Phase 5D — Future ideas
 
 | Kaam | Kyun |
 |---|---|
-| Web UI auth (token/PIN) | LAN pe bhi lock — G5 |
+| Google Calendar sync (OAuth) | Local calendar upar cloud sync |
 | Skill chaining | Ek skill doosri ko call kare |
-| On-device LLM | Gemma 4 12B / Qwen3.6 — privacy + no rate limit |
-| Multi-step planning | Bade kaam automatically todna |
-| Email + Calendar tools | Gmail/Google Calendar API |
-| History compaction | Purani baatein LLM-summary mein |
+| On-device LLM | Gemma/Qwen local — privacy + no rate limit |
+| Multi-device sync | Do PC, ek JARVIS |
 
 ---
 
@@ -200,7 +211,8 @@ Detail: [PHASE5B_UPDATE.md](PHASE5B_UPDATE.md)
    ✅ Phase 4B (Kotlin app)   <- HO GAYA — 1,340 lines, security 8/8
 5. ✅ Phase 5A (Human Voice)   <- HO GAYA — Hindi TTS + streaming + barge-in + free wake word
    ✅ Phase 5B (Powerful)     <- HO GAYA — scheduler + proactive + vector memory + Telegram + CI
-   🎯 Phase 5C (Advanced)     <- NEXT — web auth, email/calendar, planner
+   ✅ Phase 5C (Advanced)     <- HO GAYA — web auth + email + calendar + planner + compaction
+   🎯 Phase 5D (Future)       <- cloud sync, on-device LLM, skill chaining
 ```
 
 ---

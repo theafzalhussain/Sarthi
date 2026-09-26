@@ -6,6 +6,8 @@
 > ⚡ **UPDATE: Phase 5A (items 1-5 — Hindi TTS, Streaming TTS, Hinglish rules, Barge-in, Free wake word) IMPLEMENT HO GAYA.** Detail: [PHASE5A_UPDATE.md](PHASE5A_UPDATE.md) · 533 tests pass.
 >
 > ⚡ **UPDATE 2: Phase 5B bhi HO GAYA** — Persistent scheduler, Proactive mode, Vector memory, Telegram bot, GitHub CI. Detail: [PHASE5B_UPDATE.md](PHASE5B_UPDATE.md) · **555 tests pass**.
+>
+> ⚡ **UPDATE 3: Phase 5C bhi HO GAYA** — Web UI auth (G5 fix), Email tools, Hinglish Calendar, Multi-step Planner, History compaction · **68 tools, 592 tests**. [PHASE5C_UPDATE.md](PHASE5C_UPDATE.md)
 
 ---
 
