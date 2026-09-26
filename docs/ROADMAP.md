@@ -140,7 +140,20 @@ Achhi khabar: `skills/store.py` ka data format **same rahega**. Store aur runner
 
 ---
 
-## 🎯 Phase 5 — Powerful banao
+## ✅ Phase 5A — Human Voice (HO GAYA)
+
+JARVIS ab sach mein insaan jaisa bolta hai. Detail: [PHASE5A_UPDATE.md](PHASE5A_UPDATE.md)
+
+| Kaam | Status |
+|---|---|
+| Hindi neural voice — `hi-IN-MadhurNeural` auto-select + roman→Devanagari engine (~370 shabd dict + rules) | ✅ |
+| Hindi numbers TTS mein — "2500" → "दो हज़ार पांच सौ", time "8:30" → "aath bajke tees" | ✅ |
+| Streaming TTS — LLM ka pehla sentence aate hi bolna shuru (VoiceSession + jarvis.py dono) | ✅ |
+| Barge-in — bolte waqt beech mein tokna (VOICE_BARGE_IN=true; headphone pe reliable) | ✅ |
+| Free wake word — `WAKE_MODE=oww` (openwakeword "hey_jarvis", zero API key) | ✅ |
+| 44 naye pure-logic tests — total **533 tests pass** | ✅ |
+
+## 🎯 Phase 5 — Powerful banao (baaki)
 
 | Kaam | Kyun |
 |---|---|
@@ -172,7 +185,8 @@ Achhi khabar: `skills/store.py` ka data format **same rahega**. Store aur runner
 3. ✅ Phase 3 (Browser+Polish) <- HO GAYA (v2.0)
 4. ✅ Phase 4A (Python side)   <- HO GAYA — HTTP contract + tests
    ✅ Phase 4B (Kotlin app)   <- HO GAYA — 1,340 lines, security 8/8
-5. 🎯 Phase 5 (Powerful)      <- NEXT — polish + advanced features
+5. ✅ Phase 5A (Human Voice)   <- HO GAYA — Hindi TTS + streaming + barge-in + free wake word
+   🎯 Phase 5  (Powerful)     <- NEXT — vector memory, scheduler, proactive
 ```
 
 ---

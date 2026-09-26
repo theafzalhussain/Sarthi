@@ -24,6 +24,16 @@ EK ACCHI CHEEZ (Pillar #1 aur #2 ka milaap):
     Ye compounding fayda hai — normal voice assistants mein nahi hota.
 
 
+PHASE 5A UPGRADES (naye powers):
+    1. STREAMING TTS  — LLM ka pehla sentence aate hi bolna shuru,
+       poore jawab ka intezaar nahi. Order kabhi nahi badalta.
+    2. BARGE-IN       — agent ke bolte waqt bol do, wo TURANT chup
+       ho jaata hai (VOICE_BARGE_IN=true se on; headphone pe best).
+    3. HINGLISH VOICE — Hinglish jawab Hindi neural voice (Madhur) se
+       Devanagari mein bolta hai — "bhai, 2500 ka bill bhar do" ab
+       "भाई, दो हज़ार पांच सौ का बिल भर दो" jaisa sunai deta hai.
+
+
 TECHNICAL NOTE:
     Audio I/O BLOCKING hai (mic se padhna, bolna). Agent ASYNC hai.
     Isliye blocking kaam `asyncio.to_thread` mein chalate hain, warna
@@ -31,9 +41,9 @@ TECHNICAL NOTE:
 
 
 IMAANDAAR LIMITATION:
-    Barge-in support nahi hai — jab agent bol raha ho, tu beech mein
-    tok ke nahi rok sakta. Uske liye echo cancellation chahiye hoti hai
-    jo kaafi mushkil hai. Abhi: agent bolega, phir sunega.
+    Barge-in speaker pe echo false-trigger de sakta hai (AEC nahi hai)
+    — isliye wo DEFAULT OFF hai. Headphone pe bharosemand hai. Bina
+    barge-in ke: agent bolega, phir sunega.
 """
 
 from __future__ import annotations
@@ -49,10 +59,12 @@ from .audio import (
     AudioError,
     DetectorStatus,
     ListenState,
+    MicMonitor,
     Recorder,
     is_audio_available,
 )
 from .stt import WhisperConfig, WhisperSTT, is_stt_available, stt_setup_help
+from .streaming import StreamSpeaker
 from .tts import TTSConfig, TTSEngine
 from .wake import WakeConfig, WakeDetector, create_wake_detector
 
@@ -82,6 +94,15 @@ class VoiceConfig:
     # Kitni baar dobara puchein jab samajh na aaye
     max_retries: int = 2
 
+    # STREAMING TTS (Phase 5A): LLM ka jawab sentence-by-sentence bolna
+    # — poore jawab ka intezaar nahi. Pehli awaaz ~1-2 sec mein.
+    streaming_tts: bool = True
+
+    # BARGE-IN (Phase 5A): agent ke bolte waqt beech mein tokna.
+    # DEFAULT OFF — speakers pe echo false-trigger de sakta hai.
+    # HEADPHONE use karte ho to true karo, experience real ho jaata hai.
+    barge_in: bool = False
+
     @classmethod
     def from_env(cls) -> "VoiceConfig":
         import os
@@ -90,7 +111,7 @@ class VoiceConfig:
             raw = os.getenv(key)
             if raw is None:
                 return default
-            return raw.strip().lower() in {"1", "true", "yes", "haan", "y"}
+            return raw.strip().lower() in {"1", "true", "yes", "haan", "y", "on"}
 
         return cls(
             audio=AudioConfig.from_env(),
@@ -99,6 +120,8 @@ class VoiceConfig:
             wake=WakeConfig.from_env(),
             speak_replies=_bool("VOICE_SPEAK_REPLIES", True),
             voice_confirmations=_bool("VOICE_CONFIRMATIONS", True),
+            streaming_tts=_bool("VOICE_STREAMING_TTS", True),
+            barge_in=_bool("VOICE_BARGE_IN", False),
         )
 
 
@@ -141,6 +164,9 @@ class VoiceSession:
 
         # Whisper ko bias karne wale words (memory + skills se)
         self._extra_words: list[str] = []
+
+        # STREAMING TTS — LLM ke sentence bolte jaata hai (Phase 5A)
+        self.speaker = StreamSpeaker(self.tts, enabled=self.config.streaming_tts)
 
         self.running = False
 
@@ -309,13 +335,55 @@ class VoiceSession:
         return result.text
 
     async def speak(self, text: str) -> None:
-        """Bolo (blocking -> thread mein)."""
+        """
+        Bolo (blocking -> thread mein).
+
+        BARGE-IN on hai to bolte waqt mic monitor chalta hai — user
+        beech mein bole to playback turant ruk jaata hai.
+        """
         if not text or not self.config.speak_replies:
             return
         try:
-            await asyncio.to_thread(self.tts.say, text)
+            if self.config.barge_in and self.tts.has_voice:
+                await self._speak_with_barge_in(text)
+            else:
+                await asyncio.to_thread(self.tts.say, text)
         except Exception as exc:  # noqa: BLE001 — awaaz fail ho to session na ruke
             log.warning("TTS fail: %s", exc)
+
+    async def _speak_with_barge_in(self, text: str) -> None:
+        """
+        Bolo + saath mein mic suno. User bole to TURANT chup.
+
+        MicMonitor halka hai (background stream, RMS check) — event loop
+        block nahi hota. Mic na mile to normal speak hi ho jaata hai.
+        """
+        monitor = MicMonitor(self.config.audio)
+        if not monitor.start():
+            # Mic monitor nahi chala — barge-in nahi, seedha bolo
+            await asyncio.to_thread(self.tts.say, text)
+            return
+
+        task = asyncio.create_task(asyncio.to_thread(self.tts.say, text))
+        interrupted = False
+        try:
+            while not task.done():
+                await asyncio.sleep(0.08)
+                if monitor.should_interrupt():
+                    interrupted = True
+                    self.tts.stop_speaking()
+                    self.on_event("barge_in", "User interrupted — stopped speaking")
+                    break
+        finally:
+            monitor.stop()
+            try:
+                # Task khatam hone do (cancel flag pe khud ruk jaayega)
+                await asyncio.wait_for(asyncio.shield(task), timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
+
+        if interrupted:
+            self.on_event("info", "Aap ne roka — sun raha hun")
 
     # ------------------------------------------------------------------
     #  Voice confirmation
@@ -371,6 +439,38 @@ class VoiceSession:
         return False
 
     # ------------------------------------------------------------------
+    #  Streaming TTS wiring
+    # ------------------------------------------------------------------
+
+    def _attach_stream_tts(self) -> None:
+        """
+        Agent ke `on_output` mein apna stream hook lagao.
+
+        Agent run_turn ke dauraan ("stream", token) emit karta hai —
+        wahi tokens speaker ko jaate hain aur sentences bolte jaate
+        hain. Pehla sentence aate hi awaaz shuru — poora jawab ka
+        intezaar nahi.
+
+        Pehla original handler PRESERVE hota hai (CLI ne jo lagaya tha
+        wo bhi chalta rahega).
+        """
+        original = getattr(self.agent, "on_output", None)
+
+        def handler(kind: str, text: str) -> None:
+            if kind == "stream" and text:
+                self.speaker.feed(text)
+            if original is not None:
+                try:
+                    original(kind, text)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        try:
+            self.agent.on_output = handler
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Streaming TTS attach fail: %s", exc)
+
+    # ------------------------------------------------------------------
     #  Main loop
     # ------------------------------------------------------------------
 
@@ -391,6 +491,11 @@ class VoiceSession:
         # Agent ko voice confirmations do
         if self.config.voice_confirmations:
             self.agent.confirm = self.voice_confirm
+
+        # STREAMING TTS: agent ke stream tokens ko speaker mein daalo
+        # (purana on_output preserve hota hai — CLI/web bhi chalta rahega)
+        if self.config.streaming_tts:
+            self._attach_stream_tts()
 
         await self.agent.start_session()
         await self.refresh_vocabulary()
@@ -430,12 +535,23 @@ class VoiceSession:
 
                 # --- 3. Process with agent ---
                 self.on_event("working", "Processing...")
+                self.speaker.reset()  # naya turn — purana buffer saaf
                 result = await self.agent.run_turn(text)
 
                 # --- 4. Jawab bolo ---
                 reply = result.error or result.reply
                 self.on_event("reply", reply)
-                await self.speak(reply)
+
+                if self.config.streaming_tts and not result.error:
+                    # Streaming: zyada-tar sentences bol chuka — bache
+                    # hue bol do aur worker ke khatam hone ka intezaar
+                    await self.speaker.finish()
+                    # Safety net: streaming se kuch nahi bola gaya
+                    # (provider ne stream nahi diya etc.) to poora bolo
+                    if not self.speaker.spoken_count and reply:
+                        await self.speak(reply)
+                else:
+                    await self.speak(reply)
 
                 # Naya kuch seekha ho to vocabulary update karo
                 if any(
@@ -481,6 +597,11 @@ class VoiceSession:
         lines.append(
             f"  Mic: {'available' if is_audio_available() else 'not available'}"
         )
+
+        # Phase 5A naye features
+        tts_mode = "streaming" if self.config.streaming_tts else "full-reply"
+        barge = "on" if self.config.barge_in else "off (VOICE_BARGE_IN=true)"
+        lines.append(f"  Speech: {tts_mode} TTS · barge-in {barge}")
 
         if self._extra_words:
             preview = ", ".join(self._extra_words[:6])

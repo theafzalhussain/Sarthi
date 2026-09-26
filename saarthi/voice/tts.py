@@ -194,8 +194,24 @@ class TTSConfig:
     # piper | espeak | say | pyttsx3 | null | auto
     backend: str = "auto"
 
-    # Edge TTS voice (e.g. en-GB-RyanNeural for Jarvis, en-IN-PrabhatNeural for Indian English)
-    edge_voice: str = "en-GB-RyanNeural"
+    # Voice choice: "auto" (recommended) ya specific voice name.
+    #
+    # auto = text dekh ke khud chunna:
+    #   Hinglish/Hindi text -> hinglish_voice  (hi-IN-MadhurNeural —
+    #                           Jarvis-type Hindi male, neural)
+    #   pure English        -> english_voice   (en-GB-RyanNeural)
+    edge_voice: str = "auto"
+
+    # Hinglish/Hindi content ki voice (Jarvis feel — Madhur best hai)
+    hinglish_voice: str = "hi-IN-MadhurNeural"
+
+    # Pure English content ki voice (original Jarvis)
+    english_voice: str = "en-GB-RyanNeural"
+
+    # Roman Hinglish ko Devanagari mein badal ke bolna?
+    # Hindi voice ke liye ZAROORI — warna "kholo" "koh-loh" sunai deta hai.
+    # Ye pipeline hinglish_tts.py mein hai (dict + conservative rules).
+    hinglish_devanagari: bool = True
 
     # Piper ka voice model (.onnx file ka path)
     piper_model: str | None = None
@@ -218,9 +234,20 @@ class TTSConfig:
             except ValueError:
                 return default
 
+        def _bool(key: str, default: bool) -> bool:
+            raw = os.getenv(key)
+            if raw is None:
+                return default
+            return raw.strip().lower() in {"1", "true", "yes", "haan", "y", "on"}
+
         return cls(
             backend=os.getenv("TTS_BACKEND", "auto").strip().lower(),
-            edge_voice=os.getenv("EDGE_VOICE", os.getenv("JARVIS_VOICE", "en-GB-RyanNeural")).strip(),
+            edge_voice=os.getenv(
+                "EDGE_VOICE", os.getenv("JARVIS_VOICE", "auto")
+            ).strip(),
+            hinglish_voice=os.getenv("EDGE_HINGLISH_VOICE", "hi-IN-MadhurNeural").strip(),
+            english_voice=os.getenv("EDGE_ENGLISH_VOICE", "en-GB-RyanNeural").strip(),
+            hinglish_devanagari=_bool("TTS_DEVANAGARI", True),
             piper_model=os.getenv("PIPER_MODEL") or None,
             espeak_voice=os.getenv("ESPEAK_VOICE", "en-in").strip(),
             speed=_float("TTS_SPEED", 1.0),
@@ -612,28 +639,54 @@ class EdgeTTS(TTSBackend):
     name = "edge"
     quality = "ultra-realistic (neural, free)"
 
+    def __init__(self, config: TTSConfig | None = None):
+        super().__init__(config)
+        # Barge-in / streaming cancel ke liye — engine set karta hai
+        self._cancel_event = None       # threading.Event | None
+        self._active_proc = None        # chalta hua playback process
+
+    # ------------------------------------------------------------------
+
+    def attach_cancel_event(self, event) -> None:
+        """Engine isse cancel-event deta hai — speak() isko respect karta hai."""
+        self._cancel_event = event
+
+    def _cancelled(self) -> bool:
+        return self._cancel_event is not None and self._cancel_event.is_set()
+
     def is_available(self) -> bool:
         return HAS_EDGE_TTS
 
     def _resolve_voice(self, text: str) -> str:
-        """Automatically pick the best neural voice based on language."""
-        if self.config.edge_voice:
-            return self.config.edge_voice
+        """
+        Text ke hisaab se best neural voice.
+
+        edge_voice="auto" (default) -> Hinglish/Hindi pe Madhur (Hindi
+        neural), pure English pe Ryan (Jarvis). Fixed voice chahiye to
+        EDGE_VOICE=<voice name> set karo.
+        """
+        chosen = (self.config.edge_voice or "auto").strip()
+        if chosen and chosen.lower() not in ("auto", "mixed"):
+            return chosen
+
         try:
-            from ..lang.normalize import detect_language
-            if detect_language(text) == "hinglish":
-                return "hi-IN-MadhurNeural"
-            return "en-GB-RyanNeural"
+            from .hinglish_tts import pick_voice_kind
+            if pick_voice_kind(text) == "hi":
+                return self.config.hinglish_voice or "hi-IN-MadhurNeural"
+            return self.config.english_voice or "en-GB-RyanNeural"
         except Exception:
-            return "en-GB-RyanNeural"
+            return self.config.english_voice or "en-GB-RyanNeural"
 
     def speak(self, text: str) -> bool:
         if not text or not self.is_available():
             return False
 
         import asyncio
-        import concurrent.futures
         import tempfile
+
+        # Cancel already ho chuka hai? Bolo mat.
+        if self._cancelled():
+            return False
 
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             temp_file = Path(f.name)
@@ -648,6 +701,8 @@ class EdgeTTS(TTSBackend):
                 loop = None
 
             if loop and loop.is_running():
+                import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     pool.submit(asyncio.run, communicate.save(str(temp_file))).result(timeout=15)
             else:
@@ -667,18 +722,43 @@ class EdgeTTS(TTSBackend):
                 pass
 
     def _play_mp3(self, path: Path) -> bool:
+        """
+        MP3 bajao — CANCEL-aware.
+
+        Pehle `subprocess.run(..., wait)` tha — usme playback ke beech
+        mein ROKNA impossible tha (barge-in ke liye zaroori tha). Ab
+        Popen + poll loop: cancel event dikha to process kill.
+        """
+        import time
+
         p_str = str(path.resolve())
+
         if sys.platform == "win32":
             try:
                 import ctypes
+                import threading
+
                 winmm = ctypes.windll.winmm
                 alias = f"edge_tts_{os.getpid()}"
                 winmm.mciSendStringW(f'close {alias}', None, 0, None)
                 err = winmm.mciSendStringW(f'open "{p_str}" type mpegvideo alias {alias}', None, 0, None)
                 if err == 0:
-                    winmm.mciSendStringW(f'play {alias} wait', None, 0, None)
+                    # `play wait` BLOCK karta hai — isliye alag thread mein,
+                    # yahan cancel ka intezaar + stop command
+                    done = threading.Event()
+
+                    def _play():
+                        winmm.mciSendStringW(f'play {alias} wait', None, 0, None)
+                        done.set()
+
+                    player = threading.Thread(target=_play, daemon=True)
+                    player.start()
+                    while not done.wait(0.1):
+                        if self._cancelled():
+                            winmm.mciSendStringW(f'stop {alias}', None, 0, None)
+                            break
                     winmm.mciSendStringW(f'close {alias}', None, 0, None)
-                    return True
+                    return not self._cancelled()
             except Exception as exc:  # noqa: BLE001
                 log.debug("MCI playback fail: %s", exc)
 
@@ -689,8 +769,25 @@ class EdgeTTS(TTSBackend):
         ):
             if shutil.which(cmd[0]):
                 try:
-                    subprocess.run(cmd, check=True, timeout=30)
-                    return True
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL,
+                    )
+                    self._active_proc = proc
+                    while proc.poll() is None:
+                        if self._cancelled():
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=2)
+                            except Exception:  # noqa: BLE001
+                                proc.kill()
+                            self._active_proc = None
+                            return False
+                        time.sleep(0.05)
+                    self._active_proc = None
+                    return proc.returncode == 0 and not self._cancelled()
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -835,6 +932,10 @@ class TTSEngine:
         Args:
             text: Kya bolna hai (markdown/emoji chalega, saaf ho jaayega)
             prepare: Text clean karna hai?
+
+        PIPELINE (Hindi voice on ho to):
+            markdown/emoji saaf -> numbers Hindi words -> Devanagari
+            "bhai, 2500 ka bill bhar do" -> "भाई, दो हज़ार पांच सौ का बिल भर दो"
         """
         if not text:
             return False
@@ -847,11 +948,91 @@ class TTSEngine:
         if not speech_text:
             return False
 
+        # --- Hinglish pipeline (Phase 5A) ---
+        # Hindi voice selected hai to text ko uske liye taiyaar karo:
+        # digits -> Hindi words, roman -> Devanagari.
+        if self.config.hinglish_devanagari:
+            try:
+                from .hinglish_tts import prepare_hinglish_speech
+                if self._voice_will_be_hindi(speech_text):
+                    speech_text = prepare_hinglish_speech(speech_text)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Hinglish pipeline skip: %s", exc)
+
         try:
             return self.backend.speak(speech_text)
         except Exception as exc:  # noqa: BLE001 — awaaz fail ho to agent na ruke
             log.warning("TTS failed (agent continues): %s", exc)
             return False
+
+    def _voice_will_be_hindi(self, text: str) -> bool:
+        """
+        Kya ye text Hindi voice se bolega jaayega?
+
+        Edge auto-mode mein pick_voice_kind decide karta hai. Dusre
+        backends (piper/espeak) ke liye bhi text hi decide karta hai.
+        """
+        try:
+            from .hinglish_tts import pick_voice_kind
+            kind = pick_voice_kind(text)
+        except Exception:
+            return False
+
+        try:
+            backend_name = self.backend.name
+        except Exception:  # noqa: BLE001
+            backend_name = "null"
+
+        if backend_name == "edge":
+            chosen = (self.config.edge_voice or "auto").strip().lower()
+            if chosen in ("auto", "mixed", ""):
+                return kind == "hi"
+            return chosen.startswith("hi-")
+        # Non-edge backends bhi hinglish text pe Hindi pipeline se behtar
+        return kind == "hi"
+
+    # ------------------------------------------------------------------
+    #  Cancel / barge-in support
+    # ------------------------------------------------------------------
+
+    def attach_cancel_event(self, event) -> None:
+        """
+        Streaming speaker apna cancel-event yahan attach karta hai.
+        Chal rahe playback ko beech mein rokne ke liye.
+        """
+        backend = self.backend
+        attach = getattr(backend, "attach_cancel_event", None)
+        if attach:
+            attach(event)
+
+    def stop_speaking(self) -> bool:
+        """
+        Abhi chal raha bolna TURANT rok do (barge-in / naya turn).
+
+        Returns: kuch roka ya nahi.
+        """
+        stopped = False
+
+        backend = self.backend
+
+        # 1. Chal raha playback process kill (EdgeTTS)
+        proc = getattr(backend, "_active_proc", None)
+        if proc is not None:
+            try:
+                proc.terminate()
+                stopped = True
+            except Exception:  # noqa: BLE001
+                pass
+
+        # 2. Backend ka apna cancel event set karo
+        event = getattr(backend, "_cancel_event", None)
+        if event is not None:
+            event.set()
+            stopped = True
+
+        if stopped:
+            log.info("TTS stop_speaking — playback cancel hua")
+        return stopped
 
     def save(self, text: str, path: str | Path) -> Path | None:
         """Audio file banao."""

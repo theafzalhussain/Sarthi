@@ -31,6 +31,7 @@ from saarthi.agent import Agent
 from saarthi.config import Settings
 from saarthi.tools.safety import format_confirmation, is_affirmative
 from saarthi.ui import BRAND, ERR, MUTED, OK, TEXT, WARN, Ui
+from saarthi.voice.hinglish_tts import SentenceBuffer
 from saarthi.voice.tts import TTSEngine
 from saarthi.web.app import create_app, get_local_ip
 
@@ -217,18 +218,46 @@ async def capture_voice_input() -> str | None:
 # ----------------------------------------------------------------------
 
 class RealtimeStreamHandler:
-    """Handles live token streaming and starts speech on the very first sentence."""
+    """
+    Handles live token streaming and speech — sentence-by-sentence.
+
+    Phase 5A upgrade:
+      - PEHLE: sirf PEHLA sentence bolta tha, baaki print-only, aur har
+        sentence ka alag task (overlap + order shuffle ho sakta tha).
+      - AB: HAR sentence apne number pe bolta hai — ek hi worker task
+        sequentially bolta hai (order guaranteed, overlap zero).
+        SentenceBuffer (pure logic, tested) tokens se sentences banata hai.
+    """
+
     def __init__(self, tts: TTSEngine, get_voice_enabled):
         self.tts = tts
         self.get_voice_enabled = get_voice_enabled
         self.has_printed_prefix = False
-        self.buffer = ""
+
+        # Sentence batching — tokens jodke sentences banata hai
+        self._buffer = SentenceBuffer(min_chars=30, max_chars=220)
+
+        # Sequential speak worker — ek hi task, order guaranteed
+        self._queue: "asyncio.Queue[str | None]" = asyncio.Queue()
+        self._worker: "asyncio.Task | None" = None
+
+        # Stats (spoken_sentence purana contract — fallback isse jaanta hai)
         self.spoken_sentence = False
+        self.spoken_count = 0
 
     def reset(self):
+        """Naya turn — purana speech cancel, buffer saaf."""
         self.has_printed_prefix = False
-        self.buffer = ""
-        self.spoken_sentence = False
+        self._buffer.clear()
+
+        # Purana bolna chal raha ho to rok do — naya jawab purane speech
+        # ke saath overlap nahi hona chahiye
+        if self._worker is not None and not self._worker.done():
+            self.tts.stop_speaking()
+        self._drain_queue()
+        self.spoken_count = 0
+
+    # ------------------------------------------------------------------
 
     def on_output(self, kind: str, text: str):
         if kind == "stream":
@@ -238,16 +267,9 @@ class RealtimeStreamHandler:
             sys.stdout.write(text)
             sys.stdout.flush()
 
-            if self.get_voice_enabled() and not self.spoken_sentence:
-                self.buffer += text
-                for punct in (". ", "! ", "? ", "\n", "। "):
-                    if punct in self.buffer:
-                        parts = self.buffer.split(punct, 1)
-                        sentence = (parts[0] + punct.strip()).strip()
-                        if len(sentence) > 5:
-                            self.spoken_sentence = True
-                            asyncio.create_task(asyncio.to_thread(self.tts.say, sentence))
-                        break
+            if self.get_voice_enabled():
+                for sentence in self._buffer.feed(text):
+                    self._enqueue(sentence)
         elif kind == "tool":
             ui.line(f"\n  ⚡ Tool: {text}", MUTED)
             self.has_printed_prefix = False
@@ -255,6 +277,70 @@ class RealtimeStreamHandler:
             ui.line(f"  🧠 Model: {text}", MUTED)
         elif kind == "error":
             ui.line(f"\n  ⚠️ {text}", WARN)
+
+    # ------------------------------------------------------------------
+
+    def _enqueue(self, sentence: str) -> None:
+        if not sentence.strip():
+            return
+        self._ensure_worker()
+        try:
+            self._queue.put_nowait(sentence)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _ensure_worker(self) -> None:
+        if self._worker is None or self._worker.done():
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+            self._worker = loop.create_task(self._run())
+
+    async def _run(self) -> None:
+        """Queue se sentences SEQUENTIALLY bolo — order kabhi nahi badalta."""
+        loop = asyncio.get_running_loop()
+        while True:
+            sentence = await self._queue.get()
+            try:
+                if sentence is None:
+                    return
+                try:
+                    await loop.run_in_executor(None, self.tts.say, sentence)
+                    self.spoken_count += 1
+                    self.spoken_sentence = True
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("Sentence speak fail: %s", exc)
+            finally:
+                self._queue.task_done()
+
+    def _drain_queue(self) -> None:
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+                self._queue.task_done()
+            except asyncio.QueueEmpty:
+                break
+
+    async def drain(self) -> None:
+        """
+        Turn khatam — bache hue text bolo, speech ke khatam hone ka
+        intezaar karo. process_input() isse call karta hai.
+        """
+        rest = self._buffer.flush()
+        if rest:
+            self._enqueue(rest)
+
+        self._enqueue(None)  # sentinel
+        if self._worker is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(self._worker), timeout=120)
+            except Exception:  # noqa: BLE001
+                pass
+
+    @property
+    def spoken_anything(self) -> bool:
+        return self.spoken_count > 0
 
 
 # ----------------------------------------------------------------------
@@ -456,9 +542,12 @@ async def process_input(text: str, agent: Agent, tts: TTSEngine, stream_handler:
     print()
     ui.muted(f"  [Response Time: {elapsed:.2f}s | Steps: {result.steps_used}]")
 
-    # If sentence was not spoken in stream, speak full reply
-    if VOICE_OUTPUT_ENABLED and not stream_handler.spoken_sentence and result.reply:
-        asyncio.create_task(asyncio.to_thread(tts.say, result.reply))
+    # Streaming speech: bache hue sentences bol do (drain) — zyada-tar
+    # bol chuka hoga. Sirf kuch nahi bola ho to poora reply bolo.
+    if VOICE_OUTPUT_ENABLED and not result.error:
+        await stream_handler.drain()
+        if not stream_handler.spoken_anything and result.reply:
+            asyncio.create_task(asyncio.to_thread(tts.say, result.reply))
     elif VOICE_OUTPUT_ENABLED and result.error:
         asyncio.create_task(asyncio.to_thread(tts.say, "An error occurred while executing the command, Sir."))
 

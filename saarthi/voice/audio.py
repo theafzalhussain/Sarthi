@@ -28,6 +28,7 @@ import queue
 import shutil
 import subprocess
 import sys
+import threading
 import wave
 from dataclasses import dataclass
 from enum import Enum
@@ -1186,3 +1187,177 @@ def play_wav(path: str | Path) -> bool:
 
     log.warning("Audio bajane ka koi tareeka nahi mila")
     return False
+
+
+# ======================================================================
+#  Barge-in — agent ke bolte waqt beech mein tokna
+# ======================================================================
+#
+#  PROBLEM:
+#      Agent bol raha hai, user beech mein bole "ruk ja" — pehle ye
+#      possible nahi tha (echo problem: speaker ki awaaz mic mein
+#      bhi aati hai, farak kaise karein ki ye user hai?).
+#
+#  SOLUTION (imaandaar, practical):
+#      Full echo cancellation (AEC) nahi — wo bahut mushkil hai. Iski
+#      jagah ADAPTIVE BASELINE trick:
+#
+#        1. Bolna shuru hote hi mic ki loudness NAAPNI shuru — ye
+#           baseline hai (speaker ki awaaz jo mic tak pahunchi)
+#        2. Baseline ke bahut UPAR agar AWAAZ LAMBI chali (words bolo
+#           ki pattern — peaks), to wo USER ki awaaz maan lo
+#        3. Trigger -> playback turant rok do
+#
+#      HEADPHONE pe ye 99% reliable hai (echo possible hi nahi).
+#      SPEAKER pe thoda aggressive hai — isliye DEFAULT OFF, config
+#      se on karna hai (VOICE_BARGE_IN=true).
+
+
+class BargeInDetector:
+    """
+    Pure state machine — user ne beech mein bola ya nahi.
+
+    Hardware ki zarurat NAHI — `feed(rms)` ko bolte waqt ki loudness
+    values do, ye batayega ki interrupt karna hai ya nahi. CI mein
+    bina mic ke test ho jaata hai (repo ka design rule).
+
+    Use:
+        det = BargeInDetector()
+        for chunk in playing_chunks:
+            if det.feed(rms(chunk)):
+                stop_playback()
+                break
+    """
+
+    def __init__(
+        self,
+        ratio: float = 2.8,          # baseline ke kitna upar = loud
+        loud_chunks_needed: int = 5, # itne consecutive loud chunks
+        calibrate_chunks: int = 12,  # itne chunks se baseline banao
+        absolute_floor: float = 300.0,  # isse neeche kabhi trigger nahi
+    ):
+        self.ratio = ratio
+        self.loud_chunks_needed = loud_chunks_needed
+        self.calibrate_chunks = calibrate_chunks
+        self.absolute_floor = absolute_floor
+
+        self._baseline_samples: list[float] = []
+        self._baseline: float = 0.0
+        self._loud_run = 0
+        self._triggered = False
+
+    @property
+    def calibrating(self) -> bool:
+        """Abhi baseline naap raha hai (speaker ki awaaz sun raha hai)."""
+        return len(self._baseline_samples) < self.calibrate_chunks
+
+    def feed(self, value: float) -> bool:
+        """
+        Ek loudness value do. Returns: True = user bol raha hai, rok do!
+        """
+        if self._triggered:
+            return True
+
+        value = max(0.0, float(value))
+
+        # --- Phase 1: baseline (speaker ki awaaz mic mein kitni hai) ---
+        if self.calibrating:
+            self._baseline_samples.append(value)
+            if not self.calibrating:
+                samples = sorted(self._baseline_samples)
+                # median — ek-do spike baseline kharab na karein
+                mid = len(samples) // 2
+                self._baseline = max(
+                    samples[mid], 50.0
+                )  # zero-mic pe divide-by-zero se bacho
+            return False
+
+        # --- Phase 2: monitoring ---
+        threshold = max(self._baseline * self.ratio, self.absolute_floor)
+
+        if value > threshold:
+            self._loud_run += 1
+            if self._loud_run >= self.loud_chunks_needed:
+                self._triggered = True
+                return True
+        else:
+            # EK shant chunk pe counter reset — spike (hichki) pe trigger nahi
+            self._loud_run = 0
+
+        return False
+
+    @property
+    def triggered(self) -> bool:
+        return self._triggered
+
+    def reset(self) -> None:
+        """Naya bolne wala sentence — dobara calibrate karo."""
+        self._baseline_samples = []
+        self._baseline = 0.0
+        self._loud_run = 0
+        self._triggered = False
+
+
+class MicMonitor:
+    """
+    Background mic loudness monitor — barge-in ke liye.
+
+    THREAD mein chalta hai (sounddevice InputStream), har chunk ka RMS
+    nikaal ke detector ko deta hai. `should_interrupt()` se puchho.
+
+    Mic na ho / sounddevice na ho to KUCH NAHI karta — False hi deta
+    rahega. Barge-in feature optional hai, isliye fail-safe.
+    """
+
+    def __init__(
+        self,
+        audio_config: "AudioConfig | None" = None,
+        detector: BargeInDetector | None = None,
+    ):
+        self.config = audio_config or AudioConfig.from_env()
+        self.detector = detector or BargeInDetector()
+        self._stream = None
+        self._lock = threading.Lock()
+
+    def _on_chunk(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
+        value = rms(indata)
+        with self._lock:
+            self.detector.feed(value)
+
+    def start(self) -> bool:
+        """Mic sunna shuru. Returns: shuru hua ya nahi."""
+        if not is_audio_available():
+            return False
+        if self._stream is not None:
+            return True
+        try:
+            import sounddevice as _sd
+
+            self.detector.reset()
+            self._stream = _sd.InputStream(
+                samplerate=self.config.sample_rate,
+                channels=self.config.channels,
+                blocksize=int(self.config.sample_rate * self.config.chunk_ms / 1000),
+                dtype="int16",
+                callback=self._on_chunk,
+            )
+            self._stream.start()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.debug("MicMonitor start fail: %s", exc)
+            self._stream = None
+            return False
+
+    def should_interrupt(self) -> bool:
+        with self._lock:
+            return self.detector.triggered
+
+    def stop(self) -> None:
+        stream = self._stream
+        self._stream = None
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:  # noqa: BLE001
+                pass

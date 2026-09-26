@@ -104,6 +104,9 @@ class WakeConfig:
     energy_threshold: float = 1500.0
     energy_chunks: int = 4           # itne consecutive loud chunks
 
+    # --- openWakeWord ---
+    oww_threshold: float = 0.5       # 0-1, zyada = strict (kam false alarm)
+
     @classmethod
     def from_env(cls) -> "WakeConfig":
         def _float(key: str, default: float) -> float:
@@ -121,6 +124,7 @@ class WakeConfig:
             sensitivity=_float("PORCUPINE_SENSITIVITY", 0.5),
             energy_threshold=_float("WAKE_ENERGY_THRESHOLD", 1500.0),
             energy_chunks=int(_float("WAKE_ENERGY_CHUNKS", 4)),
+            oww_threshold=_float("OWW_THRESHOLD", 0.5),
         )
 
 
@@ -471,7 +475,174 @@ class PorcupineWake(WakeDetector):
 
 
 # ======================================================================
-#  4. HeyJarvisWake — 100% Free, Zero-Key, Offline Wake Word
+#  4. openWakeWord — FREE neural wake word (koi API key nahi)
+# ======================================================================
+
+# openwakeword optional hai — na ho to baaki modes chalte rahenge
+try:
+    from openwakeword.model import Model as _OWWModel  # type: ignore
+
+    HAS_OWW = True
+    OWW_ERROR = ""
+except Exception as _oww_exc:  # noqa: BLE001
+    _OWWModel = None  # type: ignore[assignment]
+    HAS_OWW = False
+    OWW_ERROR = str(_oww_exc)
+
+
+class OpenWakeWordWake(WakeDetector):
+    """
+    openWakeWord — free, offline, NEURAL wake word.
+
+    Porcupine jaisa experience, par:
+      - koi API key nahi chahiye (Porcupine ko free key chahiye thi)
+      - pre-trained "hey_jarvis" model ke saath aata hai — naam bhi mila!
+      - halka: chhota ONNX model, whisper-wake se bahut kam CPU
+
+    Setup: pip install openwakeword
+    (pehli baar model auto-download hota hai ~1-2 MB)
+    """
+
+    name = "oww"
+    description = "Free neural wake word 'Hey Jarvis' (openWakeWord, no key)"
+
+    # openWakeWord 16kHz pe chunks maangta hai — 1280 samples (80ms) standard
+    OWW_CHUNK = 1280
+
+    def __init__(
+        self,
+        config: WakeConfig | None = None,
+        audio_config: AudioConfig | None = None,
+    ):
+        super().__init__(config, audio_config)
+        self._model = None
+        self._checked = False
+        self._error = ""
+
+    # ------------------------------------------------------------------
+
+    def _build(self) -> bool:
+        """openWakeWord model load karo (lazy — pehli baar download hota hai)."""
+        if self._model is not None:
+            return True
+        if self._checked:
+            return False
+
+        self._checked = True
+
+        if not HAS_OWW:
+            self._error = f"openwakeword not installed ({OWW_ERROR})"
+            return False
+
+        try:
+            # "hey_jarvis" pre-trained model — Jarvis project ke liye perfect
+            self._model = _OWWModel(
+                wakeword_models=["hey_jarvis"],
+                inference_framework="onnx",
+            )
+            log.info("openWakeWord ready (model=hey_jarvis)")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._error = f"openWakeWord model load fail: {exc}"
+            return False
+
+    def is_available(self) -> bool:
+        # _build() PEHLE — warna error report nahi hota (Porcupine jaisa rule)
+        engine_ok = self._build()
+        return engine_ok and is_audio_available() and HAS_NUMPY
+
+    def unavailable_reason(self) -> str:
+        if self.is_available():
+            return ""
+        problems: list[str] = []
+        if self._error:
+            problems.append(self._error.splitlines()[0])
+        if not is_audio_available():
+            problems.append("microphone not available")
+        if not HAS_NUMPY:
+            problems.append("numpy not installed")
+        return "; ".join(problems) or "setup adhoora hai"
+
+    # ------------------------------------------------------------------
+
+    def wait_for_wake(self) -> bool:
+        if not self.is_available():
+            log.warning("openWakeWord available nahi hai")
+            return False
+
+        model = self._model
+        chunk_size = self.OWW_CHUNK
+
+        # --- FRAME BUFFER (Porcupine wali lesson) ---
+        # Mic chunks alag size ke ho sakte hain, model 1280 maangta hai.
+        # Buffer banake exact frames dete hain — warna silently kaam nahi karta.
+        buffer: list = []
+        buffered = 0
+        threshold = self.config.oww_threshold
+
+        try:
+            stream = sd.InputStream(
+                samplerate=16000,
+                channels=1,
+                dtype="int16",
+                blocksize=chunk_size,
+            )
+            with stream:
+                while True:
+                    chunk, _ = stream.read(chunk_size)
+                    flat = chunk.ravel() if hasattr(chunk, "ravel") else chunk
+
+                    buffer.append(flat)
+                    buffered += len(flat)
+
+                    while buffered >= chunk_size:
+                        combined = (
+                            np.concatenate(buffer) if len(buffer) > 1 else buffer[0]
+                        )
+                        frame = combined[:chunk_size]
+                        leftover = combined[chunk_size:]
+
+                        buffer = [leftover] if len(leftover) else []
+                        buffered = len(leftover)
+
+                        scores = model.predict(frame)
+                        score = float(scores.get("hey_jarvis", 0.0))
+
+                        if score >= threshold:
+                            log.info(
+                                "Wake word suna! (openWakeWord score=%.2f)", score
+                            )
+                            model.reset()
+                            return True
+
+        except KeyboardInterrupt:
+            return False
+        except Exception as exc:  # noqa: BLE001
+            log.warning("openWakeWord listening fail: %s", exc)
+            return False
+
+    def close(self) -> None:
+        self._model = None
+
+    def setup_help(self) -> str:
+        lines = ["openWakeWord setup (FREE, no API key):"]
+        lines.append("")
+        lines.append("  1. pip install openwakeword")
+        lines.append("     (pehli baar chalane pe 'hey_jarvis' model auto-download)")
+        lines.append("")
+        lines.append("  2. .env mein:")
+        lines.append("       WAKE_MODE=oww")
+        lines.append("")
+        lines.append("  3. Optional tuning:")
+        lines.append("       OWW_THRESHOLD=0.5   # 0-1; zyada = strict (kam false alarm)")
+        if self._error:
+            lines.append("")
+            lines.append(f"  Abhi ka error: {self._error}")
+        return "\n".join(lines)
+
+
+# ======================================================================
+#  5. HeyJarvisWake — 100% Free, Zero-Key, Offline Wake Word (Whisper)
 # ======================================================================
 
 
@@ -568,6 +739,9 @@ WAKE_MODES: dict[str, type[WakeDetector]] = {
     "energy": EnergyWake,
     "porcupine": PorcupineWake,
     "wake_word": PorcupineWake,
+    "oww": OpenWakeWordWake,
+    "openwakeword": OpenWakeWordWake,
+    "free": OpenWakeWordWake,
     "hey_jarvis": HeyJarvisWake,
     "jarvis": HeyJarvisWake,
     "hands_free": HeyJarvisWake,
@@ -620,7 +794,13 @@ def available_wake_modes() -> list[tuple[str, bool, str]]:
     out: list[tuple[str, bool, str]] = []
     seen: set[str] = set()
 
-    for detector_class in (PushToTalkWake, HeyJarvisWake, EnergyWake, PorcupineWake):
+    for detector_class in (
+        PushToTalkWake,
+        HeyJarvisWake,
+        OpenWakeWordWake,
+        EnergyWake,
+        PorcupineWake,
+    ):
         if detector_class.name in seen:
             continue
         seen.add(detector_class.name)

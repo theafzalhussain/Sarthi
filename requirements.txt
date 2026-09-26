@@ -15,10 +15,14 @@ ddgs>=9.0.0                # Web search — FREE, koi API key nahi chahiye
                            # (pehle iska naam "duckduckgo-search" tha)
 
 # ============================================================
-#  VOICE (Phase 2) — bolke agent chalane ke liye
+#  VOICE (Phase 2 + Phase 5A) — bolke agent chalane ke liye
 #  Ye OPTIONAL hai. Inke bina bhi text mode chalta rahega.
 #  Install: pip install -r requirements.txt  (uncomment karke)
 # ============================================================
+
+# --- RECOMMENDED: neural voice (FREE, ₹0) — Jarvis ki asli awaaz ---
+# Hindi/Hinglish voice (hi-IN-MadhurNeural) + English Jarvis (Ryan)
+edge-tts>=6.1.0
 
 # --- Zaroori (voice ke liye) ---
 # faster-whisper>=1.0.0    # Speech-to-text — offline, free
@@ -34,7 +38,12 @@ ddgs>=9.0.0                # Web search — FREE, koi API key nahi chahiye
 # pyttsx3>=2.90            # Cross-platform, system voices
 #                          # Ya sabse aasaan: sudo apt install espeak-ng (pip se nahi)
 
-# --- Optional: asli wake word ("jarvis" bolke jagana) ---
+# --- Optional: asli wake word — FREE neural (openwakeword) ---
+# openwakeword>=0.5.0      # 'Hey Jarvis' wake word, ZERO API key
+#                          # pehli baar chhota model auto-download (~1-2 MB)
+#                          # .env mein: WAKE_MODE=oww
+
+# --- Optional: Porcupine wake word (key chahiye) ---
 # pvporcupine>=3.0.0       # Free access key: https://console.picovoice.ai/
 #                          # Iske bina push-to-talk (Enter) chalta hai — wo bhi theek hai
 
