@@ -54,6 +54,19 @@ class ToolContext:
     # Persistent scheduler (reminders restart-proof hote hain isse)
     scheduler: Any | None = None
 
+    # Persistent action journal — autonomous kaam inspect/debug karne ke liye.
+    # Optional rakha hai taaki embedded use aur purane integrations na tootein.
+    audit: Any | None = None
+
+    # Granular allow/ask/block policy (files, email, shell, device, etc.).
+    permissions: Any | None = None
+
+    # Post-action outcome verifier — "tool chala" ko "kaam hua" na samjhe.
+    verifier: Any | None = None
+
+    # Reversible action journal (currently safe file-write rollback).
+    rollback: Any | None = None
+
     # Agent ka current conversation context (tools padh sakte hain)
     scratch: dict[str, Any] = field(default_factory=dict)
 

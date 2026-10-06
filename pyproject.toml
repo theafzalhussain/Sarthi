@@ -55,6 +55,16 @@ desktop = [
     "Pillow>=10.0.0",
     "pyautogui>=0.9.54",
 ]
+# Semantic Windows controls via Microsoft UI Automation.
+windows = [
+    "uiautomation>=2.0.20; platform_system == 'Windows'",
+]
+# Web/PWA + OpenAI-compatible API.
+web = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "python-multipart>=0.0.9",
+]
 # Everything at once.
 all = [
     "fpdf2>=2.7.0",
@@ -70,6 +80,10 @@ all = [
     "playwright>=1.44.0",
     "mss>=9.0.0",
     "pyautogui>=0.9.54",
+    "uiautomation>=2.0.20; platform_system == 'Windows'",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "python-multipart>=0.0.9",
 ]
 
 # THIS is what makes `saarthi` work as a global command from any folder,

@@ -323,6 +323,7 @@ TIME_WORDS: dict[str, str] = {
 # ======================================================================
 
 DEVICE_WORDS: dict[str, str] = {
+    "iphone": "ios", "ipad": "ios", "ios": "ios", "apple phone": "ios",
     "phone": "android", "mobile": "android", "fon": "android",
     "android": "android", "handset": "android",
     "laptop": "desktop", "computer": "desktop", "pc": "desktop",

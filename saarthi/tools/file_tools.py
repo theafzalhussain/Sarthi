@@ -25,12 +25,15 @@ Ab `file_banao` se agent seedha content likhta hai, phir
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 from ..devices.base import ActionResult
 from .base import Tool, ToolContext
 from .safety import check_text_safety
+
+log = logging.getLogger("saarthi.tools.files")
 
 # Ye jagah likhne se mana hai — system tod sakta hai
 _BLOCKED_PATH_PARTS = (
@@ -156,16 +159,28 @@ class WriteFileTool(Tool):
         if assessment.is_blocked:
             return ActionResult.failure(assessment.reason)
 
+        # Write se PEHLE private snapshot — successful action ko undo kiya ja sake.
+        undo_token = None
+        if ctx.rollback is not None:
+            try:
+                undo_token = ctx.rollback.prepare_file_write(target)
+            except Exception as exc:  # noqa: BLE001 — undo unavailable ho to write na todo
+                log.warning("File undo snapshot fail: %s", exc)
+
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             with open(target, "a" if append else "w", encoding="utf-8") as handle:
                 handle.write(text)
         except PermissionError:
+            if undo_token and ctx.rollback is not None:
+                ctx.rollback.discard(undo_token)
             return ActionResult.failure(
                 f"'{target}' pe likhne ki permission nahi hai. "
                 f"File kisi app mein khuli ho to band kar."
             )
         except OSError as exc:
+            if undo_token and ctx.rollback is not None:
+                ctx.rollback.discard(undo_token)
             return ActionResult.failure(f"File likhi nahi ja saki: {exc}")
 
         try:
@@ -176,11 +191,26 @@ class WriteFileTool(Tool):
         lines = text.count("\n") + (1 if text and not text.endswith("\n") else 0)
         action = "jod diya" if append else "bana diya"
 
+        if undo_token and ctx.rollback is not None:
+            try:
+                if not ctx.rollback.finalize_file_write(undo_token, target):
+                    undo_token = None
+            except Exception as exc:  # noqa: BLE001
+                log.warning("File undo finalize fail: %s", exc)
+                undo_token = None
+
         return ActionResult.success(
             f"File {action}: {target}\n  {lines} lines, {size} bytes",
             path=str(target),
             size=size,
             lines=lines,
+            undo_token=undo_token,
+            verified=target.exists() and target.is_file(),
+            verification_message=(
+                f"File filesystem par verify hui ({size} bytes)"
+                if target.exists() and target.is_file()
+                else "Write ke baad file filesystem par nahi mili"
+            ),
         )
 
 

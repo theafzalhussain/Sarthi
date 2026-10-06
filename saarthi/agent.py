@@ -267,6 +267,48 @@ class Agent:
         except Exception as exc:  # noqa: BLE001
             log.warning("Calendar init fail: %s", exc)
 
+        # --- Persistent action audit + granular permissions ---
+        # Har action traceable hai; har capability ko independently
+        # allow/ask/block kiya ja sakta hai. Dono optional/fail-safe hain.
+        self.audit = None
+        self.permissions = None
+        self.verifier = None
+        self.rollback = None
+        try:
+            from .audit import AuditStore
+            from .rollback import RollbackStore
+            from .security.permissions import PermissionEngine
+            from .verification import ActionVerifier
+
+            self.audit = AuditStore(self.settings.data_dir / "audit.db")
+            self.permissions = PermissionEngine()
+            self.verifier = ActionVerifier()
+            self.rollback = RollbackStore(self.settings.data_dir)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Action governance init fail: %s", exc)
+
+        # --- Structured personal intelligence ---
+        self.personal_store = None
+        try:
+            from .personal import PersonalStore
+            self.personal_store = PersonalStore(self.settings.data_dir / "personal.db")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Personal intelligence init fail: %s", exc)
+
+        # --- Durable autonomous tasks ---
+        # Plans/checkpoints restart ke baad bhi bachte hain. Purane process ka
+        # half-running task safe PAUSED state mein aata hai, auto-repeat nahi.
+        self.task_store = None
+        try:
+            from .task_engine import DurableTaskStore
+
+            self.task_store = DurableTaskStore(self.settings.data_dir / "tasks.db")
+            recovered = self.task_store.recover_interrupted()
+            if recovered:
+                log.info("%s interrupted task(s) safe resume ke liye pause kiye", recovered)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Durable task engine init fail: %s", exc)
+
         # --- Dikha Do Mode ---
         self.recorder = SkillRecorder()
         self.runner = SkillRunner(
@@ -309,7 +351,14 @@ class Agent:
             memory=self.memory,
             skills=self.skills,
             scheduler=self.scheduler,
+            audit=self.audit,
+            permissions=self.permissions,
+            verifier=self.verifier,
+            rollback=self.rollback,
             scratch={
+                "session_id": self.session_id,
+                "task_store": self.task_store,
+                "personal_store": self.personal_store,
                 "recorder": self.recorder,
                 "skill_runner": self.runner,
                 "calendar_store": self.calendar,
@@ -325,6 +374,10 @@ class Agent:
         """
         device_info = await self.devices.describe()
         memory_context = await self.memory.build_context()
+        if self.personal_store is not None:
+            personal_context = self.personal_store.context()
+            if personal_context:
+                memory_context += "\n\n[Structured personal context]\n" + personal_context
         known_skills = await self.skills.build_context()
 
         self._system_prompt = build_system_prompt(
