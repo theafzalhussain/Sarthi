@@ -22,6 +22,7 @@ Jitne tools add karega, utna capable agent banega.
 from .base import Tool, ToolContext, simple_tool
 from .auth_tools import auth_tools
 from .calendar_tools import calendar_tools
+from .connector_tools import connector_tools
 from .creative_tools import creative_tools
 from .device_tools import device_tools
 from .document_tools import document_tools
@@ -66,6 +67,7 @@ def default_registry() -> ToolRegistry:
     registry.register_all(email_tools())    # mail padho/bhejo (Phase 5C)
     registry.register_all(calendar_tools()) # events + Hinglish dates (Phase 5C)
     registry.register_all(planner_tools())  # bade kaam ka plan (Phase 5C)
+    registry.register_all(connector_tools()) # GitHub + Home Assistant
     registry.register_all(undo_tools())     # reversible actions + safe rollback
     return registry
 
@@ -90,6 +92,7 @@ __all__ = [
     "auth_tools",
     "email_tools",
     "calendar_tools",
+    "connector_tools",
     "planner_tools",
     "undo_tools",
     # Safety

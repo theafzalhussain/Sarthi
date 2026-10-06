@@ -65,6 +65,10 @@ _TOOL_CATEGORIES: dict[str, frozenset[str]] = {
         "task_pause_karo", "tasks_dikhao",
     }),
     "undo": frozenset({"undo_karo", "undo_dikhao"}),
+    "connectors": frozenset({
+        "connectors_status", "github_issues_dikhao", "github_issue_banao",
+        "ghar_devices_dikhao", "ghar_action_karo",
+    }),
 }
 
 

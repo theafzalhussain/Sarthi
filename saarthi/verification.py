@@ -40,6 +40,7 @@ _MUTATING_TOOLS = frozenset({
     "event_hatao", "reminder_set", "reminder_hatao", "login_save_karo",
     "login_hata_do", "skill_chalao", "skill_hata_do", "skill_yaad_kar_le",
     "undo_karo", "ios_shortcut_chalao", "personal_yaad_rakho", "personal_bhool_jao",
+    "github_issue_banao", "ghar_action_karo",
 })
 
 

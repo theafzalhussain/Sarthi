@@ -288,6 +288,14 @@ class Agent:
         except Exception as exc:  # noqa: BLE001
             log.warning("Action governance init fail: %s", exc)
 
+        # --- External service connectors ---
+        self.connectors = None
+        try:
+            from .connectors import ConnectorManager
+            self.connectors = ConnectorManager()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Connector manager init fail: %s", exc)
+
         # --- Structured personal intelligence ---
         self.personal_store = None
         try:
@@ -360,6 +368,7 @@ class Agent:
                 "session_id": self.session_id,
                 "task_store": self.task_store,
                 "personal_store": self.personal_store,
+                "connectors": self.connectors,
                 "recorder": self.recorder,
                 "skill_runner": self.runner,
                 "calendar_store": self.calendar,
