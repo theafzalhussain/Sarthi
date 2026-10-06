@@ -790,6 +790,32 @@ class ReadPageTool(Tool):
         return result
 
 
+class IOSShortcutTool(Tool):
+    name = "ios_shortcut_chalao"
+    description = (
+        "Run an explicitly allowlisted Apple Shortcut on the user's iPhone/iPad. "
+        "Use device='ios'. iOS does not permit arbitrary remote screen tapping."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "shortcut": {"type": "string", "description": "Exact Shortcut name"},
+            "input_text": {"type": "string", "description": "Optional text input"},
+        },
+        "required": ["shortcut"],
+    }
+    risky = True
+
+    async def run(self, ctx: ToolContext, shortcut: str, input_text: str = "") -> ActionResult:
+        dev, error = _resolve_device(ctx, "ios")
+        if error:
+            return error
+        runner = getattr(dev, "run_shortcut", None)
+        if runner is None:
+            return ActionResult.failure("Configured device iOS Shortcuts support nahi karta.")
+        return await runner(shortcut, input_text)
+
+
 def device_tools() -> list[Tool]:
     """Saare device tools ki list."""
     return [
@@ -800,6 +826,7 @@ def device_tools() -> list[Tool]:
         DeviceInfoTool(),
         NotificationsTool(),
         ConnectPhoneWifiTool(),
+        IOSShortcutTool(),
         # Interaction
         TapTextTool(),
         TapTool(),

@@ -38,6 +38,7 @@ from datetime import datetime
 from typing import Awaitable, Callable
 
 from .scheduler import TaskScheduler
+from .proactive_context import InterruptionManager
 
 log = logging.getLogger("saarthi.proactive")
 
@@ -154,6 +155,9 @@ class ProactiveEngine:
         self.on_announce = on_announce
         self.poll_seconds = poll_seconds or _env_float("PROACTIVE_POLL_SECONDS", 20.0)
         self.enabled = _env_bool("PROACTIVE_ENABLED", True)
+        self.interruptions = InterruptionManager.from_env(
+            self.scheduler.db_path.parent / "proactive_context.db"
+        )
 
         self._task: asyncio.Task | None = None
         self.announced_count = 0
@@ -210,9 +214,28 @@ class ProactiveEngine:
             text = format_announcement(task)
             log.info("Announce: %s", text)
             await self._announce("reminder", text)
+            self.interruptions.record(
+                f"reminder:{getattr(task, 'id', task.message)}", text, "high"
+            )
             self.announced_count += 1
 
         return fired
+
+    async def suggest(
+        self, key: str, text: str, priority: str = "normal", dedupe_hours: float = 12
+    ) -> bool:
+        """Useful context proactively offer karo, interruption budget ke saath."""
+        if not self.enabled or not text.strip():
+            return False
+        decision = self.interruptions.allow_and_record(
+            key.strip() or "suggestion", text.strip(), priority, dedupe_hours
+        )
+        if not decision.allowed:
+            log.debug("Proactive suggestion suppressed: %s", decision.reason)
+            return False
+        await self._announce("suggestion", text.strip())
+        self.announced_count += 1
+        return True
 
     async def _announce(self, kind: str, text: str) -> None:
         if self.on_announce is None:

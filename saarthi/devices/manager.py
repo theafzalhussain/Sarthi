@@ -21,6 +21,8 @@ from .android import AndroidDevice, list_adb_serials
 from .base import ActionResult, Capability, Device
 from .browser import BrowserDevice
 from .desktop import DesktopDevice
+from .ios import IOSShortcutsDevice
+from .windows import WindowsDevice
 
 log = logging.getLogger("saarthi.devices")
 
@@ -83,8 +85,14 @@ class DeviceManager:
         kaam karta rahe — backward compatibility ke liye.
         """
         import os
-        
-        self.register(DesktopDevice(name="desktop"))
+        import platform
+
+        # Windows par semantic Microsoft UI Automation adapter use hota hai;
+        # optional dependency na ho to adapter coordinate fallback rakhta hai.
+        if platform.system() == "Windows":
+            self.register(WindowsDevice(name="desktop"))
+        else:
+            self.register(DesktopDevice(name="desktop"))
 
         # --- Multi-phone enumeration ---
         pinned_serial = os.getenv("SAARTHI_ANDROID_SERIAL", "").strip() or None
@@ -128,6 +136,14 @@ class DeviceManager:
                 self._multi_phone_serials = serials
 
         self.register(BrowserDevice(name="browser"))
+
+        # --- iOS Shortcuts bridge (explicit allowlisted actions only) ---
+        ios_url = os.getenv("SAARTHI_IOS_URL", "").strip()
+        ios_token = os.getenv("SAARTHI_IOS_TOKEN", "").strip()
+        if ios_url:
+            self.register(IOSShortcutsDevice(
+                name="ios", base_url=ios_url, token=ios_token
+            ))
 
         # --- AccessibilityDevice (phone HTTP server) ---
         # SAARTHI_PHONE_URL set ho to register karo. URL set na ho to

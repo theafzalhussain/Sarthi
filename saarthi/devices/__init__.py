@@ -40,6 +40,8 @@ from .base import (
 )
 from .browser import HAS_PLAYWRIGHT, BrowserDevice
 from .desktop import HAS_GUI, DesktopDevice
+from .ios import IOSShortcutsDevice
+from .windows import HAS_UIA, WindowsDevice
 from .manager import DeviceManager
 
 __all__ = [
@@ -53,8 +55,11 @@ __all__ = [
     "AccessibilityDevice",
     "AndroidDevice",
     "DesktopDevice",
+    "WindowsDevice",
+    "IOSShortcutsDevice",
     "BrowserDevice",
     "HAS_GUI",
+    "HAS_UIA",
     "HAS_PLAYWRIGHT",
     # Manager
     "DeviceManager",
