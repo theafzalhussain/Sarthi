@@ -16,14 +16,19 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from ..agent import Agent
 from ..config import Settings
 from ..voice.tts import TTSEngine
+
+_FASTAPI_IMPORT_ERROR: Exception | None = None
+try:
+    from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import HTMLResponse, JSONResponse, Response
+except Exception as exc:  # pragma: no cover - optional dependency path
+    _FASTAPI_IMPORT_ERROR = exc
 
 log = logging.getLogger("saarthi.web")
 
@@ -72,6 +77,11 @@ _PROTECTED_API = ("/api/", "/v1/")
 
 
 def create_app(agent: Agent | None = None) -> FastAPI:
+    if _FASTAPI_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "FastAPI not installed. Install web dependencies before starting the web app."
+        ) from _FASTAPI_IMPORT_ERROR
+
     app = FastAPI(title="J.A.R.V.I.S. Core", version="2.0.0")
 
     # ------------------------------------------------------------------
