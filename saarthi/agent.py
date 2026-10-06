@@ -33,6 +33,7 @@ from typing import Awaitable, Callable
 from .brain import Brain
 from .brain.types import LLMResponse, Message, NoProviderError, Role, StreamChunk, ToolCall
 from .config import Settings, settings as default_settings
+from .conversation_style import infer_style, preferred_reply_length
 from .devices import DeviceManager
 from .lang import build_system_prompt, build_user_message, detect_language, parse
 from .memory import MemoryStore
@@ -456,6 +457,17 @@ class Agent:
         # Image attach hui ho to usi user message ke saath bhejo —
         # router.py dekh lega ki image hai aur vision provider chunega.
         user_text = build_user_message(parsed, reply_language)
+
+        # Per-turn human conversation style. Language/tone user se match hoti
+        # hai; permanent length preference sirf explicit personal memory se.
+        style = infer_style(
+            user_input,
+            language_setting=getattr(self.settings, "language", "auto"),
+            preferred_length=preferred_reply_length(self.personal_store),
+        )
+        user_text += "\n\n[Conversation delivery — content/safety rules unchanged]\n" + style.directive()
+        if self.settings.debug:
+            self.on_output("debug", f"style: {style.language}/{style.tone}/{style.length}")
 
         # --- SEMANTIC RECALL (Phase 5B) ---
         # Purani baatein MEANING se dhoondo (keyword nahi) — user jab
