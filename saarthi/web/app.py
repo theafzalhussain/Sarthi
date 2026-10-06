@@ -223,6 +223,93 @@ def create_app(agent: Agent | None = None) -> FastAPI:
         }
 
     # ------------------------------------------------------------------
+    #  Unified Control Dashboard API
+    # ------------------------------------------------------------------
+
+    @app.get("/api/dashboard")
+    async def dashboard() -> dict[str, Any]:
+        """Tasks, devices, safety, memory and undo — one privacy-safe summary."""
+        device_status = await shared_agent.devices.check_availability(use_cache=False)
+        tasks = shared_agent.task_store.list(20) if shared_agent.task_store else []
+        personal = shared_agent.personal_store.search(limit=20) if shared_agent.personal_store else []
+        undo = shared_agent.rollback.list_ready(20) if shared_agent.rollback else []
+        audit = shared_agent.audit.recent(30) if shared_agent.audit else []
+        permissions = (
+            shared_agent.permissions.describe(shared_agent.tools.names)
+            if shared_agent.permissions else {}
+        )
+        return {
+            "devices": device_status,
+            "tasks": [{
+                "id": t.id, "goal": t.goal, "status": t.status,
+                "progress": list(t.progress), "updated_at": t.updated_at,
+                "last_error": t.last_error,
+            } for t in tasks],
+            "personal_memory": [{
+                "id": x.id, "kind": x.kind, "subject": x.subject,
+                "key": x.key, "value": x.value, "confidence": x.confidence,
+                "updated_at": x.updated_at,
+            } for x in personal],
+            "undo": [{
+                "token": x.token, "action": x.action, "target": x.target,
+                "description": x.description, "created_at": x.created_at,
+            } for x in undo],
+            "audit": [{
+                "id": x.id, "created_at": x.created_at, "tool": x.tool,
+                "status": x.status, "risky": x.risky, "approved": x.approved,
+                "duration_ms": x.duration_ms, "message": x.message,
+            } for x in audit],
+            "permissions": [{
+                "tool": name, "category": decision.category,
+                "mode": decision.mode.value, "source": decision.source,
+            } for name, decision in sorted(permissions.items())],
+            "verification_mode": (
+                shared_agent.verifier.mode.value if shared_agent.verifier else "unavailable"
+            ),
+        }
+
+    @app.get("/api/dashboard/tasks")
+    async def dashboard_tasks() -> dict[str, Any]:
+        tasks = shared_agent.task_store.list(100) if shared_agent.task_store else []
+        return {"tasks": [{
+            "id": t.id, "goal": t.goal, "status": t.status,
+            "created_at": t.created_at, "updated_at": t.updated_at,
+            "last_error": t.last_error,
+            "steps": [{
+                "position": s.position, "action": s.action, "status": s.status,
+                "attempts": s.attempts, "max_attempts": s.max_attempts, "note": s.note,
+            } for s in t.steps],
+        } for t in tasks]}
+
+    @app.get("/api/dashboard/audit")
+    async def dashboard_audit(limit: int = 100) -> dict[str, Any]:
+        events = shared_agent.audit.recent(limit) if shared_agent.audit else []
+        # Arguments intentionally omitted: even redacted arguments need not be sent
+        # to every dashboard viewer. Detailed local DB remains the source of truth.
+        return {"events": [{
+            "id": e.id, "created_at": e.created_at, "session_id": e.session_id,
+            "tool": e.tool, "status": e.status, "risky": e.risky,
+            "approved": e.approved, "duration_ms": e.duration_ms, "message": e.message,
+        } for e in events]}
+
+    @app.get("/api/dashboard/memory")
+    async def dashboard_memory(query: str = "", kind: str = "") -> dict[str, Any]:
+        items = shared_agent.personal_store.search(query, kind, 100) if shared_agent.personal_store else []
+        return {"items": [{
+            "id": x.id, "kind": x.kind, "subject": x.subject, "key": x.key,
+            "value": x.value, "confidence": x.confidence, "source": x.source,
+            "created_at": x.created_at, "updated_at": x.updated_at,
+        } for x in items]}
+
+    @app.get("/api/dashboard/undo")
+    async def dashboard_undo() -> dict[str, Any]:
+        entries = shared_agent.rollback.list_ready(100) if shared_agent.rollback else []
+        return {"entries": [{
+            "token": e.token, "action": e.action, "target": e.target,
+            "description": e.description, "created_at": e.created_at,
+        } for e in entries]}
+
+    # ------------------------------------------------------------------
     #  Desktop Screen Snapshot
     # ------------------------------------------------------------------
 
@@ -381,6 +468,16 @@ def create_app(agent: Agent | None = None) -> FastAPI:
             }
         finally:
             tpath.unlink(missing_ok=True)
+
+    # ------------------------------------------------------------------
+    #  Unified Control Center UI
+    # ------------------------------------------------------------------
+
+    @app.get("/dashboard", response_class=HTMLResponse)
+    async def control_dashboard() -> HTMLResponse:
+        return HTMLResponse("""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>JARVIS Control Center</title><style>body{margin:0;background:#071019;color:#d9f7ff;font:14px system-ui}header{padding:20px;border-bottom:1px solid #16495b}h1{margin:0;color:#34dcff}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;padding:18px}.card{background:#0c1c29;border:1px solid #17485a;border-radius:12px;padding:14px;max-height:420px;overflow:auto}h2{font-size:15px;color:#65e6ff}.item{padding:9px 0;border-bottom:1px solid #17313d}.muted{color:#82a3ae;font-size:12px}</style></head><body><header><h1>J.A.R.V.I.S. Control Center</h1><div class='muted'>Devices · Tasks · Permissions · Audit · Memory · Undo</div></header><main id='grid'><div class='card'>Loading…</div></main><script>
+async function load(){let token=localStorage.getItem('saarthi_token')||'';let r=await fetch('/api/dashboard',{headers:{'X-Saarthi-Token':token}});if(r.status===401){token=prompt('SAARTHI web token')||'';localStorage.setItem('saarthi_token',token);return load()}let d=await r.json(),g=document.getElementById('grid');let esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let card=(t,h)=>`<section class="card"><h2>${esc(t)}</h2>${h||'<div class="muted">Nothing here</div>'}</section>`;let item=(a,b,c='')=>`<div class="item"><b>${esc(a)}</b><div>${esc(b)}</div><div class="muted">${esc(c)}</div></div>`;g.innerHTML=card('Devices',Object.entries(d.devices).map(([k,v])=>item(k,v?'Online':'Offline')).join(''))+card('Durable Tasks',d.tasks.map(x=>item(x.goal,`${x.status} · ${x.progress[0]}/${x.progress[1]}`,x.id)).join(''))+card('Permissions',d.permissions.map(x=>item(x.tool,x.mode,`${x.category} · ${x.source}`)).join(''))+card('Recent Audit',d.audit.map(x=>item(x.tool,x.status,`${x.duration_ms} ms · ${x.message||''}`)).join(''))+card('Personal Memory',d.personal_memory.map(x=>item(`${x.subject} · ${x.key}`,x.value,x.kind)).join(''))+card('Safe Undo',d.undo.map(x=>item(x.description,x.target,x.token)).join(''));}load().catch(e=>document.getElementById('grid').innerHTML='<section class="card">'+String(e)+'</section>');setInterval(load,15000);
+</script></body></html>""")
 
     # ------------------------------------------------------------------
     #  Interactive Futuristic Web UI
